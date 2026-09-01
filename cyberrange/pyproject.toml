@@ -1,0 +1,41 @@
+[project]
+name = "cyberrange"
+version = "2.0.0"
+requires-python = ">=3.11"
+# Runtime deps actually imported by src/provisioning/*.py (excluding stdlib
+# and this repo's own flat modules). Previously undeclared entirely; CI and
+# any fresh checkout depended on whatever happened to already be installed
+# (branch-review Issue 7 follow-up -- this is what let score_verifier.py's
+# undeclared python-dotenv import go unnoticed).
+dependencies = [
+    "fastapi",
+    "pydantic",
+    "requests",
+    "urllib3",
+    "uvicorn",
+    "pylxd",
+]
+
+[project.optional-dependencies]
+# `pip install -e ".[dev]"` is what Phase 9 CI and local test runs use --
+# one source of truth instead of a hand-picked, drift-prone pip line.
+dev = [
+    "pytest",
+    "httpx",   # fastapi.testclient.TestClient's transport
+    "mypy",
+]
+# locustfile.py is a standalone load-test script, not imported by the API or
+# by the pytest suite -- kept out of dev/core so CI doesn't pay for it.
+loadtest = [
+    "locust",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src/provisioning"]
+testpaths = ["src/provisioning"]
+python_files = ["test_*.py"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/provisioning"]
+ignore_missing_imports = true

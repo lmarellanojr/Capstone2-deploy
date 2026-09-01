@@ -1,0 +1,19 @@
+[Unit]
+Description=Cyber Range SSH/web-terminal bridge (lxc exec)
+After=network-online.target cyberrange-provision-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/llms_admin/cyberrange/bridge-src
+EnvironmentFile=/home/llms_admin/cyberrange/bridge-src/.env.bridge
+Environment=PYTHONPATH=/home/llms_admin/cyberrange/src/provisioning
+Environment=HOME=/home/llms_admin
+ExecStart=/home/llms_admin/cyberrange/bridge-src/.venv/bin/python bridge.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/ssh-bridge.log
+StandardError=append:/tmp/ssh-bridge.log
+
+[Install]
+WantedBy=default.target

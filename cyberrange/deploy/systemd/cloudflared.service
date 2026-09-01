@@ -1,0 +1,18 @@
+# Token: /etc/cloudflared/token mode 600, owner llms_admin (this unit's User=).
+# root:root 600 → "Failed to read token file: permission denied".
+# Origin in the Cloudflare dashboard: HTTP http://10.115.77.12:80 only.
+[Unit]
+Description=Cloudflare Tunnel (portal origin only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=llms_admin
+EnvironmentFile=-/etc/cloudflared/env
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run --token-file /etc/cloudflared/token
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

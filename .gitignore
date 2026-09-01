@@ -1,0 +1,23 @@
+# Kit root — git init here is optional. Host tree is cyberrange/ only.
+
+private/
+*.local.md
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+*.pyc
+.venv/
+venv/
+node_modules/
+.next/
+.env
+.env.local
+.env.bridge
+*.env
+!*.env.example
+!*.env.example.*
+*.pem
+*.key
+.DS_Store
+.idea/
+.vscode/

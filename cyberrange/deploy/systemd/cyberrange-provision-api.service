@@ -1,0 +1,17 @@
+[Unit]
+Description=Cyber Range provision API (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/llms_admin/cyberrange/src/provisioning
+EnvironmentFile=/home/llms_admin/cyberrange/env/.env
+ExecStart=/usr/bin/python3 provision_api_fastapi.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/provision-api.log
+StandardError=append:/tmp/provision-api.log
+
+[Install]
+WantedBy=default.target

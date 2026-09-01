@@ -1,0 +1,180 @@
+'use client'
+
+import { useEffect } from 'react'
+import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
+import { notFound } from 'next/navigation'
+import { LayoutWrapper } from '@/components/layout/LayoutWrapper'
+import { LoadingSpinner } from '@/components/ui'
+import { Button } from '@/components/ui'
+import { ScenarioInfoView, ProvisioningView, TerminalView } from '@/components/scenario'
+import { useScenarios } from '@/hooks/useScenarios'
+import { useScenarioPod } from '@/hooks/useScenarioPod'
+
+interface PageProps {
+  params: { id: string }
+}
+
+export default function ScenarioDetailPage({ params }: PageProps) {
+  const { id: rawId } = params
+  const id = rawId.padStart(2, '0')
+  const { data: session, status: authStatus } = useSession()
+  const router = useRouter()
+  const scenarios = useScenarios()
+
+  const scenario = scenarios.find((s) => s.id === id)
+  const studentId = session?.user?.name ?? ''
+
+  const { phase, pod, error, startLab, endSession, clearError } = useScenarioPod(
+    id,
+    studentId
+  )
+
+  useEffect(() => {
+    if (authStatus === 'unauthenticated') {
+      router.push(`/login?callbackUrl=/scenario/${id}`)
+    }
+  }, [authStatus, id, router])
+
+  if (authStatus === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-primary">
+        <LoadingSpinner message="Loading..." />
+      </div>
+    )
+  }
+
+  if (authStatus === 'unauthenticated') return null
+
+  if (!scenario) return notFound()
+
+  const handleRetry = () => {
+    clearError()
+    startLab()
+  }
+
+  return (
+    <LayoutWrapper>
+      {/* Header bar */}
+      <div className="bg-secondary border border-border rounded-lg flex-shrink-0 shadow-card mb-4 -mt-2">
+        <div className="px-4 py-3 flex items-center gap-4">
+          <button
+            onClick={() => router.push('/scenarios')}
+            className="text-text-muted hover:text-brand transition text-sm font-medium"
+          >
+            ← My Labs
+          </button>
+          <span className="text-border">|</span>
+          <span className="font-semibold text-text-main">{scenario.name}</span>
+          {phase === 'active' && pod && (
+            <span className="ml-auto text-xs text-success font-semibold bg-green-50 px-2 py-1 rounded-full border border-green-200">
+              Pod {pod.pod_id} · ACTIVE
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Content area */}
+      <div
+        className={
+          phase === 'active' || phase === 'expired'
+            ? // BUG-035: terminal phases need a definite (bounded) height so the chain
+              // down to XtermView/FitAddon resolves to real pixels. Subtract the TopNav
+              // (4rem), p-8 wrapper (2rem top/bottom), and the scenario header bar (~3.5rem).
+              'flex p-4 overflow-hidden h-[calc(100vh-11.5rem)] min-h-0'
+            : 'flex-1 overflow-auto px-8 py-10'
+        }
+      >
+        {/* Loading (initial pod check) */}
+        {phase === 'loading' && (
+          <div className="flex items-center justify-center w-full h-full">
+            <LoadingSpinner message="Checking session status…" />
+          </div>
+        )}
+
+        {/* Idle — show scenario info + start button */}
+        {phase === 'idle' && (
+          <ScenarioInfoView
+            scenario={scenario}
+            onStart={startLab}
+            loading={false}
+            error={error}
+          />
+        )}
+
+        {/* Provisioning — animated step tracker */}
+        {phase === 'provisioning' && <ProvisioningView />}
+
+        {/* Active — IFrame + milestones */}
+        {phase === 'active' && pod && (
+          <TerminalView
+            pod={pod}
+            scenario={scenario}
+            onEnd={endSession}
+          />
+        )}
+
+        {/* Expired — IFrame hidden + overlay */}
+        {phase === 'expired' && pod && (
+          <TerminalView
+            pod={pod}
+            scenario={scenario}
+            onEnd={endSession}
+            expired
+            onRestart={handleRetry}
+          />
+        )}
+
+        {/* Failed provisioning */}
+        {phase === 'failed' && (
+          <div className="max-w-md mx-auto text-center py-16">
+            <div className="text-5xl mb-4">❌</div>
+            <h2 className="text-2xl font-bold mb-2">Provisioning Failed</h2>
+            {error === 'ALREADY_HAS_POD' ? (
+              <>
+                <p className="text-text-muted mb-8">
+                  You already have an active lab session. Please destroy it from your dashboard before starting a new one.
+                </p>
+                <div className="flex gap-3 justify-center">
+                  <Button variant="primary" onClick={() => router.push('/dashboard')}>
+                    Go to Dashboard
+                  </Button>
+                  <Button variant="secondary" onClick={() => router.push('/scenarios')}>
+                    Back to Scenarios
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-text-muted mb-2">
+                  {error === 'POD_CAP_REACHED'
+                    ? 'All lab slots are currently full. Please wait for another student to finish.'
+                    : error === 'STORAGE_FULL'
+                      ? 'The host does not have enough disk space in the LXD pool to start a new lab.'
+                      : error === 'RAM_FULL'
+                        ? 'The host does not have enough free memory to start a new pod.'
+                        : error || 'Failed to start lab environment.'}
+                </p>
+                {error !== 'POD_CAP_REACHED' && error !== 'STORAGE_FULL' && error !== 'RAM_FULL' && (
+                  <p className="text-text-muted text-sm mb-8">
+                    The environment was automatically cleaned up. You can try again.
+                  </p>
+                )}
+                <div className="flex gap-3 justify-center">
+                  {error !== 'POD_CAP_REACHED' && (
+                    <Button variant="primary" onClick={handleRetry}>
+                      Try Again
+                    </Button>
+                  )}
+                  <Button variant="secondary" onClick={() => router.push('/scenarios')}>
+                    Back to Scenarios
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </LayoutWrapper>
+  )
+}

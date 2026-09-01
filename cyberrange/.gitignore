@@ -1,0 +1,48 @@
+# Environment / secrets
+.env
+.env.local
+*.env
+!*.env.example
+CREDENTIALS.md
+credentials.json
+cookies.txt
+*.pem
+*.key
+*-client-secret
+*-secret
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+venv/
+test_env/
+*.egg-info/
+
+# Node (portal)
+node_modules/
+.next/
+
+# LXD / images
+*.qcow2
+*.img
+
+# Runtime logs only. A bare *.log also swallowed captured command output
+# under docs/superpowers/plans/evidence/, which is the one place logs are
+# meant to be committed.
+portal.log
+provision-api.log
+ssh-bridge.log
+npm-debug.log*
+
+# Scratch
+_e2e_tmp/
+.vscode/
+.idea/
+.DS_Store
+
+# SDD workspace (per-plan ledger, briefs, reports, review packages)
+.superpowers/

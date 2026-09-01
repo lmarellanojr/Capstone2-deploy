@@ -1,0 +1,55 @@
+"""Pydantic request/response models."""
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+# student_id is embedded unvalidated into LXD instance names
+# (pod-{student_id}-kali/meta/dvwa), cloud-config content, /etc/sudoers.d
+# filenames, and Wazuh agent names. LXD instance names are themselves
+# restricted, so an unvalidated value can fail container creation with a
+# confusing LXD error, or worse, land inside cloud-config/sudoers content
+# built via plain string interpolation (branch-review Issue 10). Keycloak's
+# preferred_username is not guaranteed to match this pattern for every IdP
+# configuration, but every deployment this API currently targets does.
+STUDENT_ID_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,31}$"
+
+
+class ProvisionRequest(BaseModel):
+    student_id: str = Field(..., pattern=STUDENT_ID_PATTERN)
+    scenario_id: str = "01"
+
+
+class PodResponse(BaseModel):
+    pod_id: int
+    student_id: str
+    status: str
+    vmid_kali: Optional[str]
+    vmid_meta: Optional[str]
+    vmid_dvwa: Optional[str]
+    connection_id: Optional[int]
+    wazuh_agent_id: Optional[str]
+    last_heartbeat: Optional[str]
+
+
+class VerificationRequest(BaseModel):
+    scenario_id: int
+    milestone_id: int
+
+
+class VerificationResponse(BaseModel):
+    status: Literal["PASS", "FAIL", "ERROR", "UNKNOWN"]
+    message: str
+    pod_id: int
+    scenario_id: int
+    milestone_id: int
+    verified_at: str
+    detection_score: Optional[int] = 0
+    alerts_found: Optional[List[dict]] = []
+
+
+class MilestoneResult(BaseModel):
+    scenario_id: int
+    milestone_id: int
+    status: Literal["PASS", "FAIL", "ERROR", "UNKNOWN"]
+    verified_at: str
+    detection_score: Optional[int] = 0

@@ -1,0 +1,25 @@
+# Keycloak systemd unit for native installation (cyber-range gateway, inside guacamole container)
+[Unit]
+Description=Keycloak identity provider (native, cyber-range gateway)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=keycloak
+Group=keycloak
+EnvironmentFile=/etc/keycloak/admin.env
+Environment=JAVA_OPTS_APPEND=-Xmx768m
+WorkingDirectory=/opt/keycloak
+ExecStart=/opt/keycloak/bin/kc.sh start-dev --http-host=127.0.0.1 --http-port=8083 --proxy-headers=xforwarded --http-relative-path=/auth --import-realm
+Restart=always
+RestartSec=10s
+MemoryMax=1G
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=keycloak
+
+[Install]
+WantedBy=multi-user.target

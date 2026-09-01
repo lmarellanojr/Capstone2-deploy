@@ -1,0 +1,18 @@
+[Unit]
+Description=Cyber Range portal (Next.js production, 10.115.77.1:3000)
+After=network-online.target cyberrange-provision-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/llms_admin/cyberrange/portal
+EnvironmentFile=/home/llms_admin/cyberrange/portal/.env.local
+Environment=PATH=/home/llms_admin/opt/node/bin:/usr/bin:/bin
+ExecStart=/home/llms_admin/opt/node/bin/npm exec -- next start -H 10.115.77.1 -p 3000
+Restart=always
+RestartSec=5
+StandardOutput=append:/tmp/portal.log
+StandardError=append:/tmp/portal.log
+
+[Install]
+WantedBy=default.target
