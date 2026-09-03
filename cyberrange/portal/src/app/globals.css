@@ -31,10 +31,19 @@
 @layer base {
   html {
     @apply h-full;
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
-    @apply bg-primary text-text-main font-sans antialiased;
+    @apply bg-primary text-text-main font-sans antialiased min-h-full;
+    overflow-x: hidden;
+  }
+
+  img,
+  video,
+  canvas,
+  iframe {
+    max-width: 100%;
   }
 }
 

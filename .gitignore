@@ -21,3 +21,6 @@ node_modules/
 .DS_Store
 .idea/
 .vscode/
+
+# Temporary local-only authentication UI (never commit its contents).
+cyberrange/portal/src/app/dev-login/

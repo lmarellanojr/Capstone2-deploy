@@ -57,7 +57,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
     <LayoutWrapper>
       {/* Header bar */}
       <div className="bg-secondary border border-border rounded-lg flex-shrink-0 shadow-card mb-4 -mt-2">
-        <div className="px-4 py-3 flex items-center gap-4">
+        <div className="px-3 sm:px-4 py-3 flex flex-wrap items-center gap-2 sm:gap-4">
           <button
             onClick={() => router.push('/scenarios')}
             className="text-text-muted hover:text-brand transition text-sm font-medium"
@@ -65,9 +65,9 @@ export default function ScenarioDetailPage({ params }: PageProps) {
             ← My Labs
           </button>
           <span className="text-border">|</span>
-          <span className="font-semibold text-text-main">{scenario.name}</span>
+          <span className="font-semibold text-text-main min-w-0 break-words">{scenario.name}</span>
           {phase === 'active' && pod && (
-            <span className="ml-auto text-xs text-success font-semibold bg-green-50 px-2 py-1 rounded-full border border-green-200">
+            <span className="sm:ml-auto text-xs text-success font-semibold bg-green-50 px-2 py-1 rounded-full border border-green-200 whitespace-nowrap">
               Pod {pod.pod_id} · ACTIVE
             </span>
           )}
@@ -81,8 +81,8 @@ export default function ScenarioDetailPage({ params }: PageProps) {
             ? // BUG-035: terminal phases need a definite (bounded) height so the chain
               // down to XtermView/FitAddon resolves to real pixels. Subtract the TopNav
               // (4rem), p-8 wrapper (2rem top/bottom), and the scenario header bar (~3.5rem).
-              'flex p-4 overflow-hidden h-[calc(100vh-11.5rem)] min-h-0'
-            : 'flex-1 overflow-auto px-8 py-10'
+              'flex p-0 sm:p-2 lg:p-4 overflow-y-auto xl:overflow-hidden h-[calc(100dvh-9.5rem)] sm:h-[calc(100dvh-11.5rem)] min-h-0'
+            : 'flex-1 overflow-auto px-2 sm:px-8 py-6 sm:py-10'
         }
       >
         {/* Loading (initial pod check) */}

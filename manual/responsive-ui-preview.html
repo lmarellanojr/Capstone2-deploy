@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CyberRange Responsive UI Preview</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f7f8fa;color:#14171c;font:14px system-ui,-apple-system,Segoe UI,sans-serif}.app{display:flex;min-height:100vh}.side{width:256px;background:#fff;border-right:1px solid #e2e5ea;display:flex;flex-direction:column;flex:none}.logo{padding:24px;border-bottom:1px solid #e2e5ea;font-size:20px;font-weight:800;color:#a6192e}.logo small{display:block;color:#6b7280;font-size:11px;font-weight:500;margin-top:3px}.nav{padding:24px 12px;display:grid;gap:6px}.nav div{padding:12px 16px;border-radius:9px}.nav .active{background:#eef0f3;border-left:4px solid #a6192e;font-weight:700}.page{min-width:0;flex:1}.top{height:64px;background:#fff;border-bottom:1px solid #e2e5ea;display:flex;align-items:center;gap:16px;padding:0 24px}.menu{display:none;border:0;background:#eef0f3;border-radius:8px;padding:8px 10px;font-size:18px}.search{width:min(100%,520px);border:1px solid #e2e5ea;background:#eef0f3;border-radius:9px;padding:10px 14px}.avatar{margin-left:auto;width:34px;height:34px;border-radius:50%;background:#a6192e;color:#fff;display:grid;place-items:center;font-weight:800}.content{padding:32px}.title h1{font-size:30px;margin:0}.title p{color:#6b7280;margin:6px 0 28px}.stats,.main-grid,.bottom{display:grid;gap:20px}.stats{grid-template-columns:repeat(3,1fr)}.main-grid{grid-template-columns:2fr 1fr;margin-top:24px}.bottom{grid-template-columns:repeat(2,1fr);margin-top:24px}.card{background:#fff;border:1px solid #e2e5ea;border-radius:12px;padding:24px;box-shadow:0 2px 6px #0000000a}.stat{text-align:center}.stat b{font-size:30px}.muted{color:#6b7280}.lab{display:flex;align-items:center;gap:12px;padding:14px;margin-top:10px;border:1px solid #e2e5ea;border-radius:9px}.lab span:last-child{margin-left:auto;color:#a6192e;font-weight:700}.button{width:100%;border:0;border-radius:8px;padding:11px;margin-top:10px;font-weight:700}.primary{background:#a6192e;color:#fff}.secondary{background:#fff;border:1px solid #cbd0d8}.hint{position:fixed;right:16px;bottom:16px;background:#14171c;color:#fff;padding:10px 14px;border-radius:8px;font-size:12px}
+    @media(max-width:1023px){.side{display:none}.menu{display:block}.content{padding:24px}.main-grid{grid-template-columns:1fr}.top{padding:0 16px}}
+    @media(max-width:639px){.top{gap:8px;padding:0 10px}.content{padding:14px}.title h1{font-size:24px}.stats,.bottom{grid-template-columns:1fr}.card{padding:18px}.stats{gap:12px}.main-grid{margin-top:14px}.lab{align-items:flex-start;flex-wrap:wrap}.lab span:last-child{width:100%;margin:4px 0 0}.hint{display:none}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="side"><div class="logo">CYBER RANGE<small>TRAINING PORTAL</small></div><div class="nav"><div class="active">◇ &nbsp; Dashboard</div><div>◎ &nbsp; My Labs</div><div class="muted">▲ &nbsp; Leaderboard</div><div class="muted">→ &nbsp; Learning Path</div><div class="muted">⚙ &nbsp; Settings</div></div></aside>
+    <section class="page">
+      <header class="top"><button class="menu" aria-label="Menu">☰</button><input class="search" placeholder="Search labs..." /><div class="avatar">S</div></header>
+      <main class="content">
+        <div class="title"><h1>Welcome back, Student!</h1><p>Manage your labs and track your progress</p></div>
+        <div class="stats"><div class="card stat"><b>4</b><div class="muted">Labs Available</div></div><div class="card stat"><b>1,000</b><div class="muted">Max Points</div></div><div class="card stat"><b>1</b><div class="muted">Active Pods</div></div></div>
+        <div class="main-grid"><div class="card"><h2>Continue Learning</h2><div class="lab"><span><b>Network Reconnaissance</b><br><small class="muted">Discover hosts and services in the lab network</small></span><span>Start →</span></div><div class="lab"><span><b>SQL Injection</b><br><small class="muted">Test and identify vulnerable web inputs</small></span><span>Start →</span></div><div class="lab"><span><b>SIEM Alert Triage</b><br><small class="muted">Investigate security alerts and event logs</small></span><span>Start →</span></div></div><div class="card"><h2>Quick Actions</h2><button class="button primary">+ Provision New Pod</button><button class="button secondary">Browse Lab Catalog</button></div></div>
+        <div class="bottom"><div class="card"><h2>Getting Started</h2><p class="muted">1. Browse the lab catalog<br><br>2. Wait for the pod to become active<br><br>3. Connect and complete objectives</p></div><div class="card"><h2>Resource Limits</h2><p class="muted">Active pods per student <b style="float:right;color:#14171c">1</b><br><br>Memory per pod <b style="float:right;color:#14171c">~4 GB</b></p></div></div>
+      </main>
+    </section>
+  </div>
+  <div class="hint">Resize this window to preview tablet and mobile layouts</div>
+</body>
+</html>

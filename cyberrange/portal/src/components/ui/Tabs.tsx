@@ -34,7 +34,16 @@ export function Tabs({ tabs, defaultTab }: TabsProps) {
         ))}
       </div>
 
-      <div className="mt-6">{tabs.find((tab) => tab.id === activeTab)?.content}</div>
+      <div className="mt-6">
+        {tabs.map((tab) => (
+          <div
+            key={tab.id}
+            className={activeTab === tab.id ? "block" : "hidden"}
+          >
+            {tab.content}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

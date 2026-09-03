@@ -23,7 +23,7 @@ export function Sidebar() {
   ];
 
   return (
-    <aside className="w-64 bg-secondary border-r border-border h-screen flex flex-col shadow-card">
+    <aside className="w-64 max-w-full bg-secondary border-r border-border h-screen min-h-[100dvh] flex flex-col shadow-card">
       <div className="p-6 border-b border-border">
         <Logo showSubtitle />
       </div>
