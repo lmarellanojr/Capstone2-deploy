@@ -43,7 +43,23 @@ function GuideViewComponent({ pod, scenario }: GuideViewProps) {
 
   return (
     <div className="prose prose-sm max-w-none p-2 h-full overflow-y-auto prose-headings:text-text-main prose-p:text-text-secondary prose-strong:text-text-main prose-code:text-brand prose-code:bg-muted prose-code:px-1 prose-code:rounded">
-      <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{content}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[require('remark-gfm')]}
+        components={{
+          table: ({node, ...props}) => (
+            <div className="table-container w-full overflow-x-auto my-4">
+              <table className="w-full border-collapse min-w-[480px]" {...props} />
+            </div>
+          ),
+          th: ({node, ...props}) => (
+            <th className="px-3 py-2 text-left font-semibold whitespace-nowrap" {...props} />
+          ),
+          td: ({node, ...props}) => (
+            <td className="px-3 py-2 border-t whitespace-nowrap" {...props} />
+          ),
+        }}
+        rehypePlugins={[rehypeSanitize]}
+      >{content}</ReactMarkdown>
     </div>
   );
 }

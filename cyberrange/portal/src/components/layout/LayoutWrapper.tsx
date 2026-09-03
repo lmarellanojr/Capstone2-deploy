@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { TopNav } from "./TopNav";
 
@@ -9,18 +11,33 @@ interface LayoutWrapperProps {
 }
 
 export function LayoutWrapper({ children, onSearch }: LayoutWrapperProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const pathname = usePathname();
+
+  useEffect(() => setMenuOpen(false), [pathname]);
+
   return (
-    <div className="flex h-screen bg-primary">
+    <div className="flex h-screen min-h-[100dvh] bg-primary overflow-hidden">
       <div className="hidden lg:block w-64 flex-shrink-0">
         <Sidebar />
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <TopNav onSearch={onSearch} showLogo />
+        <TopNav onSearch={onSearch} showLogo onMenuClick={() => setMenuOpen(true)} />
         <main className="flex-1 overflow-y-auto">
-          <div className="p-6 lg:p-8">{children}</div>
+          <div className="p-3 sm:p-6 lg:p-8">{children}</div>
         </main>
       </div>
+
+      {menuOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
+          <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setMenuOpen(false)} aria-label="Close navigation menu" />
+          <div className="relative w-64 max-w-[85vw] h-full">
+            <Sidebar />
+            <button type="button" onClick={() => setMenuOpen(false)} className="absolute top-4 right-3 p-2 rounded-lg bg-secondary text-text-main hover:bg-muted" aria-label="Close navigation menu">✕</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

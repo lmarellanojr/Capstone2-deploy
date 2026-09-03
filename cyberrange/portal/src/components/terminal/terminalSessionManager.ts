@@ -13,7 +13,7 @@ import { FitAddon } from '@xterm/addon-fit';
 
 export interface TermSession {
   key: string;
-  term: Terminal;
+  term: any;
   fit: FitAddon;
   ws: WebSocket;
   host: HTMLDivElement; // persistent; term.open(host) called once
@@ -36,10 +36,14 @@ export function createSession(key: string, wsUrl: string): TermSession {
     theme: { background: '#000000', foreground: '#ffffff' },
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     fontSize: 14,
-    scrollback: 5000,
+    scrollback: 1000,
+    smoothScrollDuration: 0,
+    windowsMode: false,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
+  // Redraw on scroll to prevent ghosting artifacts
+  term.onScroll(() => term.refresh(0, term.rows - 1));
 
   const host = document.createElement('div');
   host.style.width = '100%';

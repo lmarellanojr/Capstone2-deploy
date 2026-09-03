@@ -7,22 +7,26 @@ import { Logo } from "./Logo";
 interface TopNavProps {
   onSearch?: (query: string) => void;
   showLogo?: boolean;
+  onMenuClick?: () => void;
 }
 
-export function TopNav({ onSearch, showLogo = false }: TopNavProps) {
+export function TopNav({ onSearch, showLogo = false, onMenuClick }: TopNavProps) {
   const { data: session } = useSession();
   const [showDropdown, setShowDropdown] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   return (
-    <header className="bg-secondary border-b border-border h-16 flex items-center justify-between px-4 sm:px-6 shadow-card">
+    <header className="bg-secondary border-b border-border min-h-16 flex items-center justify-between px-3 sm:px-6 py-2 shadow-card gap-2">
+      <button type="button" onClick={onMenuClick} className="lg:hidden shrink-0 p-2 rounded-lg text-text-main hover:bg-muted transition" aria-label="Open navigation menu">
+        <span aria-hidden="true" className="text-xl leading-none">☰</span>
+      </button>
       {showLogo && (
-        <div className="lg:hidden mr-4">
+        <div className="hidden sm:block lg:hidden mr-2 shrink-0">
           <Logo size="sm" />
         </div>
       )}
 
-      <div className="flex-1 max-w-lg">
+      <div className="flex-1 min-w-0 max-w-lg">
         <input
           type="text"
           placeholder="Search labs..."
@@ -35,9 +39,9 @@ export function TopNav({ onSearch, showLogo = false }: TopNavProps) {
         />
       </div>
 
-      <div className="flex items-center gap-4 ml-4">
+      <div className="flex items-center gap-1 sm:gap-4 sm:ml-2 shrink-0">
         <button
-          className="relative text-text-muted hover:text-text-main transition p-2"
+          className="hidden sm:block relative text-text-muted hover:text-text-main transition p-2"
           aria-label="Notifications"
         >
           <span className="text-lg">🔔</span>
@@ -47,7 +51,7 @@ export function TopNav({ onSearch, showLogo = false }: TopNavProps) {
         <div className="relative">
           <button
             onClick={() => setShowDropdown(!showDropdown)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted transition border border-transparent hover:border-border"
+            className="flex items-center gap-1 sm:gap-2 p-1.5 sm:px-3 sm:py-2 rounded-lg hover:bg-muted transition border border-transparent hover:border-border"
           >
             <div className="w-8 h-8 rounded-full bg-brand flex items-center justify-center text-white font-bold text-sm">
               {session?.user?.name?.charAt(0).toUpperCase() || "S"}

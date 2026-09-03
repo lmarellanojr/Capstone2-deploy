@@ -20,13 +20,13 @@ export function StepTracker({ currentStep, stepLabels }: StepTrackerProps) {
             {index < currentStep ? "✓" : index + 1}
           </div>
 
-          <span
-            className={`ml-2 text-xs font-semibold truncate hidden sm:inline ${
-              index === currentStep ? "text-text-main" : "text-text-muted"
-            }`}
-          >
-            {label}
-          </span>
+            <span
+              className={`ml-2 text-xs font-semibold break-words whitespace-normal min-w-fit flex-1 ${
+                index === currentStep ? "text-text-main" : "text-text-muted"
+              }`}
+            >
+              {label}
+            </span>
 
           {index < stepLabels.length - 1 && (
             <div

@@ -398,35 +398,36 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart 
 
         {/* Sidebar Content */}
         <div className="flex-1 overflow-y-auto flex flex-col gap-4 min-h-0">
-          {sidebarTab === 'tasks' ? (
-            scenario.milestones.map((m) => (
-              <div key={m.id}>
-                <MilestoneItem
-                  id={String(m.id)}
-                  name={m.name}
-                  description={m.description}
-                  points={m.points}
-                  completed={completed.has(m.id)}
-                />
-                {!completed.has(m.id) && (
-                  <details className="mt-2">
-                    <summary className="text-xs text-text-muted cursor-pointer select-none">
-                      Not detected yet?
-                    </summary>
-                    <button
-                      onClick={() => handleVerify(m.id)}
-                      disabled={verifying.has(m.id) || milestonesLoading}
-                      className="mt-1 w-full py-1 text-xs font-medium text-text-muted border border-border rounded hover:border-brand/40 hover:text-brand transition disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {verifying.has(m.id) ? 'Checking…' : 'Manual Check'}
-                    </button>
-                  </details>
-                )}
-              </div>
-            ))
-          ) : (
+          <div className={`flex-1 overflow-y-auto ${sidebarTab === 'tasks' ? 'block' : 'hidden'}`}>
+            {scenario.milestones.map((m) => (
+                <div key={m.id}>
+                  <MilestoneItem
+                    id={String(m.id)}
+                    name={m.name}
+                    description={m.description}
+                    points={m.points}
+                    completed={completed.has(m.id)}
+                  />
+                  {!completed.has(m.id) && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-text-muted cursor-pointer select-none">
+                        Not detected yet?
+                      </summary>
+                      <button
+                        onClick={() => handleVerify(m.id)}
+                        disabled={verifying.has(m.id) || milestonesLoading}
+                        className="mt-1 w-full py-1 text-xs font-medium text-text-muted border border-border rounded hover:border-brand/40 hover:text-brand transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {verifying.has(m.id) ? 'Checking…' : 'Manual Check'}
+                      </button>
+                    </details>
+                  )}
+                </div>
+            ))}
+          </div>
+          <div className={`flex-1 overflow-y-auto ${sidebarTab === 'guide' ? 'block' : 'hidden'}`}>
             <GuideView pod={pod} scenario={scenario} />
-          )}
+          </div>
         </div>
 
         {/* End session */}

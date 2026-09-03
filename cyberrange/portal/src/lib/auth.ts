@@ -1,5 +1,6 @@
-import type { NextAuthOptions } from "next-auth"
-import type { JWT } from "next-auth/jwt"
+import type { NextAuthOptions, Session, Account } from "next-auth";
+import type { JWT } from "next-auth/jwt";
+// Session import merged into line 1
 
 // Split-brain Keycloak: internal URL for server-side token exchange,
 // public URL for browser-facing OAuth redirect.
@@ -141,7 +142,7 @@ export const authOptions: NextAuthOptions = {
     error: "/auth-error",
   },
   callbacks: {
-    async jwt({ token, account }) {
+    async jwt({ token, account }: { token: JWT; account?: Account }) {
       // Initial sign-in: capture access + refresh + absolute expiry (epoch ms).
       // [TRB C5] Harden expiry capture: prefer Keycloak's absolute expires_at,
       // fall back to expires_in, then to a 300s default — never 0 (which would
@@ -163,7 +164,7 @@ export const authOptions: NextAuthOptions = {
       // Expired/near-expiry → refresh (single-flight collapses concurrent reads).
       return refreshAccessToken(token)
     },
-    async session({ session, token }) {
+    async session({ session, token }: { session: Session; token: JWT }) {
       session.accessToken = token.accessToken as string | undefined
       session.error = token.error as string | undefined
       return session
