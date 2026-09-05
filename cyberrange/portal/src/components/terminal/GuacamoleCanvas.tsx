@@ -264,7 +264,7 @@ export function GuacamoleCanvas({
             </p>
             <button
               onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-accent text-text-main rounded text-sm hover:bg-accent/80 transition"
+              className="px-4 py-2 bg-brand text-text-on-accent rounded text-sm hover:bg-brand-hover transition"
             >
               Retry Connection
             </button>

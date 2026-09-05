@@ -287,30 +287,43 @@ def cleanup_after_failure(
     connection_id: int = None,
 ):
     logger.info(f"Cleaning up after failed provisioning for pod {pod_id}")
-    deregister_agents(wazuh_agent_id)
-
-    client = pylxd.Client(project=os.getenv("LXD_PROJECT", "default"))
+    # LXD-side cleanup runs best-effort: if the LXD connection itself is what
+    # caused the original provisioning failure (e.g. a host permission or
+    # daemon issue), this whole block would previously raise and skip the DB
+    # update below, leaving the pod stuck in PROVISIONING forever and blocking
+    # every future provision attempt at the capacity check. The DB must always
+    # get marked FAILED_ROLLBACK_COMPLETE regardless of what happens here.
     try:
-        remove_dvwa_http_proxy(f"pod-{student_id}-dvwa")
-    except Exception:
-        pass
-    for name in [f"pod-{student_id}-kali", f"pod-{student_id}-meta", f"pod-{student_id}-dvwa"]:
+        deregister_agents(wazuh_agent_id)
+ 
+        client = pylxd.Client(project=os.getenv("LXD_PROJECT", "default"))
         try:
-            instance = client.instances.get(name)
-            if instance.status == "Running":
-                instance.stop(wait=True, force=True)
-            instance.delete(wait=True)
+            remove_dvwa_http_proxy(f"pod-{student_id}-dvwa")
         except Exception:
             pass
-
-    delete_pod_network(pod_id)
-
+        for name in [f"pod-{student_id}-kali", f"pod-{student_id}-meta", f"pod-{student_id}-dvwa"]:
+            try:
+                instance = client.instances.get(name)
+                if instance.status == "Running":
+                    instance.stop(wait=True, force=True)
+                instance.delete(wait=True)
+            except Exception:
+                pass
+ 
+        delete_pod_network(pod_id)
+    except Exception:
+        logger.exception(
+            f"LXD-side cleanup failed for pod {pod_id}; forcing DB status to "
+            "FAILED_ROLLBACK_COMPLETE anyway so it doesn't block future provisioning"
+        )
+ 
     conn = get_db_connection()
     with conn:
         conn.execute("DELETE FROM storage_reservations WHERE vmid=?", (pod_id,))
         conn.execute("DELETE FROM milestone_verification WHERE pod_id=?", (pod_id,))
         conn.execute("UPDATE pods SET status='FAILED_ROLLBACK_COMPLETE' WHERE pod_id=?", (pod_id,))
     conn.close()
+
 
 
 def perform_destruction(pod: dict):

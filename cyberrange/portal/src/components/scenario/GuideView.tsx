@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, memo } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Pod } from "@/lib/api";
 import { injectPodIpsIntoGuide } from "@/lib/podIps";
@@ -44,7 +45,7 @@ function GuideViewComponent({ pod, scenario }: GuideViewProps) {
   return (
     <div className="prose prose-sm max-w-none p-2 h-full overflow-y-auto prose-headings:text-text-main prose-p:text-text-secondary prose-strong:text-text-main prose-code:text-brand prose-code:bg-muted prose-code:px-1 prose-code:rounded">
       <ReactMarkdown
-        remarkPlugins={[require('remark-gfm')]}
+        remarkPlugins={[remarkGfm]}
         components={{
           table: ({node, ...props}) => (
             <div className="table-container w-full overflow-x-auto my-4">

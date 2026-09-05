@@ -173,9 +173,33 @@ def _set_winsize(fd: int, rows: int, cols: int):
     import fcntl, termios  # Unix-only; lazy
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
+async def _evict_existing_session(container: str):
+    """Force-close any live session already attached to this container and
+    wait briefly for its own teardown to actually clear the registry before
+    returning, so the new session's registration below can't be clobbered by
+    the old session's delayed cleanup running after it."""
+    old = _active_sessions.get(container)
+    if not old:
+        return
+    try:
+        os.killpg(os.getpgid(old["proc"].pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        await old["ws"].close(1000)
+    except Exception:
+        pass
+    for _ in range(20):  # up to ~1s
+        if _active_sessions.get(container) is not old:
+            return
+        await asyncio.sleep(0.05)
+    _active_sessions.pop(container, None)
+
+
 
 async def run_pty_session(ws, container: str, pod_type: str):
     import pty  # Unix-only; lazy
+    await _evict_existing_session(container)
     argv = [a.replace("{container}", container) for a in launch_command_for(pod_type)]
     master, slave = pty.openpty()
     _set_winsize(master, 24, 80)  # sane initial size; browser sends a resize on connect
@@ -194,6 +218,9 @@ async def run_pty_session(ws, container: str, pod_type: str):
     )
     os.close(slave)
     loop = asyncio.get_running_loop()
+    session_entry = {"ws": ws, "proc": proc}
+    _active_sessions[container] = session_entry
+
 
     async def pty_to_ws():
         try:
@@ -254,11 +281,17 @@ async def run_pty_session(ws, container: str, pod_type: str):
             await ws.close(1000)
         except Exception:
             pass
+        # Only clear the registry if we're still the current session for this
+      # container — an evicting newer session may have already replaced us.
+       if _active_sessions.get(container) is session_entry:
+           del _active_sessions[container]
+
 
 
 # --- websocket server ---
 # NB: `websockets` is imported lazily inside main() so the pure helpers + auth remain
 # importable (and unit-testable) on machines without the package installed.
+
 
 
 async def handler(ws, path=None):

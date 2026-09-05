@@ -36,7 +36,6 @@ export HISTFILE="${HISTFILE:-$HOME/.bash_history}"
 export HISTSIZE="${HISTSIZE:-10000}"
 export HISTFILESIZE="${HISTFILESIZE:-20000}"
 shopt -s histappend 2>/dev/null || true
-set -o history 2>/dev/null || true
 # Avoid losing history -a if something else reassigns PROMPT_COMMAND later.
 case "${PROMPT_COMMAND:-}" in
   *history\ -a*) ;;
@@ -52,6 +51,17 @@ if [[ -z "${CYBERRANGE_HIST_TRAP:-}" ]]; then
   export CYBERRANGE_HIST_TRAP=1
 fi
 # === cyberrange history flush (scoring) END ===
+# `set -o history` must be the true last line of this whole heredoc, with
+# nothing after it — not even a comment. Bash records a line into history the
+# moment it's read/executed with history already on, comments included, so
+# anything placed after this (including the END marker above, when it used to
+# come last) got itself recorded into .bash_history on every single shell
+# start, since this block is sourced fresh from /etc/bash.bashrc then
+# ~/.bashrc every time (BUG, issue #5 — misreported as terminal "ghosting";
+# a student's first Up-arrow was recalling this script recording itself, not
+# a scroll/render defect).
+set -o history 2>/dev/null || true
+
 EOF
 )
 
@@ -90,6 +100,21 @@ for f in /root/.bashrc /home/*/.bashrc /etc/skel/.bashrc /etc/bash.bashrc; do
   done
 done
 
+# Enable tmux mouse mode system-wide. Without this, the web terminal's mouse
+# wheel / trackpad scroll does nothing: tmux (not xterm.js) owns the pane's
+# scrollback, redrawing its fixed-size viewport via cursor positioning rather
+# than letting content scroll past the outer terminal naturally — so xterm.js
+# correctly reports zero scrollback of its own. `mouse on` makes tmux enter
+# and exit its own copy-mode automatically on wheel scroll, which is what
+# makes scrolling in the browser actually work. The manual keybinding
+# (Ctrl+B, [, then arrows, then q) still works either way; this just removes
+# the need to know it.
+if [ ! -f /etc/tmux.conf ] || ! grep -q '^set -g mouse on' /etc/tmux.conf 2>/dev/null; then
+  printf 'set -g mouse on\n' >> /etc/tmux.conf
+  echo "[+] enabled tmux mouse mode: /etc/tmux.conf"
+fi
+
+
 # Ensure history files exist and are owned correctly so the first command can append.
 for home in /root /home/*; do
   [ -d "$home" ] || continue
@@ -99,6 +124,10 @@ for home in /root /home/*; do
   if [ ! -f "$hist" ]; then
     touch "$hist"
     echo "[+] created: $hist"
+  elif [ -s "$hist" ]; then
+    : > "$hist"
+    echo "[+] cleared stale history: $hist"
+
   fi
   if id "$user" >/dev/null 2>&1; then
     chown "$user:$user" "$hist" 2>/dev/null || true
