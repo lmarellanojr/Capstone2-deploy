@@ -2,7 +2,6 @@
 
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CanvasAddon } from '@xterm/addon-canvas';
 
 export interface TermSession {
   key: string;
@@ -39,6 +38,13 @@ export function createSession(key: string, wsUrl: string): TermSession {
   host.style.width = '100%';
   host.style.height = '100%';
   term.open(host);
+  // Required lazily (not a static top-level import): @xterm/addon-canvas
+  // touches `self` the instant it's loaded, and this module still gets
+  // evaluated during Next.js's server-side render of the client component
+  // that calls createSession() — a static import crashed every page with a
+  // terminal (`ReferenceError: self is not defined`). createSession() itself
+  // only ever runs in the browser, so requiring it here is safe.
+  const { CanvasAddon } = require('@xterm/addon-canvas');
   term.loadAddon(new CanvasAddon());
 
   const ws = new WebSocket(wsUrl);
