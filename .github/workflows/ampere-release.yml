@@ -1,0 +1,77 @@
+name: ampere-release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: "Publish/replace GitHub Release tag ampere-live (Ampere will apply)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: cyberrange/portal/package-lock.json
+      - name: Require portal build configs
+        run: |
+          test -f cyberrange/portal/postcss.config.js
+          test -f cyberrange/portal/tailwind.config.js
+          test -f cyberrange/portal/package-lock.json
+      - name: Pack tree
+        working-directory: cyberrange
+        run: bash deploy/host/pack_tree.sh "${GITHUB_WORKSPACE}/tree.tgz"
+      - name: Build portal
+        working-directory: cyberrange/portal
+        run: |
+          npm ci
+          npm run build
+          tar czf "${GITHUB_WORKSPACE}/portal-build.tgz" \
+            --exclude='.next/cache' \
+            .next public next.config.mjs package.json package-lock.json
+      - name: Manifest
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          import pathlib
+          lock = pathlib.Path("cyberrange/portal/package-lock.json").read_bytes()
+          manifest = {
+            "sha": os.environ["GITHUB_SHA"],
+            "lockfile_sha256": hashlib.sha256(lock).hexdigest(),
+            "built_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "ref": os.environ.get("GITHUB_REF", ""),
+          }
+          pathlib.Path("manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ampere-deploy
+          path: |
+            tree.tgz
+            portal-build.tgz
+            manifest.json
+          retention-days: 14
+      - name: Publish ampere-live
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.promote == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete ampere-live --yes || true
+          git tag -f ampere-live "$GITHUB_SHA"
+          git push -f origin ampere-live
+          gh release create ampere-live tree.tgz portal-build.tgz manifest.json \
+            --title "ampere-live ${GITHUB_SHA}" \
+            --notes "Promote ${GITHUB_SHA}. Ampere pull_release.sh applies this tag."

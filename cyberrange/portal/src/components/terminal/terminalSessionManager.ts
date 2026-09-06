@@ -3,14 +3,6 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 
-// BUG-037 (frontend continuity): terminal sessions are kept alive across React
-// route changes / tab switches. Each session owns a persistent mount element
-// (`host`) that `term.open()` is called on exactly once; XtermView appends/removes
-// that element from the visible container without disposing the Terminal or closing
-// the WebSocket. Navigating away and back re-attaches the SAME element, so the
-// on-screen buffer, scrollback, and live connection are preserved (no remount, no
-// reconnect, no tmux re-attach flash).
-
 export interface TermSession {
   key: string;
   term: any;
@@ -38,17 +30,22 @@ export function createSession(key: string, wsUrl: string): TermSession {
     fontSize: 14,
     scrollback: 1000,
     smoothScrollDuration: 0,
-    windowsMode: false,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
-  // Redraw on scroll to prevent ghosting artifacts
-  term.onScroll(() => term.refresh(0, term.rows - 1));
 
   const host = document.createElement('div');
   host.style.width = '100%';
   host.style.height = '100%';
   term.open(host);
+  // Required lazily (not a static top-level import): @xterm/addon-canvas
+  // touches `self` the instant it's loaded, and this module still gets
+  // evaluated during Next.js's server-side render of the client component
+  // that calls createSession() — a static import crashed every page with a
+  // terminal (`ReferenceError: self is not defined`). createSession() itself
+  // only ever runs in the browser, so requiring it here is safe.
+  const { CanvasAddon } = require('@xterm/addon-canvas');
+  term.loadAddon(new CanvasAddon());
 
   const ws = new WebSocket(wsUrl);
   const session: TermSession = { key, term, fit, ws, host };
