@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GitHub Release ampere-live every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=cyberrange-pull-release.service
+
+[Install]
+WantedBy=timers.target

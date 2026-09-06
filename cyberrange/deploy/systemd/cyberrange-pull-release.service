@@ -1,0 +1,16 @@
+[Unit]
+Description=Pull ampere-live Release into ~/cyberrange (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/llms_admin/cyberrange
+Environment=PATH=/home/llms_admin/opt/node/bin:/usr/bin:/bin
+ExecStart=/bin/bash /home/llms_admin/cyberrange/deploy/host/pull_release.sh
+Nice=10
+MemoryMax=1G
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=default.target

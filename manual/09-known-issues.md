@@ -220,6 +220,19 @@ curl -sS -o /dev/null --connect-timeout 3 -w '%{http_code}\n' http://<PUBLIC_IP>
 
 ---
 
+## Issue 11: Do not install a GitHub Actions runner on Ampere
+
+A self-hosted runner is always-on RAM on a 12 GiB host and runs workflow
+code as llms_admin (sudo + lxd). Build on GitHub-hosted runners. Apply
+with `deploy/host/pull_release.sh` and the opt-in user timer. Never
+`runs-on: self-hosted` in this repo.
+
+Day-2 team shipping: merge to `main` builds artifacts; GitHub **Promote**
+publishes Release tag `ampere-live`; Ampere pulls. First copy is still
+Chapter 01 path B. Operator HTML guide phase M has the steps.
+
+---
+
 ## Troubleshooting Workflow
 
 If a component fails:

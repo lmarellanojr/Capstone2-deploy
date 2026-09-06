@@ -30,6 +30,7 @@ See **`SPRINT-PLAN.md`** for second-host tracking.
 
 - PC: this file, then the reading order below.
 - VM: Chapter 01 Step 6 path B (tar from **inside** `cyberrange/`).
+- Day-2 team shipping (after the host is up): merge to `main` builds on GitHub; **Promote** publishes Release `ampere-live`; Ampere's opt-in pull timer applies it. Do not install a GitHub Actions runner on the VM. Break-glass scp remains Chapter 01 path B. Operator HTML guide phase M (`C:\Capstone Learning Guide\Capstone2-Deploy-Guide.html`) has the steps.
 
 **Split remotes:**
 

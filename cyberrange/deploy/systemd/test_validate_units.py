@@ -72,6 +72,18 @@ def test_cloudflared_unit_file():
     assert "User=llms_admin" in text
 
 
+def test_pull_release_unit_file():
+    text = (HERE / "cyberrange-pull-release.service").read_text(encoding="utf-8")
+    assert "Type=oneshot" in text
+    assert "MemoryMax=1G" in text or "MemoryMax=1073741824" in text
+    assert "pull_release.sh" in text
+    assert "0.0.0.0" not in text
+    assert "self-hosted" not in text
+    timer = (HERE / "cyberrange-pull-release.timer").read_text(encoding="utf-8")
+    assert "OnUnitActiveSec=5min" in timer or "OnCalendar=" in timer
+    assert "Persistent=true" in timer
+
+
 def test_portal_unit_file():
     text = (HERE / "cyberrange-portal.service").read_text(encoding="utf-8")
     assert validate_unit(
