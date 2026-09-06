@@ -23,7 +23,7 @@ export function getSession(key: string): TermSession | undefined {
 }
 
 export function createSession(key: string, wsUrl: string): TermSession {
-  const term = new Terminal({
+  const term: any = new Terminal({
     cursorBlink: true,
     theme: { background: '#000000', foreground: '#ffffff' },
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -78,7 +78,7 @@ export function createSession(key: string, wsUrl: string): TermSession {
     term.writeln('\r\n\x1b[31m[Client] WebSocket error.\x1b[0m');
   };
 
-  term.onData((data) => {
+  term.onData((data: string) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(data);
   });
 

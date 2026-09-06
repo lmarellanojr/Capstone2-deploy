@@ -142,7 +142,7 @@ export const authOptions: NextAuthOptions = {
     error: "/auth-error",
   },
   callbacks: {
-    async jwt({ token, account }) {
+    async jwt({ token, account }: { token: any; account?: any }) {
       // Initial sign-in: capture access + refresh + absolute expiry (epoch ms).
       // [TRB C5] Harden expiry capture: prefer Keycloak's absolute expires_at,
       // fall back to expires_in, then to a 300s default — never 0 (which would
@@ -164,7 +164,7 @@ export const authOptions: NextAuthOptions = {
       // Expired/near-expiry → refresh (single-flight collapses concurrent reads).
       return refreshAccessToken(token)
     },
-    async session({ session, token }) {
+    async session({ session, token }: { session: any; token: any }) {
       session.accessToken = token.accessToken as string | undefined
       session.error = token.error as string | undefined
       return session
