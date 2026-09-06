@@ -173,6 +173,11 @@ def _set_winsize(fd: int, rows: int, cols: int):
     import fcntl, termios  # Unix-only; lazy
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
+
+# Live PTY sessions keyed by LXD container name.
+_active_sessions = {}
+
+
 async def _evict_existing_session(container: str):
     """Force-close any live session already attached to this container and
     wait briefly for its own teardown to actually clear the registry before
@@ -282,9 +287,9 @@ async def run_pty_session(ws, container: str, pod_type: str):
         except Exception:
             pass
         # Only clear the registry if we're still the current session for this
-      # container — an evicting newer session may have already replaced us.
-       if _active_sessions.get(container) is session_entry:
-           del _active_sessions[container]
+        # container — an evicting newer session may have already replaced us.
+        if _active_sessions.get(container) is session_entry:
+            del _active_sessions[container]
 
 
 

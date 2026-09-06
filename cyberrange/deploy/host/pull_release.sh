@@ -165,6 +165,13 @@ health() {
   [ "$code" = "200" ] || return 1
   body="$(curl -sS --max-time 20 http://10.115.77.1:3000/api/auth/providers || true)"
   echo "$body" | grep -q '{' || return 1
+  # Kali CLI is nginx -> 10.115.77.1:8765. A crash-looping bridge still
+  # leaves /health and /login 200, so this handshake must be part of apply.
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    http://10.115.77.1:8765/api/ssh-websocket || true)"
+  [ "$code" = "101" ] || return 1
   return 0
 }
 

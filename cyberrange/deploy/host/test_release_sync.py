@@ -126,3 +126,16 @@ def test_cli_check_apply(tmp_path: Path):
         text=True,
     )
     assert r2.returncode == 2
+
+
+def test_pull_release_health_covers_ssh_bridge():
+    """A tree that crash-loops the bridge still passed /health + /login.
+
+    The Kali CLI tab talks to :8765; health() must fail the apply if that
+    socket is down so IndentationError in bridge.py cannot go live again.
+    """
+    text = (HOST / "pull_release.sh").read_text(encoding="utf-8")
+    assert "10.115.77.1:8765" in text
+    assert "/api/ssh-websocket" in text
+    assert '"101"' in text or "'101'" in text
+
