@@ -156,6 +156,21 @@ export const provisioning = {
     return response.data
   },
 
+  getProgress: async (): Promise<{
+    student_id: string
+    milestones: {
+      pod_id: number
+      scenario_id: number
+      milestone_id: number
+      status: string
+      detection_score?: number
+      verified_at?: string
+    }[]
+  }> => {
+    const response = await apiClient.get('/progress')
+    return response.data
+  },
+
   getLabUrls: async (podId: number): Promise<{
     pod_id: number
     student_id: string

@@ -10,7 +10,7 @@ import { ProvisioningOverlay } from "@/components/provisioning/ProvisioningOverl
 import { PodStatus } from "@/components/provisioning/PodStatus";
 import { Button } from "@/components/ui";
 import { useScenarios } from "@/hooks/useScenarios";
-import type { Pod } from "@/lib/api";
+import { provisioning, type Pod } from "@/lib/api";
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
@@ -22,12 +22,42 @@ export default function DashboardPage() {
   const [activePodCount, setActivePodCount] = useState(0);
   // Bumped after create so PodStatus refreshes the list immediately.
   const [listRefreshSignal, setListRefreshSignal] = useState(0);
+  const [earned, setEarned] = useState<number | null>(null);
 
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login?callbackUrl=/dashboard");
     }
   }, [status, router]);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    let active = true;
+    provisioning
+      .getProgress()
+      .then((data) => {
+        if (!active) return;
+        const seen = new Set<string>();
+        let pts = 0;
+        for (const row of data.milestones) {
+          if (row.status !== "PASS") continue;
+          const sid = String(row.scenario_id).padStart(2, "0");
+          const key = `${sid}:${row.milestone_id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const sc = scenarios.find((s) => s.id === sid);
+          const m = sc?.milestones.find((x) => x.id === row.milestone_id);
+          if (m) pts += m.points;
+        }
+        setEarned(pts);
+      })
+      .catch(() => {
+        if (active) setEarned(0);
+      });
+    return () => {
+      active = false;
+    };
+  }, [status, scenarios]);
 
   const handleProvisioningSubmit = useCallback(() => {
     setPodCreated(true);
@@ -73,7 +103,13 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
         {[
           { label: "Labs Available", value: String(scenarios.length) },
-          { label: "Max Points", value: totalPoints.toLocaleString() },
+          {
+            label: "Score",
+            value:
+              earned === null
+                ? "…"
+                : `${earned.toLocaleString()} / ${totalPoints.toLocaleString()}`,
+          },
           { label: "Active Pods", value: String(activePodCount) },
         ].map((stat) => (
           <div key={stat.label} className="card-surface p-6 text-center">

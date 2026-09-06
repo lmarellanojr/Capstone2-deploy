@@ -28,6 +28,44 @@ def _scoring_deps() -> dict:
     }
 
 
+def list_milestones_for_pod(pod: dict) -> list:
+    """Historical PASSes/FAILs for this student+scenario. Empty if scenario_id missing."""
+    raw_sid = pod["scenario_id"] if pod["scenario_id"] is not None else None
+    if raw_sid is None or str(raw_sid).strip() == "":
+        return []
+    try:
+        scenario_int = int(str(raw_sid).strip())
+    except (TypeError, ValueError):
+        return []
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT scenario_id, milestone_id, status, detection_score, verified_at "
+        "FROM milestone_verification "
+        "WHERE student_id = ? AND scenario_id = ? "
+        "ORDER BY verified_at DESC",
+        (pod["student_id"], scenario_int),
+    ).fetchall()
+    conn.close()
+    return [dict(m) for m in rows]
+
+
+def earned_points(milestones: list, catalog: dict) -> int:
+    """Sum catalog points once per (scenario_id, milestone_id) PASS."""
+    seen: set = set()
+    pts = 0
+    for row in milestones:
+        if row["status"] != "PASS":
+            continue
+        sid = int(row["scenario_id"])
+        mid = int(row["milestone_id"])
+        key = (sid, mid)
+        if key in seen:
+            continue
+        seen.add(key)
+        pts += int(catalog.get(sid, {}).get(mid, 0))
+    return pts
+
+
 @router.post("/pods/provision", status_code=status.HTTP_202_ACCEPTED)
 async def provision_pod(
     request: ProvisionRequest,
@@ -138,7 +176,6 @@ async def provision_pod(
                 raise HTTPException(status_code=503, detail="STORAGE_FULL: DB accounting limit exceeded")
 
         conn.execute("DELETE FROM storage_reservations WHERE vmid=?", (pod_id,))
-        conn.execute("DELETE FROM milestone_verification WHERE pod_id=?", (pod_id,))
         conn.execute("DELETE FROM pods WHERE pod_id=?", (pod_id,))
 
         conn.execute(
@@ -322,6 +359,21 @@ async def verify_milestone_route(
     return await verify_milestone(dict(pod), scenario_id, milestone_id, **deps)
 
 
+@router.get("/progress")
+def get_progress(claims: dict = Depends(verify_token)):
+    student_id = caller_identity(claims, None)
+    if not student_id:
+        raise HTTPException(status_code=401, detail="Identity required")
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT pod_id, scenario_id, milestone_id, status, detection_score, verified_at "
+        "FROM milestone_verification WHERE student_id=? ORDER BY verified_at DESC",
+        (student_id,),
+    ).fetchall()
+    conn.close()
+    return {"student_id": student_id, "milestones": [dict(r) for r in rows]}
+
+
 @router.get("/pods/{pod_id}/milestones")
 def get_pod_milestones(pod_id: int, claims: dict = Depends(verify_token)):
     conn = get_db_connection()
@@ -331,16 +383,10 @@ def get_pod_milestones(pod_id: int, claims: dict = Depends(verify_token)):
         raise HTTPException(status_code=404, detail="Pod not found")
 
     require_owner(pod, claims)
-
-    milestones = conn.execute(
-        "SELECT scenario_id, milestone_id, status, verified_at FROM milestone_verification WHERE pod_id=? ORDER BY verified_at DESC",
-        (pod_id,),
-    ).fetchall()
-
     conn.close()
 
     return {
         "pod_id": pod_id,
         "student_id": pod["student_id"],
-        "milestones": [dict(m) for m in milestones],
+        "milestones": list_milestones_for_pod(dict(pod)),
     }
