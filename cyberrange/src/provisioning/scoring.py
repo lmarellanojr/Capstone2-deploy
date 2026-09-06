@@ -50,8 +50,18 @@ async def verify_milestone(
         conn = get_db_connection()
         with conn:
             conn.execute(
-                "INSERT INTO milestone_verification (pod_id, scenario_id, milestone_id, status, detection_score, detection_data) VALUES (?,?,?,?,?,?)",
-                (pod_id, scenario_id, milestone_id, status_result, detection_score, detection_data),
+                "INSERT INTO milestone_verification "
+                "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    pod_id,
+                    pod["student_id"],
+                    scenario_id,
+                    milestone_id,
+                    status_result,
+                    detection_score,
+                    detection_data,
+                ),
             )
         conn.close()
 

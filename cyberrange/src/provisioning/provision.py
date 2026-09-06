@@ -17,6 +17,26 @@ from wazuh_client import deregister_agents, get_agent_id_by_name, get_wazuh_toke
 
 logger = logging.getLogger("provision_api")
 
+_TERMINAL = frozenset({"DESTROYED", "FAILED_ROLLBACK_COMPLETE"})
+
+
+def finalize_destroyed_pod(pod_id: int, terminal_status: str) -> None:
+    """Drop the storage reservation and mark the pod row terminal.
+
+    Does not touch milestone_verification — scores outlive the containers
+    (GitHub issue 11).
+    """
+    if terminal_status not in _TERMINAL:
+        raise ValueError(f"invalid terminal_status {terminal_status!r}")
+    conn = get_db_connection()
+    with conn:
+        conn.execute("DELETE FROM storage_reservations WHERE vmid=?", (pod_id,))
+        conn.execute(
+            "UPDATE pods SET status=? WHERE pod_id=?",
+            (terminal_status, pod_id),
+        )
+    conn.close()
+
 
 def vmids_for_pod(pod_id: int, student_id: str):
     return {
@@ -317,12 +337,7 @@ def cleanup_after_failure(
             "FAILED_ROLLBACK_COMPLETE anyway so it doesn't block future provisioning"
         )
  
-    conn = get_db_connection()
-    with conn:
-        conn.execute("DELETE FROM storage_reservations WHERE vmid=?", (pod_id,))
-        conn.execute("DELETE FROM milestone_verification WHERE pod_id=?", (pod_id,))
-        conn.execute("UPDATE pods SET status='FAILED_ROLLBACK_COMPLETE' WHERE pod_id=?", (pod_id,))
-    conn.close()
+    finalize_destroyed_pod(pod_id, "FAILED_ROLLBACK_COMPLETE")
 
 
 
@@ -377,10 +392,5 @@ def perform_destruction(pod: dict):
         )
         return
 
-    conn = get_db_connection()
-    with conn:
-        conn.execute("DELETE FROM storage_reservations WHERE vmid=?", (pod_id,))
-        conn.execute("DELETE FROM milestone_verification WHERE pod_id=?", (pod_id,))
-        conn.execute("UPDATE pods SET status='DESTROYED' WHERE pod_id=?", (pod_id,))
-    conn.close()
+    finalize_destroyed_pod(pod_id, "DESTROYED")
     logger.info(f"Pod {pod_id} destroyed successfully")

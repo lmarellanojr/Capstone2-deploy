@@ -10,6 +10,23 @@ from provision import cleanup_after_failure, perform_destruction
 logger = logging.getLogger("provision_api")
 
 
+def purge_storage_drift() -> None:
+    """Drop storage_reservations whose vmid is not a live pod.
+
+    Does not delete milestone_verification — DESTROYED pods still own scores.
+    """
+    conn = get_db_connection()
+    with conn:
+        d = conn.execute(
+            "DELETE FROM storage_reservations WHERE vmid NOT IN "
+            "(SELECT pod_id FROM pods WHERE status NOT IN "
+            "('DESTROYED','FAILED_ROLLBACK_COMPLETE'))"
+        )
+        if d.rowcount:
+            logger.info(f"[reaper] purged {d.rowcount} orphaned storage_reservations")
+    conn.close()
+
+
 async def pod_ttl_reaper():
     while True:
         logger.debug("reaper tick", extra={"event": "reaper_tick"})
@@ -100,21 +117,7 @@ async def pod_ttl_reaper():
                     except Exception as e:
                         logger.error(f"[reaper] stuck-destroying retry failed for pod {pid}: {e}")
 
-            drift = get_db_connection()
-            with drift:
-                d = drift.execute(
-                    "DELETE FROM storage_reservations WHERE vmid NOT IN "
-                    "(SELECT pod_id FROM pods WHERE status NOT IN ('DESTROYED','FAILED_ROLLBACK_COMPLETE'))"
-                )
-                if d.rowcount:
-                    logger.info(f"[reaper] purged {d.rowcount} orphaned storage_reservations")
-                m = drift.execute(
-                    "DELETE FROM milestone_verification WHERE pod_id NOT IN "
-                    "(SELECT pod_id FROM pods WHERE status NOT IN ('DESTROYED','FAILED_ROLLBACK_COMPLETE'))"
-                )
-                if m.rowcount:
-                    logger.info(f"[reaper] purged {m.rowcount} orphaned milestone_verification rows")
-            drift.close()
+            purge_storage_drift()
 
             await asyncio.to_thread(reconcile_pod_networks)
         except Exception as e:

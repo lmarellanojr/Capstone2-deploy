@@ -47,6 +47,11 @@ def _run_sql_file(conn: sqlite3.Connection, path: str) -> None:
     conn.executescript(sql)
 
 
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    # table_info: cid, name, type, notnull, dflt_value, pk — name is r[1]
+    return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
+
+
 def apply(db_path: str | None = None) -> int:
     path = db_path or DB_PATH
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -58,6 +63,12 @@ def apply(db_path: str | None = None) -> int:
             if version <= start:
                 continue
             with conn:
+                if version == 3 and not _has_column(
+                    conn, "milestone_verification", "student_id"
+                ):
+                    conn.execute(
+                        "ALTER TABLE milestone_verification ADD COLUMN student_id TEXT"
+                    )
                 _run_sql_file(conn, sql_path)
                 conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)",

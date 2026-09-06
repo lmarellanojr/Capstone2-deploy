@@ -86,7 +86,6 @@ def allocate_and_provision(student: str, scenario_id: str) -> int:
             raise SystemExit("FAIL: POD_CAP_REACHED")
         vmids = vmids_for_pod(pod_id, student)
         conn.execute("DELETE FROM storage_reservations WHERE vmid=?", (pod_id,))
-        conn.execute("DELETE FROM milestone_verification WHERE pod_id=?", (pod_id,))
         conn.execute("DELETE FROM pods WHERE pod_id=?", (pod_id,))
         conn.execute(
             "INSERT INTO pods (student_id, pod_id, vmid_kali, vmid_meta, vmid_dvwa, status, scenario_id) "
