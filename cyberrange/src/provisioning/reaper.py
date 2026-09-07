@@ -1,11 +1,13 @@
 """Pod TTL reaper and storage drift cleanup."""
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from config import POD_TTL_HOURS, REAP_INTERVAL_SECONDS, STUCK_POD_GRACE_MINUTES
 from db import get_db_connection, log_event
 from pod_net import reconcile_pod_networks
 from provision import cleanup_after_failure, perform_destruction
+from ttl import is_ttl_expired
 
 logger = logging.getLogger("provision_api")
 
@@ -27,37 +29,48 @@ def purge_storage_drift() -> None:
     conn.close()
 
 
+async def reap_ttl_once() -> None:
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT * FROM pods WHERE status='ACTIVE' AND created_at IS NOT NULL"
+    ).fetchall()
+    conn.close()
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        pod = dict(row)
+        try:
+            expired = is_ttl_expired(pod.get("created_at"), now)
+        except Exception:
+            logger.warning("[reaper] skip pod %s: bad created_at", pod.get("pod_id"))
+            continue
+        if not expired:
+            continue
+        pid = pod["pod_id"]
+        cas = get_db_connection()
+        with cas:
+            cur = cas.execute(
+                "UPDATE pods SET status='DESTROYING' WHERE pod_id=? AND status='ACTIVE'",
+                (pid,),
+            )
+        won = cur.rowcount == 1
+        cas.close()
+        if not won:
+            continue
+        logger.info(
+            f"[reaper] pod {pid} (student {pod.get('student_id')}) exceeded TTL {POD_TTL_HOURS}h — destroying"
+        )
+        log_event("POD_TTL_REAP", student_id=pod.get("student_id"), pod_id=pid)
+        try:
+            await asyncio.to_thread(perform_destruction, pod)
+        except Exception as e:
+            logger.error(f"[reaper] destruction failed for pod {pid}: {e}")
+
+
 async def pod_ttl_reaper():
     while True:
         logger.debug("reaper tick", extra={"event": "reaper_tick"})
         try:
-            conn = get_db_connection()
-            rows = conn.execute(
-                "SELECT * FROM pods WHERE status='ACTIVE' AND created_at IS NOT NULL "
-                "AND created_at <= datetime('now', ?)",
-                (f"-{POD_TTL_HOURS} hours",),
-            ).fetchall()
-            conn.close()
-            for row in rows:
-                pod = dict(row)
-                pid = pod["pod_id"]
-                cas = get_db_connection()
-                with cas:
-                    cur = cas.execute(
-                        "UPDATE pods SET status='DESTROYING' WHERE pod_id=? AND status='ACTIVE'",
-                        (pid,),
-                    )
-                won = cur.rowcount == 1
-                cas.close()
-                if won:
-                    logger.info(
-                        f"[reaper] pod {pid} (student {pod.get('student_id')}) exceeded TTL {POD_TTL_HOURS}h — destroying"
-                    )
-                    log_event("POD_TTL_REAP", student_id=pod.get("student_id"), pod_id=pid)
-                    try:
-                        await asyncio.to_thread(perform_destruction, pod)
-                    except Exception as e:
-                        logger.error(f"[reaper] destruction failed for pod {pid}: {e}")
+            await reap_ttl_once()
 
             # Stuck-state sweep (branch-review Issue 4). The TTL query above
             # only ever looks at status='ACTIVE', so a row left in

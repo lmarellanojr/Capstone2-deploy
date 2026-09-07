@@ -29,6 +29,12 @@ class PodResponse(BaseModel):
     connection_id: Optional[int]
     wazuh_agent_id: Optional[str]
     last_heartbeat: Optional[str]
+    scenario_id: Optional[str] = None
+    created_at: Optional[str] = None
+    ttl_hours: int
+    remaining_seconds: int
+    expires_at: Optional[str] = None
+    ttl_expired: bool
 
 
 class VerificationRequest(BaseModel):

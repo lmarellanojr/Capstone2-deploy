@@ -12,6 +12,7 @@ from db import get_db_connection
 from models import PodResponse, ProvisionRequest, VerificationResponse
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
 from scoring import verify_milestone
+from ttl import ttl_payload
 
 router = APIRouter()
 
@@ -26,6 +27,12 @@ def _scoring_deps() -> dict:
         "detection_for": scoring_state.detection_for,
         "verify_siem_alert": scoring_state.verify_siem_alert,
     }
+
+
+def serialize_pod(row) -> dict:
+    body = dict(row)
+    body.update(ttl_payload(body.get("created_at")))
+    return body
 
 
 def list_milestones_for_pod(pod: dict) -> list:
@@ -225,7 +232,7 @@ def list_pods(student_id: Optional[str] = None, claims: dict = Depends(verify_to
     else:
         rows = conn.execute(base + " ORDER BY pod_id").fetchall()
     conn.close()
-    return {"pods": [dict(r) for r in rows]}
+    return {"pods": [serialize_pod(r) for r in rows]}
 
 
 @router.get("/pods/{pod_id}/status", response_model=PodResponse)
@@ -243,7 +250,7 @@ def get_pod_status(pod_id: int, claims: dict = Depends(verify_token)):
         conn.commit()
 
     conn.close()
-    return dict(pod)
+    return PodResponse(**serialize_pod(pod))
 
 
 @router.get("/pods/{pod_id}/guac-token")

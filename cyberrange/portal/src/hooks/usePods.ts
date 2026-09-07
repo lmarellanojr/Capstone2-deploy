@@ -27,6 +27,7 @@ export function usePods(pollInterval = 5000) {
   // Track last toasted error so interval polls do not spam toasts.
   const lastToastedError = useRef<string | null>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [fetchedAtMs, setFetchedAtMs] = useState(() => Date.now())
 
   const fetchPods = useCallback(async (options?: { notify?: boolean }) => {
     const notify = options?.notify ?? false
@@ -34,6 +35,7 @@ export function usePods(pollInterval = 5000) {
       const result = await provisioning.listPods()
       const visible = filterVisiblePods(result.pods || [])
       setPods(visible)
+      setFetchedAtMs(Date.now())
       setError(null)
       lastToastedError.current = null
       setToastMessage(null)
@@ -85,5 +87,5 @@ export function usePods(pollInterval = 5000) {
     setToastMessage(null)
   }, [])
 
-  return { pods, loading, error, refreshPods, toastMessage, clearToastMessage }
+  return { pods, loading, error, refreshPods, toastMessage, clearToastMessage, fetchedAtMs }
 }

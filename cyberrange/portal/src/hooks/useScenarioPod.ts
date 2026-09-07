@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { provisioning, Pod } from '@/lib/api'
 import axios from 'axios'
 import { isConflictError } from '@/lib/errorHandler'
+import { destroySession, sessionKey } from '@/components/terminal/terminalSessionManager'
 
 export type PodPhase = 'loading' | 'idle' | 'provisioning' | 'active' | 'failed' | 'expired'
 
@@ -14,24 +15,41 @@ interface UseScenarioPodResult {
   startLab: () => Promise<void>
   endSession: () => Promise<void>
   clearError: () => void
+  fetchedAtMs: number
+  lastTtlHours: number | null
 }
 
-function derivePhase(pod: Pod | null): PodPhase {
-  if (!pod) return 'idle'
+function derivePhase(pod: Pod | null, ttlExpiredThisSession: boolean): PodPhase {
+  if (!pod) return ttlExpiredThisSession ? 'expired' : 'idle'
   switch (pod.status) {
     case 'PROVISIONING': return 'provisioning'
     case 'ACTIVE': return 'active'
+    case 'DESTROYING': return 'expired'
     case 'DESTROYED': return 'expired'
     case 'FAILED_ROLLBACK_COMPLETE': return 'failed'
     default: return 'idle'
   }
 }
 
+function closePty(podId: number): void {
+  destroySession(sessionKey(podId, 'kali'))
+  destroySession(sessionKey(podId, 'meta'))
+  destroySession(sessionKey(podId, 'dvwa'))
+}
+
 export function useScenarioPod(scenarioId: string, studentId: string): UseScenarioPodResult {
   const [phase, setPhase] = useState<PodPhase>('loading')
   const [pod, setPod] = useState<Pod | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [fetchedAtMs, setFetchedAtMs] = useState(() => Date.now())
+  const [lastTtlHours, setLastTtlHours] = useState<number | null>(null)
+  const [, setTtlExpiredThisSession] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const ttlExpiredRef = useRef(false)
+  const lastPodIdRef = useRef<number | null>(null)
+  const ptyClosedForRef = useRef<number | null>(null)
+  const userEndedRef = useRef(false)
+  const provisioningWaitRef = useRef(false)
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current) {
@@ -44,35 +62,97 @@ export function useScenarioPod(scenarioId: string, studentId: string): UseScenar
     try {
       const result = await provisioning.listPods()
       const match = (result.pods || []).find(
-        (p) => p.scenario_id === scenarioId && p.student_id === studentId
+        (p) => p.scenario_id === scenarioId && p.student_id === studentId,
       )
-      const newPhase = derivePhase(match ?? null)
-      setPod(match ?? null)
-      setPhase(newPhase)
 
-      // Adjust poll interval based on new phase
-      if (newPhase === 'active' || newPhase === 'idle' || newPhase === 'failed' || newPhase === 'expired') {
+      if (userEndedRef.current) {
+        const gone =
+          !match ||
+          match.status === 'DESTROYED' ||
+          match.status === 'FAILED_ROLLBACK_COMPLETE'
+        if (gone) userEndedRef.current = false
+        ttlExpiredRef.current = false
+        setTtlExpiredThisSession(false)
+        lastPodIdRef.current = null
+        setPod(null)
+        setPhase('idle')
         stopPolling()
-        if (newPhase === 'active') {
-          // Heartbeat poll — slow
-          intervalRef.current = setInterval(fetchPod, 60_000)
+        if (!gone) {
+          intervalRef.current = setInterval(fetchPod, 3_000)
         }
+        return
+      }
+
+      if (provisioningWaitRef.current) {
+        if (match && (match.status === 'PROVISIONING' || match.status === 'ACTIVE')) {
+          provisioningWaitRef.current = false
+          lastPodIdRef.current = match.pod_id
+          setLastTtlHours(match.ttl_hours)
+          setFetchedAtMs(Date.now())
+          ttlExpiredRef.current = false
+          setTtlExpiredThisSession(false)
+          setPod(match)
+          setPhase(derivePhase(match, false))
+          stopPolling()
+          const ms = match.status === 'ACTIVE' ? 60_000 : 3_000
+          intervalRef.current = setInterval(fetchPod, ms)
+        }
+        return
+      }
+
+      let flag = ttlExpiredRef.current
+      if (match) {
+        lastPodIdRef.current = match.pod_id
+        setLastTtlHours(match.ttl_hours)
+        setFetchedAtMs(Date.now())
+        if (match.status === 'DESTROYING') flag = true
+      } else if (lastPodIdRef.current != null) {
+        flag = true
+      }
+
+      if (
+        flag &&
+        lastPodIdRef.current != null &&
+        ptyClosedForRef.current !== lastPodIdRef.current
+      ) {
+        closePty(lastPodIdRef.current)
+        ptyClosedForRef.current = lastPodIdRef.current
+      }
+
+      ttlExpiredRef.current = flag
+      setTtlExpiredThisSession(flag)
+      setPod(match ?? null)
+      setPhase(derivePhase(match ?? null, flag))
+
+      stopPolling()
+      if (match?.status === 'PROVISIONING' || match?.status === 'DESTROYING') {
+        intervalRef.current = setInterval(fetchPod, 3_000)
+      } else if (match?.status === 'ACTIVE' && match.ttl_expired) {
+        intervalRef.current = setInterval(fetchPod, 3_000)
+      } else if (match?.status === 'ACTIVE' && match.remaining_seconds <= 15 * 60) {
+        intervalRef.current = setInterval(fetchPod, 10_000)
+      } else if (match?.status === 'ACTIVE') {
+        intervalRef.current = setInterval(fetchPod, 60_000)
       }
     } catch {
       // Keep current phase on transient network errors
     }
   }, [scenarioId, studentId, stopPolling])
 
-  // Initial load
   useEffect(() => {
     fetchPod().then(() => {
-      // fetchPod sets phase; if still loading after fetch something went wrong
       setPhase((prev) => (prev === 'loading' ? 'idle' : prev))
     })
     return stopPolling
   }, [fetchPod, stopPolling])
 
   const startLab = useCallback(async () => {
+    userEndedRef.current = false
+    provisioningWaitRef.current = true
+    ttlExpiredRef.current = false
+    setTtlExpiredThisSession(false)
+    lastPodIdRef.current = null
+    ptyClosedForRef.current = null
     setError(null)
     setPhase('provisioning')
     stopPolling()
@@ -80,9 +160,7 @@ export function useScenarioPod(scenarioId: string, studentId: string): UseScenar
     try {
       await provisioning.provision(studentId, scenarioId)
     } catch (err: unknown) {
-      // Axios errors are instanceof Error; check HTTP status before err.message
-      // or the scenario page shows "Request failed with status code 409"
-      // plus false "environment was automatically cleaned up" copy.
+      provisioningWaitRef.current = false
       if (isConflictError(err)) {
         setError('ALREADY_HAS_POD')
         setPhase('failed')
@@ -107,12 +185,18 @@ export function useScenarioPod(scenarioId: string, studentId: string): UseScenar
       return
     }
 
-    // Start fast polling until ACTIVE
     intervalRef.current = setInterval(fetchPod, 3_000)
   }, [scenarioId, studentId, fetchPod, stopPolling])
 
   const endSession = useCallback(async () => {
     if (!pod) return
+    userEndedRef.current = true
+    provisioningWaitRef.current = false
+    ttlExpiredRef.current = false
+    setTtlExpiredThisSession(false)
+    if (pod.pod_id) closePty(pod.pod_id)
+    ptyClosedForRef.current = pod.pod_id
+    lastPodIdRef.current = null
     stopPolling()
     try {
       await provisioning.destroyPod(pod.pod_id)
@@ -125,5 +209,5 @@ export function useScenarioPod(scenarioId: string, studentId: string): UseScenar
 
   const clearError = useCallback(() => setError(null), [])
 
-  return { phase, pod, error, startLab, endSession, clearError }
+  return { phase, pod, error, startLab, endSession, clearError, fetchedAtMs, lastTtlHours }
 }

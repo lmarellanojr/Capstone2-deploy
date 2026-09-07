@@ -61,8 +61,12 @@ export interface Pod {
   connection_id: number | null
   wazuh_agent_id: string | null
   scenario_id: string | null
-  created_at: string
+  created_at: string | null
   last_heartbeat: string | null
+  ttl_hours: number
+  remaining_seconds: number
+  expires_at: string | null
+  ttl_expired: boolean
 }
 
 export interface ProvisionResponse {

@@ -1,3 +1,5 @@
 export { ScenarioInfoView } from './ScenarioInfoView'
 export { ProvisioningView } from './ProvisioningView'
 export { TerminalView } from './TerminalView'
+export { LabCountdown } from './LabCountdown'
+export { SessionExpiredOverlay } from './SessionExpiredOverlay'
