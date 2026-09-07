@@ -5,6 +5,7 @@ import { Badge, Button, LoadingSpinner } from "@/components/ui";
 import { Pod } from "@/lib/api";
 import { podIps } from "@/lib/podIps";
 import { MAX_STUDENT_PODS, usePods } from "@/hooks/usePods";
+import { LabCountdown } from "@/components/scenario/LabCountdown";
 import { useProvisioning } from "@/hooks/useProvisioning";
 import { useToastContext } from "@/context/ToastContext";
 import { PodDestroyingProgress } from "./PodDestroyingProgress";
@@ -25,7 +26,7 @@ export function PodStatus({
   refreshSignal,
   onPodsChange,
 }: PodStatusProps) {
-  const { pods, loading, error, refreshPods, toastMessage, clearToastMessage } = usePods();
+  const { pods, loading, error, refreshPods, toastMessage, clearToastMessage, fetchedAtMs } = usePods();
   const { destroyPod, loading: destroyLoading, error: destroyError } = useProvisioning();
   const { success, error: showError } = useToastContext();
   const [destroyingId, setDestroyingId] = useState<number | null>(null);
@@ -189,9 +190,17 @@ export function PodStatus({
                     <div>
                       <p className="text-xs mb-0.5">Created</p>
                       <p className="font-semibold text-text-main">
-                        {new Date(pod.created_at).toLocaleDateString()}
+                        {pod.created_at ? new Date(pod.created_at).toLocaleDateString() : "—"}
                       </p>
                     </div>
+                    {pod.status === "ACTIVE" && pod.expires_at && (
+                      <div>
+                        <p className="text-xs mb-0.5">Time left</p>
+                        <p className="font-semibold text-text-main">
+                          <LabCountdown remainingSeconds={pod.remaining_seconds} fetchedAtMs={fetchedAtMs} />
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   {pod.status === "ACTIVE" && (

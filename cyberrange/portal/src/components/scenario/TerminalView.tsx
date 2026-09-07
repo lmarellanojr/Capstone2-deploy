@@ -30,9 +30,11 @@ interface TerminalViewProps {
   onEnd: () => void
   expired?: boolean
   onRestart?: () => void
+  ttlGrace?: boolean
+  canRestart?: boolean
 }
 
-export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart }: TerminalViewProps) {
+export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart, ttlGrace = false, canRestart = false }: TerminalViewProps) {
   const router = useRouter()
   const { data: session } = useSession()
   const token = session?.accessToken as string | undefined
@@ -186,17 +188,21 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart 
 
   return (
     <div className="flex flex-1 w-full h-full relative">
-      {/* Expiry overlay */}
+      {ttlGrace && !expired && (
+        <div className="absolute top-0 left-0 right-0 z-20 px-3 py-2 bg-amber-50 border-b border-amber-200 text-sm text-amber-900">
+          Time limit reached. This lab will close within about 10 minutes. You can keep working until it stops.
+        </div>
+      )}
       {expired && (
         <div className="absolute inset-0 z-10 bg-white/95 flex items-center justify-center rounded-xl">
           <div className="text-center max-w-sm">
             <div className="text-5xl mb-4">⏱</div>
-            <h3 className="text-2xl font-bold mb-2">Session Expired</h3>
+            <h3 className="text-2xl font-bold mb-2">Session shutting down</h3>
             <p className="text-text-secondary mb-6">
-              Your lab was idle for 30+ minutes and was automatically stopped. Your progress is saved.
+              This lab session is shutting down. Your progress is saved.
             </p>
             <div className="flex gap-3 justify-center">
-              {onRestart && (
+              {canRestart && onRestart && (
                 <Button variant="primary" onClick={onRestart}>Start New Session</Button>
               )}
               <Button variant="secondary" onClick={() => window.location.href = '/dashboard'}>
@@ -430,18 +436,19 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart 
           </div>
         </div>
 
-        {/* End session */}
-        <div className="mt-5 pt-4 border-t border-border">
-          <Button
-            variant="danger"
-            size="sm"
-            loading={ending}
-            onClick={handleEnd}
-            className="w-full"
-          >
-            End Session
-          </Button>
-        </div>
+        {!expired && (
+          <div className="mt-5 pt-4 border-t border-border">
+            <Button
+              variant="danger"
+              size="sm"
+              loading={ending}
+              onClick={handleEnd}
+              className="w-full"
+            >
+              End Session
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )
