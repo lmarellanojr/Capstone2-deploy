@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { Notebook } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Pod, provisioning } from '@/lib/api'
 import { Scenario } from '@/hooks/useScenarios'
-import { Button } from '@/components/ui'
+import { Button, Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui'
 import { MilestoneItem } from '@/components/progress/MilestoneItem'
 import { useToastContext } from '@/context/ToastContext'
 
@@ -46,6 +47,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const [activeTab, setActiveTab] = useState<TermTab>(() => defaultTabForScenario(scenario.id))
   const [sidebarTab, setSidebarTab] = useState<'tasks' | 'guide'>('guide')
   const [showAccessHelp, setShowAccessHelp] = useState<'dvwa' | 'siem' | null>(null)
+  const [infoModal, setInfoModal] = useState<'kali' | 'meta' | null>(null)
   const [labUrls, setLabUrls] = useState<Awaited<ReturnType<typeof provisioning.getLabUrls>> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -74,7 +76,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
 
   // Terminals use xterm.js (XtermView) over the SSH-to-WebSocket microservice.
   // Per BUG-029 (SOLUTION.md Option 2), the project moved away from the Guacamole
-  // iframe/guacd-VNC approach entirely for these CLI-only labs — xterm.js sits in the
+  // iframe/guacd-VNC approach entirely for these CLI-only labs - xterm.js sits in the
   // React DOM so keyboard focus is native (no iframe focus traps to recover from).
 
   // Fetch already completed milestones to restore score state
@@ -91,7 +93,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       setMilestonesLoading(false)
     }).catch((err) => {
       console.error('Failed to fetch initial milestones:', err)
-      toastError('Could not load previous progress — showing current session only.')
+      toastError('Could not load previous progress - showing current session only.')
       setMilestonesLoading(false)
     })
 
@@ -116,7 +118,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
           let changed = false
           newPassed.forEach((mid) => {
             if (!prev.has(mid)) {
-              // New auto-detection — show toast
+              // New auto-detection - show toast
               const pts = scenario.milestones.find((m) => m.id === mid)?.points ?? 0
               success(`Task auto-detected! +${pts} pts`)
               next.add(mid)
@@ -126,7 +128,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
           return changed ? next : prev
         })
       } catch {
-        // Silently ignore polling errors — terminal still works
+        // Silently ignore polling errors - terminal still works
       }
     }, 15000) // Poll every 15 seconds
 
@@ -153,12 +155,12 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         }
         success(msg)
       } else if (result.status === 'FAIL') {
-        warning(result.message || 'Not yet — check your work and try again.')
+        warning(result.message || 'Not yet - check your work and try again.')
       } else {
-        toastError('Verification unavailable — your terminal is still working.')
+        toastError('Verification unavailable - your terminal is still working.')
       }
     } catch {
-      toastError('Verification unavailable — your terminal is still working.')
+      toastError('Verification unavailable - your terminal is still working.')
     } finally {
       setVerifying((prev) => {
         const next = new Set(prev)
@@ -267,7 +269,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             </div>
             <p className="text-text-secondary mb-2">
               Open DVWA on this portal (<code className="bg-muted px-1 rounded">{DVWA_PREFIX}/</code>
-              ) — session required. Do not use the host <code className="bg-muted px-1 rounded">:18301</code> URL.
+              ) - session required. Do not use the host <code className="bg-muted px-1 rounded">:18301</code> URL.
               On Ampere that host URL is withheld on purpose (LAB_PUBLIC_HOST unset).
             </p>
             <code className="block text-xs bg-muted p-2 rounded break-all mb-2">{DVWA_PREFIX}/</code>
@@ -330,13 +332,13 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         {/* Connection Tabs */}
         <div className="flex bg-secondary border border-border rounded-t-xl overflow-hidden shrink-0">
           <button
-            onClick={() => setActiveTab('kali-cli')}
+            onClick={() => setInfoModal('kali')}
             className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'kali-cli' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
           >
             Kali Linux (CLI)
           </button>
           <button
-            onClick={() => setActiveTab('meta')}
+            onClick={() => setInfoModal('meta')}
             className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'meta' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
           >
             Target: meta (lab)
@@ -387,7 +389,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         </div>
 
         {/* Sidebar Tabs */}
-        <div className="flex border-b border-border mb-4">
+        <div className="flex items-center border-b border-border mb-4">
           <button
             onClick={() => setSidebarTab('tasks')}
             className={`flex-1 py-2 text-sm font-medium transition ${sidebarTab === 'tasks' ? 'text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main'}`}
@@ -400,6 +402,17 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
           >
             Guide
           </button>
+          {sidebarTab === 'guide' && (
+            <button
+              type="button"
+              onClick={() => window.print()}
+              title="Export as PDF"
+              aria-label="Export as PDF"
+              className="p-1.5 mb-1 text-text-muted hover:text-brand rounded transition"
+            >
+              <Notebook size={14} />
+            </button>
+          )}
         </div>
 
         {/* Sidebar Content */}
@@ -450,6 +463,78 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
           </div>
         )}
       </div>
+
+      <Modal isOpen={infoModal === 'kali'} onClose={() => setInfoModal(null)}>
+        <ModalHeader title="Kali Linux (CLI)" />
+        <ModalBody>
+          <p className="text-text-secondary mb-3">
+            <strong className="text-text-main">Kali</strong> is your attacker
+            workstation - a Linux VM preloaded with the offensive tools each
+            scenario asks you to use (Nmap, Metasploit, sqlmap, etc.).
+          </p>
+          <p className="text-text-secondary mb-3">
+            You run every attack command from this tab, targeting the other
+            VMs in your pod by IP (e.g.{' '}
+            <code className="text-brand bg-muted px-1 rounded">$TARGET_META</code>).
+            It has no vulnerable services of its own - it&apos;s the tool belt,
+            not the target.
+          </p>
+          <p className="text-text-secondary">
+            Think of it as the &quot;attacker machine&quot; a real pentest
+            would run from - Kali is where you work, meta/DVWA are what
+            you&apos;re working on.
+          </p>
+        </ModalBody>
+        <ModalFooter>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setActiveTab('kali-cli')
+              setInfoModal(null)
+            }}
+          >
+            Open Kali terminal
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal isOpen={infoModal === 'meta'} onClose={() => setInfoModal(null)}>
+        <ModalHeader title="Target: meta (lab)" />
+        <ModalBody>
+          <p className="text-text-secondary mb-3">
+            <strong className="text-text-main">meta</strong> is the vulnerable
+            target VM in your pod - a deliberately misconfigured Linux host
+            running the services each scenario asks you to attack (Tomcat,
+            FTP, SSH, etc.). It has no attack tools of its own.
+          </p>
+          <p className="text-text-secondary mb-3">
+            Attacks are launched from the <strong className="text-text-main">Kali Linux (CLI)</strong>{' '}
+            tab against meta&apos;s IP (<code className="text-brand bg-muted px-1 rounded">$TARGET_META</code>).
+            This <strong className="text-text-main">Target: meta (lab)</strong> tab
+            gives you a direct shell into that VM - useful for checking your
+            work (e.g. confirming a service is running, or verifying a shell
+            you popped) without going through the exploit each time.
+          </p>
+          <p className="text-text-secondary">
+            Think of it as the &quot;victim machine&quot; a real pentest would
+            be scoped against - Kali is your attacker workstation, meta is the
+            target.
+          </p>
+        </ModalBody>
+        <ModalFooter>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setActiveTab('meta')
+              setInfoModal(null)
+            }}
+          >
+            Open meta terminal
+          </Button>
+        </ModalFooter>
+      </Modal>
     </div>
   )
 }
