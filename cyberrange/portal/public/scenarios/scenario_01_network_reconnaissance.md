@@ -1,4 +1,4 @@
-## Scenario 01 — Network Reconnaissance & Exploitation
+## Scenario 01 - Network Reconnaissance & Exploitation
 
 > **Network:** Your pod uses `$TARGET_SUBNET` (formula `10.0.<50+pod_id>.0/24`). Kali `$TARGET_KALI`, Meta `$TARGET_META`, DVWA `$TARGET_DVWA`.
 
@@ -18,7 +18,7 @@
 
 | Host | IP | Access |
 |---|---|---|
-| Kali (you) | `$TARGET_KALI` | Portal tab **Kali Linux (CLI)** — user `student` |
+| Kali (you) | `$TARGET_KALI` | Portal tab **Kali Linux (CLI)** - user `student` |
 | Meta | `$TARGET_META` | Ports 21, 22, 80, **8180** (Tomcat). Weak manager creds in scope. |
 | DVWA | `$TARGET_DVWA` | Optional stretch scans only |
 
@@ -26,11 +26,11 @@ Env vars `TARGET_META` / `TARGET_DVWA` are also set in your Kali shell.
 
 ### How scoring works
 
-Tasks 1–4 look at **commands in Kali shell history** (and Metasploit history for Task 4). After each successful command, press **Enter** once, then use **Manual Check** (or wait for auto-detect). Stay in the portal terminal — do not expect a desktop GUI.
+Tasks 1–4 look at **commands in Kali shell history** (and Metasploit history for Task 4). After each successful command, press **Enter** once, then use **Manual Check** (or wait for auto-detect). Stay in the portal terminal - do not expect a desktop GUI.
 
 ---
 
-### Task 1 — Host Discovery (Milestone 1)
+### Task 1 - Host Discovery (Milestone 1)
 
 **Goal:** Find live hosts on `$TARGET_SUBNET`.
 
@@ -44,13 +44,13 @@ nmap -sn $TARGET_SUBNET
 <details>
 <summary>Hint</summary>
 
-If the subnet variable is empty: `echo $TARGET_SUBNET` — or use the IP strip in the lab header. No reply? Confirm you are on **Kali**, not the meta tab.
+If the subnet variable is empty: `echo $TARGET_SUBNET` - or use the IP strip in the lab header. No reply? Confirm you are on **Kali**, not the meta tab.
 
 </details>
 
 ---
 
-### Task 2 — Port Enumeration (Milestone 2)
+### Task 2 - Port Enumeration (Milestone 2)
 
 **Goal:** List open TCP ports on the **meta** target (expect 21, 22, 80, 8180).
 
@@ -74,7 +74,7 @@ Prefer `-p` or `-F` over a full `-p-` scan first; full scans are slow on shared 
 
 ---
 
-### Task 3 — Service Version Detection (Milestone 3)
+### Task 3 - Service Version Detection (Milestone 3)
 
 **Goal:** Identify service/version strings on meta’s interesting ports.
 
@@ -94,7 +94,7 @@ The checker looks for `nmap` with `-sV` in your history. Include `-sV` in the co
 
 ---
 
-### Task 4 — Tomcat Manager Exploitation (Milestone 4)
+### Task 4 - Tomcat Manager Exploitation (Milestone 4)
 
 **Goal:** Use Metasploit’s Tomcat Manager deploy exploit against meta:8180 and get a shell as `tomcat`.
 
@@ -124,13 +124,19 @@ id
 whoami
 ```
 
-**Done when:** Shell context is `tomcat` (e.g. `uid=…(tomcat)`).  
-**Then:** Exit or background the session so Metasploit history is written; Manual Check on Tomcat Manager Exploitation.
+**Done when:** Shell context is `tomcat` (e.g. `uid=…(tomcat)`).
+
+**Then:** Run `exit` in the session - Manual Check reads Metasploit history,
+so it will fail on this milestone until this command is actually run.
+
+```text
+exit
+```
 
 <details>
 <summary>Hint</summary>
 
-Debian Tomcat uses **`/manager/text`** — without `set PATH /manager/text` the exploit fails.  
+Debian Tomcat uses **`/manager/text`** - without `set PATH /manager/text` the exploit fails.  
 If Manual Check fails after a working shell, run one more msf command or exit `msfconsole` cleanly, then re-check.
 
 </details>
@@ -140,14 +146,14 @@ If Manual Check fails after a working shell, run one more msf command or exit `m
 ### Optional stretch (not scored)
 
 ```bash
-# OS detection (needs sudo on Kali — already granted in lab)
+# OS detection (needs sudo on Kali - already granted in lab)
 sudo nmap -O $TARGET_META
 
 # Quick look at DVWA ports
 nmap -F $TARGET_DVWA
 ```
 
-SIEM / blue-team analysis of your scans is covered in **Scenario 3 (SIEM Alert Triage)** — not required to finish this room.
+SIEM / blue-team analysis of your scans is covered in **Scenario 3 (SIEM Alert Triage)** - not required to finish this room.
 
 ### Common failures
 

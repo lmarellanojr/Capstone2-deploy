@@ -68,3 +68,25 @@
     @apply bg-secondary border border-border rounded-xl shadow-card;
   }
 }
+
+/* Guide PDF export (issue #6). #guide-print-root is a React portal mounted
+   as a direct child of <body> (see GuideView.tsx) - a sibling of the whole
+   app, not nested inside any of its fixed-height/overflow-auto containers.
+   That matters: an earlier version tried to print an element from *inside*
+   the app's scroll panel via `position: absolute` + `visibility: hidden` on
+   everything else, but pulling an in-app element out of flow like that makes
+   Chrome's print engine paginate only that box's own height - one
+   screen-height "page" - silently dropping the rest of the guide regardless
+   of length. A true sibling-of-body node has no such ancestor constraints,
+   so normal document flow paginates it across as many pages as it needs. */
+#guide-print-root {
+  display: none;
+}
+@media print {
+  body > *:not(#guide-print-root) {
+    display: none !important;
+  }
+  #guide-print-root {
+    display: block !important;
+  }
+}
