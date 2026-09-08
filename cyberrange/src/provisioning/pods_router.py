@@ -8,7 +8,7 @@ import auth
 from auth import caller_identity, require_owner, verify_token
 from capacity import available_ram_mb, can_provision_ram, ram_required_mb
 from config import MAX_PODS, POD_STORAGE_MB, STORAGE_LIMIT_MB
-from db import get_db_connection
+from db import get_db_connection, log_event
 from models import PodResponse, ProvisionRequest, VerificationResponse
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
 from scoring import verify_milestone
@@ -379,6 +379,38 @@ def get_progress(claims: dict = Depends(verify_token)):
     ).fetchall()
     conn.close()
     return {"student_id": student_id, "milestones": [dict(r) for r in rows]}
+
+
+@router.delete("/progress/{scenario_id}")
+def reset_scenario_progress(scenario_id: int, claims: dict = Depends(verify_token)):
+    """Permanently delete this caller's own milestone_verification rows for one
+    scenario ("Try Again" reset). Scoped to caller_identity(claims) only -- a
+    student can never target another student_id, since it's derived from the
+    verified token, not a request parameter.
+
+    Irreversible by design (the student explicitly asked to reset); the
+    audit_log entry below is what survives the deletion, not the rows
+    themselves.
+    """
+    student_id = caller_identity(claims, None)
+    if not student_id:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    conn = get_db_connection()
+    with conn:
+        deleted = conn.execute(
+            "DELETE FROM milestone_verification WHERE student_id=? AND scenario_id=?",
+            (student_id, scenario_id),
+        ).rowcount
+    conn.close()
+
+    log_event(
+        "SCENARIO_PROGRESS_RESET",
+        student_id=student_id,
+        detail=f"scenario_id={scenario_id}, {deleted} milestone row(s) deleted",
+    )
+
+    return {"student_id": student_id, "scenario_id": scenario_id, "deleted": deleted}
 
 
 @router.get("/pods/{pod_id}/milestones")

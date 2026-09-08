@@ -87,7 +87,19 @@ build_kali() {
     apt-get update &&
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
       kali-linux-headless openssh-server sudo &&
-    systemctl enable ssh
+    systemctl enable ssh &&
+    # kali-linux-headless pulls in NetworkManager, which races legacy
+    # ifupdown (both enabled by default) for control of eth0. ifupdown
+    # already brings eth0 up correctly via DHCP at boot; NetworkManager
+    # starts later (~15-20s in, often coinciding with other slow boot
+    # units under host load) and its device-discovery of eth0 knocks the
+    # link back down even though NetworkManager.conf marks ifupdown
+    # interfaces "unmanaged" -- the disruption happens during initial
+    # device claiming, before that unmanaged status is settled. Disabling
+    # it outright is correct here: this is a headless CLI-only lab
+    # container with no GUI network switching need, so NetworkManager
+    # serves no purpose and ifupdown alone is sufficient.
+    systemctl disable --now NetworkManager
   '
   # Must run before history flush so /home/student exists (see kali_add_student.sh).
   lxc file push "${PHASE3}/kali_add_student.sh" "$c/tmp/kali_add_student.sh" </dev/null

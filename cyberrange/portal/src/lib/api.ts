@@ -175,6 +175,18 @@ export const provisioning = {
     return response.data
   },
 
+  // "Try Again" reset. Permanently deletes this student's milestone_verification
+  // rows for the scenario -- irreversible, so the caller (ScenarioInfoView) must
+  // confirm with the student before calling this.
+  resetScenarioProgress: async (scenarioId: number): Promise<{
+    student_id: string
+    scenario_id: number
+    deleted: number
+  }> => {
+    const response = await apiClient.delete(`/progress/${scenarioId}`)
+    return response.data
+  },
+
   getLabUrls: async (podId: number): Promise<{
     pod_id: number
     student_id: string

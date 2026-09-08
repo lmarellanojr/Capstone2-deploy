@@ -18,11 +18,12 @@ from capacity import (
     ram_required_mb,
     validate_capacity_config,
 )
-from config import API_BIND_HOST, API_BIND_PORT, MAX_PODS, POD_TTL_HOURS, REAP_INTERVAL_SECONDS, PROFILE_NAME
+from config import API_BIND_HOST, API_BIND_PORT, MAX_PODS, POD_TTL_HOURS, REAP_INTERVAL_SECONDS, SCORE_POLL_INTERVAL_SECONDS, PROFILE_NAME
 from db import get_db_connection, init_db
 from logging_config import configure_logging
 from pods_router import router as pods_router
 from reaper import pod_ttl_reaper
+from score_poller import score_poller
 from scoring_imports import load_scoring_modules
 import scoring_state
 
@@ -85,6 +86,21 @@ async def start_reaper():
         logger.info("Phase 7: Agentless scoring enabled")
     else:
         logger.warning("Phase 7: Agentless scoring disabled (ssh_verifier not available)")
+
+
+@app.on_event("startup")
+async def start_score_poller():
+    # issue #12: makes the guides' "or wait for auto-detect" promise real —
+    # previously nothing ever called verify_milestone except a Manual Check
+    # click. See score_poller.py.
+    asyncio.create_task(score_poller())
+    logger.info(
+        "Background score poller started",
+        extra={
+            "event": "api_startup",
+            "detail": f"interval={SCORE_POLL_INTERVAL_SECONDS}s",
+        },
+    )
 
 
 @app.get("/health")
