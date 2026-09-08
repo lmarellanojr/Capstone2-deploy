@@ -103,10 +103,12 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     }
   }, [pod.pod_id])
 
-  // Auto-detect milestones: poll backend every 5s for new PASS results (BUG-040,
-  // shortened from 15s per issue #12 - the previous interval technically worked
-  // but felt sluggish for the "did I just hit max points?" moment this feeds
-  // into (see the completion-modal effect below, issue #8).
+  // Auto-detect milestones: poll backend every 3s for new PASS results (BUG-040,
+  // shortened from 15s, then 5s, per issue #12 - matches the backend score
+  // poller's own 3s cadence (config.SCORE_POLL_INTERVAL_SECONDS) so a result
+  // shows up here about as fast as it's physically written. Speed matters for
+  // the "did I just hit max points?" moment this feeds into (see the
+  // completion-modal effect below, issue #8).
   useEffect(() => {
     if (!pod?.pod_id) return
     const interval = setInterval(async () => {
@@ -134,7 +136,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       } catch {
         // Silently ignore polling errors - terminal still works
       }
-    }, 5000) // Poll every 5 seconds
+    }, 3000) // Poll every 3 seconds
 
     return () => clearInterval(interval)
   }, [pod.pod_id, scenario.milestones, success])

@@ -46,7 +46,7 @@ STUCK_POD_GRACE_MINUTES = int(os.getenv("STUCK_POD_GRACE_MINUTES", "30"))
 # Check" click -- this interval is how long that promise takes to come true
 # on its own. Frontend polls its own GET /milestones every 5s to display
 # whatever this loop has already written; the two are independent.
-SCORE_POLL_INTERVAL_SECONDS = int(os.getenv("SCORE_POLL_INTERVAL_SECONDS", "20"))
+SCORE_POLL_INTERVAL_SECONDS = int(os.getenv("SCORE_POLL_INTERVAL_SECONDS", "3"))
 
 # "localhost", not "127.0.0.1". The Wazuh API server certificate is issued with
 # `subjectAltName = DNS:localhost` ONLY -- there is no IP SAN. Requesting the

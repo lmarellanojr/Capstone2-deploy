@@ -99,7 +99,7 @@ build_kali() {
     # it outright is correct here: this is a headless CLI-only lab
     # container with no GUI network switching need, so NetworkManager
     # serves no purpose and ifupdown alone is sufficient.
-    systemctl disable --now NetworkManager
+    systemctl disable --now NetworkManager 2>/dev/null || true
   '
   # Must run before history flush so /home/student exists (see kali_add_student.sh).
   lxc file push "${PHASE3}/kali_add_student.sh" "$c/tmp/kali_add_student.sh" </dev/null
