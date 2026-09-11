@@ -48,6 +48,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const [sidebarTab, setSidebarTab] = useState<'tasks' | 'guide'>('guide')
   const [showAccessHelp, setShowAccessHelp] = useState<'dvwa' | 'siem' | null>(null)
   const [infoModal, setInfoModal] = useState<'kali' | 'meta' | null>(null)
+  const [showCompletion, setShowCompletion] = useState(false)
   const [labUrls, setLabUrls] = useState<Awaited<ReturnType<typeof provisioning.getLabUrls>> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -102,7 +103,12 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     }
   }, [pod.pod_id])
 
-  // Auto-detect milestones: poll backend every 15s for new PASS results (BUG-040)
+  // Auto-detect milestones: poll backend every 3s for new PASS results (BUG-040,
+  // shortened from 15s, then 5s, per issue #12 - matches the backend score
+  // poller's own 3s cadence (config.SCORE_POLL_INTERVAL_SECONDS) so a result
+  // shows up here about as fast as it's physically written. Speed matters for
+  // the "did I just hit max points?" moment this feeds into (see the
+  // completion-modal effect below, issue #8).
   useEffect(() => {
     if (!pod?.pod_id) return
     const interval = setInterval(async () => {
@@ -130,7 +136,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       } catch {
         // Silently ignore polling errors - terminal still works
       }
-    }, 15000) // Poll every 15 seconds
+    }, 3000) // Poll every 3 seconds
 
     return () => clearInterval(interval)
   }, [pod.pod_id, scenario.milestones, success])
@@ -139,6 +145,18 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const earnedPoints = scenario.milestones
     .filter((m) => completed.has(m.id))
     .reduce((sum, m) => sum + m.points, 0)
+
+  // Fires exactly once when the score first reaches max: this effect only
+  // re-runs when earnedPoints/totalPoints actually change, and once at max
+  // they don't change again, so closing the modal doesn't reopen it (issue #8).
+  // milestonesLoading guards against firing on mount for a fresh pod with
+  // totalPoints already computed but completed still empty for one tick.
+  useEffect(() => {
+    if (milestonesLoading) return
+    if (totalPoints > 0 && earnedPoints === totalPoints) {
+      setShowCompletion(true)
+    }
+  }, [earnedPoints, totalPoints, milestonesLoading])
 
   const handleVerify = useCallback(async (milestoneId: number) => {
     if (completed.has(milestoneId)) return
@@ -170,8 +188,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     }
   }, [completed, pod.pod_id, scenario.id, scenario.milestones, success, warning, toastError])
 
-  const handleEnd = useCallback(async () => {
-    if (!confirm('End this lab session? Your progress has been saved.')) return
+  const teardown = useCallback(() => {
     setEnding(true)
     // Tear down the persistent terminal sessions for this pod so WebSocket/SSH
     // connections don't linger after the lab ends.
@@ -181,6 +198,11 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     onEnd()
     router.push('/dashboard')
   }, [onEnd, router, pod.pod_id])
+
+  const handleEnd = useCallback(async () => {
+    if (!confirm('End this lab session? Your progress has been saved.')) return
+    teardown()
+  }, [teardown])
 
   const copyText = useCallback(async (text: string, label: string) => {
     const ok = await copyToClipboard(text)
@@ -532,6 +554,29 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             }}
           >
             Open meta terminal
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal isOpen={showCompletion} onClose={() => setShowCompletion(false)}>
+        <ModalHeader title="Scenario complete!" />
+        <ModalBody>
+          <p className="text-text-secondary mb-3">
+            <strong className="text-text-main">Congratulations</strong> - you
+            reached max points on <strong className="text-text-main">{scenario.name}</strong>:{' '}
+            <strong className="text-brand">{earnedPoints} / {totalPoints} pts</strong>.
+          </p>
+          <p className="text-text-secondary">
+            Your score is already saved. You can keep exploring this pod, or
+            end the session now to free it up.
+          </p>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="secondary" size="sm" onClick={() => setShowCompletion(false)}>
+            Keep exploring
+          </Button>
+          <Button variant="primary" size="sm" loading={ending} onClick={teardown}>
+            End Session
           </Button>
         </ModalFooter>
       </Modal>

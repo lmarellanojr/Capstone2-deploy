@@ -75,6 +75,26 @@ check_behavior() {
     return 1
 }
 
+# Guards against the false-PASS where a student typed the right nmap command
+# but it never actually worked because eth0 was down (routing broken) at the
+# time -- check_behavior only proves the command was typed, not that it
+# succeeded. Confirms the container currently has a route to *some* pod
+# subnet (10.0.<n>.0/24), which is exactly the condition that was missing
+# when this bug surfaced (interface administratively down -> ip route empty).
+has_subnet_route() {
+    ip -4 route show 2>/dev/null | grep -qE '^10\.0\.[0-9]+\.0/24 '
+}
+
+# This container's own "10.0.<n>" prefix, read from its actual eth0 address --
+# not a hardcoded/guessed pod number. Using a bare [0-9]+ wildcard in the nmap
+# target checks below would accept ANY pod's subnet, including one that isn't
+# this student's own (e.g. crediting a scan of 10.0.55.0/24 while this
+# student's real subnet is 10.0.51.0/24). Deriving it from the live interface
+# ties the check to the actual pod, same spirit as has_subnet_route.
+own_subnet_prefix() {
+    ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d'.' -f1-3
+}
+
 # Metasploit console history (interactive msfconsole does not write .bash_history).
 check_msf_history() {
     local pattern="$1"
@@ -100,23 +120,60 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 # Scenario 1: Network Reconnaissance (Kali attacker perspective)
 check_scenario_1() {
     local milestone=$1
+    local prefix esc
+    prefix=$(own_subnet_prefix)
+    esc="${prefix//./\\.}"  # escape dots for regex use
     case $milestone in
         1)
-            # M1: Host Discovery (nmap)
-            # Per-pod scheme: victims live at 10.0.<50+pod_id>.{20,30}. Match any
-            # 10.0.<n>.<host> target so recon credits regardless of pod subnet.
-            if check_behavior "nmap.*10\.0\.[0-9]+\."; then echo "PASS"; return; fi
+            # M1: Host Discovery (nmap -sn against THIS pod's actual /24
+            # network address, e.g. 10.0.51.0/24 -- derived live from eth0
+            # via own_subnet_prefix, not a hardcoded number or a bare
+            # [0-9]+ wildcard.
+            #
+            # Two earlier, narrower bugs both stemmed from the same root
+            # cause -- matching loosely instead of anchoring to the real
+            # target: (1) "nmap.*10\.0\.[0-9]+\." matched any text
+            # containing "10.0.<n>." anywhere, so a mistyped target like
+            # "10.0.51.1/20" (wrong host octet, wrong prefix length) still
+            # matched; (2) even after anchoring to ".0/24", a bare [0-9]+
+            # for the subnet octet would have credited scanning a
+            # *different* pod's subnet (e.g. 10.0.55.0/24) as if it were
+            # this student's own.
+            #
+            # has_subnet_route guards against a false PASS from a
+            # correctly-typed command that never actually worked because
+            # eth0 was down at the time (see provisioning's
+            # ensure_guest_nic_up / R7e) -- checked at verify time, not
+            # history time, so it reflects current reality.
+            if [[ -n "$prefix" ]] && check_behavior "nmap.*${esc}\.0/24" && has_subnet_route; then
+              echo "PASS"; return
+            fi
             echo "FAIL"
             ;;
         2)
-            # M2: Port Enumeration — prefer -p / -F / port list against a host (not bare -sn)
-            if check_behavior "nmap.*(-p|-F).*10\.0\.[0-9]+\.|nmap.*10\.0\.[0-9]+\.(20|30)"; then echo "PASS"; return; fi
-            if check_behavior "nmap.*-p |nmap -F "; then echo "PASS"; return; fi
+            # M2: Port Enumeration — prefer -p / -F / port list against this
+            # pod's actual meta/dvwa host (.20/.30), not any pod's. The old
+            # fallback "nmap.*-p |nmap -F " required no target at all (any
+            # -p/-F scan of anything passed) -- dropped rather than tightened,
+            # since a port scan of the wrong host isn't port enumeration of
+            # the target.
+            if [[ -z "$prefix" ]] || ! has_subnet_route; then echo "FAIL"; return; fi
+            if check_behavior "nmap.*(-p|-F).*${esc}\.(20|30)|nmap.*${esc}\.(20|30).*(-p|-F)"; then
+              echo "PASS"; return
+            fi
             echo "FAIL"
             ;;
         3)
-            # M3: Service Version Detection (nmap -sV)
-            if check_behavior "nmap.*-sV"; then echo "PASS"; return; fi
+            # M3: Service Version Detection (nmap -sV against this pod's real
+            # victim host). Old pattern "nmap.*-sV" matched -sV anywhere in
+            # history regardless of target, so a scan against a mistyped/
+            # nonexistent IP (10.0.51.19 when meta is .20) or even another
+            # pod's subnet still credited full points despite nmap itself
+            # reporting 0 hosts up. Anchor to THIS pod's actual victim IPs,
+            # in either flag/IP order a student might type.
+            if [[ -n "$prefix" ]] && check_behavior "nmap.*-sV.*${esc}\.(20|30)|nmap.*${esc}\.(20|30).*-sV" && has_subnet_route; then
+              echo "PASS"; return
+            fi
             echo "FAIL"
             ;;
         4)

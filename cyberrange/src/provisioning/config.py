@@ -40,6 +40,14 @@ REAP_INTERVAL_SECONDS = int(os.getenv("REAP_INTERVAL_SECONDS", "600"))
 # provision/destroy in progress is never mistaken for stuck.
 STUCK_POD_GRACE_MINUTES = int(os.getenv("STUCK_POD_GRACE_MINUTES", "30"))
 
+# How often the background scorer re-checks each active pod's unfinished
+# milestones (issue #12). The guide tells students to "wait for auto-detect,"
+# but nothing previously called verify_milestone except a manual "Manual
+# Check" click -- this interval is how long that promise takes to come true
+# on its own. Frontend polls its own GET /milestones every 5s to display
+# whatever this loop has already written; the two are independent.
+SCORE_POLL_INTERVAL_SECONDS = int(os.getenv("SCORE_POLL_INTERVAL_SECONDS", "3"))
+
 # "localhost", not "127.0.0.1". The Wazuh API server certificate is issued with
 # `subjectAltName = DNS:localhost` ONLY -- there is no IP SAN. Requesting the
 # literal IP makes TLS hostname verification fail (WAZUH_TLS_VERIFY defaults to
