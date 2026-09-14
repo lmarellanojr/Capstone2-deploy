@@ -1,6 +1,7 @@
 """Pod provisioning and lifecycle API routes."""
 import sqlite3
 from typing import Optional
+from pydantic import BaseModel
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
@@ -397,3 +398,104 @@ def get_pod_milestones(pod_id: int, claims: dict = Depends(verify_token)):
         "student_id": pod["student_id"],
         "milestones": list_milestones_for_pod(dict(pod)),
     }
+
+
+@router.get("/instructor/pods")
+def instructor_list_pods(claims: dict = Depends(verify_token)):
+    """List all active student pods with milestone progress for instructor monitoring."""
+    auth.require_role(["instructor", "admin"], claims)
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT * FROM pods WHERE status NOT IN ('DESTROYED','FAILED_ROLLBACK_COMPLETE') ORDER BY pod_id"
+    ).fetchall()
+    pods = []
+    for r in rows:
+        pod_dict = serialize_pod(r)
+        pod_dict["milestones"] = list_milestones_for_pod(dict(r))
+        pods.append(pod_dict)
+    conn.close()
+    return {"pods": pods}
+
+
+class ReviewSubmitRequest(BaseModel):
+    scenario_id: int
+    milestone_id: Optional[int] = None
+    report_text: str
+
+
+class ReviewResolveRequest(BaseModel):
+    status: str
+    score: int
+    feedback: Optional[str] = None
+
+
+@router.post("/reviews/submit")
+def submit_student_review(
+    body: ReviewSubmitRequest, claims: dict = Depends(verify_token)
+):
+    """Student endpoint to submit written report writeup for scenario grading."""
+    student_id = caller_identity(claims, None)
+    if not student_id:
+        raise HTTPException(status_code=401, detail="Identity required")
+    if not body.report_text or not body.report_text.strip():
+        raise HTTPException(status_code=400, detail="report_text cannot be empty")
+
+    conn = get_db_connection()
+    cursor = conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, status) "
+        "VALUES (?, ?, ?, ?, 'PENDING')",
+        (student_id, body.scenario_id, body.milestone_id, body.report_text.strip()),
+    )
+    review_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    return {"status": "submitted", "review_id": review_id}
+
+
+@router.get("/instructor/reviews")
+def list_student_reviews(
+    status_filter: Optional[str] = None, claims: dict = Depends(verify_token)
+):
+    """Instructor / Admin endpoint to list student written reports."""
+    auth.require_role(["instructor", "admin"], claims)
+    conn = get_db_connection()
+    if status_filter:
+        rows = conn.execute(
+            "SELECT * FROM review_cases WHERE status=? ORDER BY created_at DESC",
+            (status_filter.upper(),),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM review_cases ORDER BY created_at DESC"
+        ).fetchall()
+    conn.close()
+    return {"reviews": [dict(r) for r in rows]}
+
+
+@router.post("/instructor/reviews/{review_id}/resolve")
+def resolve_student_review(
+    review_id: int, body: ReviewResolveRequest, claims: dict = Depends(verify_token)
+):
+    """Instructor / Admin endpoint to grade and resolve student report."""
+    auth.require_role(["instructor", "admin"], claims)
+    instructor_id = caller_identity(claims, "instructor_demo")
+    valid_statuses = ("APPROVED", "REJECTED", "RETRY")
+    if body.status.upper() not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status: must be one of {valid_statuses}")
+
+    conn = get_db_connection()
+    row = conn.execute("SELECT * FROM review_cases WHERE review_id=?", (review_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Review case not found")
+
+    conn.execute(
+        "UPDATE review_cases SET status=?, score=?, feedback=?, graded_by=?, updated_at=CURRENT_TIMESTAMP "
+        "WHERE review_id=?",
+        (body.status.upper(), body.score, body.feedback, instructor_id, review_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return {"status": "resolved", "review_id": review_id, "decision": body.status.upper()}
