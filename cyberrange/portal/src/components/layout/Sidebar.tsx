@@ -6,25 +6,15 @@ import { useSession } from "next-auth/react";
 import { Badge } from "@/components/ui";
 import { Logo } from "./Logo";
 import { useScenarios } from "@/hooks/useScenarios";
-import type { NavItem } from "@/lib/navigation";
 
-interface SidebarProps {
-  /** Overrides the default Student nav. Instructor/Admin shells pass their own set. */
-  navItems?: NavItem[];
-  /** Small label under the logo (e.g. "Instructor", "Admin") so the shared shell reads as that section. */
-  sectionLabel?: string;
-}
-
-export function Sidebar({ navItems, sectionLabel }: SidebarProps) {
+export function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const scenarios = useScenarios();
 
-  // Exact match only: with nested section routes (e.g. /instructor and
-  // /instructor/students) a startsWith check would light up both at once.
-  const isActive = (href: string) => pathname === href;
+  const isActive = (href: string) => pathname.startsWith(href);
 
-  const defaultNavItems: NavItem[] = [
+  const navItems = [
     { href: "/dashboard", label: "Dashboard", icon: "▦" },
     { href: "/scenarios", label: "My Labs", icon: "◎", badge: String(scenarios.length) },
     { href: "#", label: "Leaderboard", icon: "▲", disabled: true },
@@ -32,21 +22,14 @@ export function Sidebar({ navItems, sectionLabel }: SidebarProps) {
     { href: "#", label: "Settings", icon: "⚙", disabled: true },
   ];
 
-  const items = navItems ?? defaultNavItems;
-
   return (
     <aside className="w-64 max-w-full bg-secondary border-r border-border h-screen min-h-[100dvh] flex flex-col shadow-card">
       <div className="p-6 border-b border-border">
         <Logo showSubtitle />
-        {sectionLabel && (
-          <span className="mt-3 inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide bg-brand/10 text-brand border border-brand/20">
-            {sectionLabel}
-          </span>
-        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-6 space-y-1">
-        {items.map((item) => {
+        {navItems.map((item) => {
           const active = !item.disabled && isActive(item.href);
           const className = `flex items-center justify-between px-4 py-3 rounded-lg transition text-sm ${
             item.disabled

@@ -45,7 +45,5 @@ export const config = {
     "/progress/:path*",
     "/settings/:path*",
     "/profile/:path*",
-    "/instructor/:path*",
-    "/admin/:path*",
   ],
 }

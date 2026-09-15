@@ -4,17 +4,13 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { TopNav } from "./TopNav";
-import type { NavItem } from "@/lib/navigation";
 
 interface LayoutWrapperProps {
   children: React.ReactNode;
   onSearch?: (query: string) => void;
-  /** Passed through to Sidebar so Instructor/Admin shells can reuse this same shell with their own nav. */
-  navItems?: NavItem[];
-  sectionLabel?: string;
 }
 
-export function LayoutWrapper({ children, onSearch, navItems, sectionLabel }: LayoutWrapperProps) {
+export function LayoutWrapper({ children, onSearch }: LayoutWrapperProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
 
@@ -23,7 +19,7 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel }: La
   return (
     <div className="flex h-screen min-h-[100dvh] bg-primary overflow-hidden">
       <div className="hidden lg:block w-64 flex-shrink-0">
-        <Sidebar navItems={navItems} sectionLabel={sectionLabel} />
+        <Sidebar />
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -37,7 +33,7 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel }: La
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
           <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setMenuOpen(false)} aria-label="Close navigation menu" />
           <div className="relative w-64 max-w-[85vw] h-full">
-            <Sidebar navItems={navItems} sectionLabel={sectionLabel} />
+            <Sidebar />
             <button type="button" onClick={() => setMenuOpen(false)} className="absolute top-4 right-3 p-2 rounded-lg bg-secondary text-text-main hover:bg-muted" aria-label="Close navigation menu">✕</button>
           </div>
         </div>
