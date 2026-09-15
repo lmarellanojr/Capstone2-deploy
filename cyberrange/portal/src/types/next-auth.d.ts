@@ -4,6 +4,13 @@ declare module 'next-auth' {
   // session() callback. Client-side only -- the FastAPI backend never trusts
   // this value and re-derives roles itself from the bearer token it receives
   // (see provisioning/auth.py's require_role()).
+  //
+  // Deliberately string[], not a narrow union: the raw array always also
+  // carries Keycloak-internal roles (offline_access, uma_authorization,
+  // default-roles-<realm>) alongside the three app roles below, and callers
+  // must tolerate roles this app doesn't know about without a type error.
+  // Role is exported as a convenience for callers checking a known value
+  // (e.g. `roles.includes(role satisfies Role)`), not as roles' own type.
   export type Role = "student" | "instructor" | "admin";
 
   export interface Session {
@@ -13,7 +20,7 @@ declare module 'next-auth' {
       name?: string | null;
       email?: string | null;
       image?: string | null;
-      roles?: Role[];
+      roles?: string[];
     };
   }
   export interface NextAuthOptions {
