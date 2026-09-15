@@ -52,6 +52,65 @@ def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
 
 
+def _has_table(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return bool(row)
+
+
+def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
+    if not _has_table(conn, "review_cases"):
+        return
+    cols = {r[1]: r for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
+    needs_rebuild = False
+    if "case_type" not in cols:
+        needs_rebuild = True
+    elif cols.get("report_text") and cols["report_text"][3] == 1:
+        needs_rebuild = True
+
+    if needs_rebuild:
+        old_cols = set(cols.keys())
+        ct_col = "case_type" if "case_type" in old_cols else "'WRITTEN_REPORT'"
+        cr_col = "conflict_reason" if "conflict_reason" in old_cols else "NULL"
+        ed_col = "evidence_data" if "evidence_data" in old_cols else "NULL"
+        with conn:
+            conn.execute("ALTER TABLE review_cases RENAME TO _review_cases_old")
+            conn.execute("""
+                CREATE TABLE review_cases (
+                    review_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_id      TEXT NOT NULL,
+                    scenario_id     INTEGER NOT NULL,
+                    milestone_id    INTEGER,
+                    case_type       TEXT CHECK(case_type IN ('WRITTEN_REPORT','SCORING_CONFLICT','MANUAL_REVIEW')) DEFAULT 'WRITTEN_REPORT',
+                    report_text     TEXT,
+                    conflict_reason TEXT,
+                    evidence_data   TEXT,
+                    score           INTEGER DEFAULT 0 CHECK(score >= 0 AND score <= 100),
+                    status          TEXT CHECK(status IN ('PENDING','APPROVED','REJECTED','RETRY')) DEFAULT 'PENDING',
+                    feedback        TEXT,
+                    graded_by       TEXT,
+                    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute(f"""
+                INSERT INTO review_cases (
+                    review_id, student_id, scenario_id, milestone_id, case_type,
+                    report_text, conflict_reason, evidence_data, score, status, feedback, graded_by, created_at, updated_at
+                )
+                SELECT
+                    review_id, student_id, scenario_id, milestone_id,
+                    {ct_col}, report_text, {cr_col}, {ed_col}, score, status, feedback, graded_by,
+                    created_at, updated_at
+                FROM _review_cases_old
+            """)
+            conn.execute("DROP TABLE _review_cases_old")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_student ON review_cases(student_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_status ON review_cases(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_case_type ON review_cases(case_type)")
+
+
 def apply(db_path: str | None = None) -> int:
     path = db_path or DB_PATH
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -74,6 +133,7 @@ def apply(db_path: str | None = None) -> int:
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (version,),
                 )
+        _upgrade_review_cases_schema(conn)
         return current_version(conn)
     finally:
         conn.close()
