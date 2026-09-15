@@ -459,10 +459,16 @@ def instructor_list_students(claims: dict = Depends(verify_token)):
             (sid,),
         ).fetchall()
 
+        pending_reviews = conn.execute(
+            "SELECT COUNT(*) FROM review_cases WHERE student_id = ? AND status = 'PENDING'",
+            (sid,),
+        ).fetchone()[0]
+
         students.append({
             "student_id": sid,
             "active_pod": active_pod,
             "milestones": [dict(m) for m in milestone_rows],
+            "pending_review_count": pending_reviews,
         })
 
     conn.close()
@@ -471,7 +477,7 @@ def instructor_list_students(claims: dict = Depends(verify_token)):
 
 @router.get("/instructor/students/{student_id}")
 def instructor_get_student_progress(student_id: str, claims: dict = Depends(verify_token)):
-    """Get active pod and historical milestone progress for a specific student."""
+    """Get active pod, historical milestone progress, and review cases for a specific student."""
     auth.require_role(["instructor", "admin"], claims)
     conn = get_db_connection()
     exists = conn.execute(
@@ -503,33 +509,19 @@ def instructor_get_student_progress(student_id: str, claims: dict = Depends(veri
         "ORDER BY verified_at DESC",
         (student_id,),
     ).fetchall()
+
+    review_rows = conn.execute(
+        "SELECT * FROM review_cases WHERE student_id = ? ORDER BY created_at DESC",
+        (student_id,),
+    ).fetchall()
     conn.close()
 
     return {
         "student_id": student_id,
         "active_pod": active_pod,
         "milestones": [dict(m) for m in milestone_rows],
+        "reviews": [dict(r) for r in review_rows],
     }
-
-
-@router.delete("/admin/pods/{pod_id}/force-destroy")
-async def force_destroy_pod(
-    pod_id: int, background_tasks: BackgroundTasks, claims: dict = Depends(verify_token)
-):
-    """Admin force destroy endpoint to clean up orphaned or stuck pods."""
-    auth.require_role(["admin"], claims)
-    conn = get_db_connection()
-    pod = conn.execute("SELECT * FROM pods WHERE pod_id=?", (pod_id,)).fetchone()
-    if not pod:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Pod not found")
-
-    conn.execute("UPDATE pods SET status='DESTROYING' WHERE pod_id=?", (pod_id,))
-    conn.commit()
-    conn.close()
-
-    background_tasks.add_task(perform_destruction, dict(pod))
-    return {"status": "destroying", "pod_id": pod_id, "mode": "force"}
 
 
 class ReviewSubmitRequest(BaseModel):
@@ -539,12 +531,6 @@ class ReviewSubmitRequest(BaseModel):
     report_text: Optional[str] = None
     conflict_reason: Optional[str] = None
     evidence_data: Optional[Union[str, dict, list]] = None
-
-
-class ReviewResolveRequest(BaseModel):
-    status: str
-    score: int
-    feedback: Optional[str] = None
 
 
 @router.post("/reviews/submit")
@@ -645,31 +631,4 @@ def get_student_review_detail(
     return dict(row)
 
 
-@router.post("/instructor/reviews/{review_id}/resolve")
-def resolve_student_review(
-    review_id: int, body: ReviewResolveRequest, claims: dict = Depends(verify_token)
-):
-    """Instructor / Admin endpoint to grade and resolve student review case."""
-    auth.require_role(["instructor", "admin"], claims)
-    instructor_id = caller_identity(claims, "instructor_demo")
-    valid_statuses = ("APPROVED", "REJECTED", "RETRY")
-    if body.status.upper() not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"Invalid status: must be one of {valid_statuses}")
-    if body.score < 0 or body.score > 100:
-        raise HTTPException(status_code=400, detail="Score must be between 0 and 100")
 
-    conn = get_db_connection()
-    row = conn.execute("SELECT * FROM review_cases WHERE review_id=?", (review_id,)).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Review case not found")
-
-    conn.execute(
-        "UPDATE review_cases SET status=?, score=?, feedback=?, graded_by=?, updated_at=CURRENT_TIMESTAMP "
-        "WHERE review_id=?",
-        (body.status.upper(), body.score, body.feedback, instructor_id, review_id),
-    )
-    conn.commit()
-    conn.close()
-
-    return {"status": "resolved", "review_id": review_id, "decision": body.status.upper()}

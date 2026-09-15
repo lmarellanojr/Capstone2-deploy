@@ -1,5 +1,6 @@
 """Unit tests for v4 review_cases schema and review APIs."""
 import os
+import sqlite3
 import tempfile
 import pytest
 from fastapi.testclient import TestClient
@@ -55,7 +56,67 @@ def test_v4_migration_creates_review_cases():
     conn.close()
 
 
-def test_submit_and_resolve_review():
+def test_migration_upgrades_legacy_review_cases(tmp_path):
+    db_file = str(tmp_path / "legacy_review_test.db")
+    conn = sqlite3.connect(db_file)
+    # 1. Creates the old review table
+    conn.execute("""
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    conn.execute("""
+        CREATE TABLE review_cases (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            scenario_id INTEGER NOT NULL,
+            milestone_id INTEGER,
+            report_text TEXT NOT NULL,
+            score INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'PENDING',
+            feedback TEXT,
+            graded_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # 2. Inserts an old review row
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, status) "
+        "VALUES ('legacy_student', 1, 1, 'Legacy report text content', 'PENDING')"
+    )
+    conn.commit()
+    conn.close()
+
+    # 3. Runs migrate.apply()
+    assert migrate.apply(db_file) >= 4
+
+    # 4. Confirms the row still exists
+    conn = sqlite3.connect(db_file)
+    row = conn.execute("SELECT * FROM review_cases WHERE student_id='legacy_student'").fetchone()
+    assert row is not None
+    cols = [d[0] for d in conn.execute("SELECT * FROM review_cases").description]
+    row_dict = dict(zip(cols, row))
+    assert row_dict["report_text"] == "Legacy report text content"
+    assert row_dict["status"] == "PENDING"
+    assert row_dict["case_type"] == "WRITTEN_REPORT"
+
+    # 5. Confirms the new columns and indexes exist
+    col_names = {r[1] for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
+    assert "case_type" in col_names
+    assert "conflict_reason" in col_names
+    assert "evidence_data" in col_names
+
+    index_names = {r[1] for r in conn.execute("PRAGMA index_list(review_cases)").fetchall()}
+    assert "idx_review_cases_case_type" in index_names
+    assert "idx_review_cases_student" in index_names
+    assert "idx_review_cases_status" in index_names
+    conn.close()
+
+
+def test_submit_and_list_reviews():
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
 
@@ -79,24 +140,14 @@ def test_submit_and_resolve_review():
     assert reviews[0]["status"] == "PENDING"
     assert reviews[0]["student_id"] == "student1"
 
-    # 3. Resolve review (Approve with score 100)
-    res_resolve = client.post(f"/instructor/reviews/{review_id}/resolve", json={
-        "status": "APPROVED",
-        "score": 100,
-        "feedback": "Great work on identifying the SQLi vulnerability!"
-    }, headers=headers)
-    assert res_resolve.status_code == 200
-    assert res_resolve.json()["decision"] == "APPROVED"
-
-    # 4. Verify updated state in DB
-    res_list_after = client.get("/instructor/reviews?status_filter=APPROVED", headers=headers)
-    assert res_list_after.status_code == 200
-    approved_reviews = res_list_after.json()["reviews"]
-    assert len(approved_reviews) == 1
-    assert approved_reviews[0]["score"] == 100
-    assert approved_reviews[0]["feedback"] == "Great work on identifying the SQLi vulnerability!"
-    assert approved_reviews[0]["graded_by"] is not None
-    assert approved_reviews[0]["updated_at"] is not None
+    # 3. Verify single review detail endpoint
+    res_detail = client.get(f"/instructor/reviews/{review_id}", headers=headers)
+    assert res_detail.status_code == 200
+    detail = res_detail.json()
+    assert detail["review_id"] == review_id
+    assert detail["status"] == "PENDING"
+    assert detail["report_text"] == "Discovered SQL injection vulnerability on login portal."
+    assert detail["case_type"] == "WRITTEN_REPORT"
 
 
 def test_submit_scoring_conflict_without_report_text():
@@ -206,78 +257,6 @@ def test_get_review_detail_rbac_forbidden(monkeypatch):
     assert res.status_code == 403
 
 
-def test_resolve_nonexistent_review():
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer mock_token"}
-    res = client.post("/instructor/reviews/9999/resolve", json={
-        "status": "APPROVED",
-        "score": 50,
-        "feedback": "Nonexistent"
-    }, headers=headers)
-    assert res.status_code == 404
-    assert "Review case not found" in res.json()["detail"]
-
-
-def test_resolve_invalid_status():
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer mock_token"}
-
-    # Submit valid review first
-    res_sub = client.post("/reviews/submit", json={
-        "scenario_id": 1,
-        "report_text": "Report to test invalid resolution status"
-    }, headers=headers)
-    review_id = res_sub.json()["review_id"]
-
-    # Try resolving with invalid status
-    res = client.post(f"/instructor/reviews/{review_id}/resolve", json={
-        "status": "PASSED_WITH_FLYING_COLORS",
-        "score": 100
-    }, headers=headers)
-    assert res.status_code == 400
-    assert "Invalid status" in res.json()["detail"]
-
-
-def test_resolve_score_out_of_bounds():
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer mock_token"}
-
-    res_sub = client.post("/reviews/submit", json={
-        "scenario_id": 1,
-        "report_text": "Report for score bound testing"
-    }, headers=headers)
-    review_id = res_sub.json()["review_id"]
-
-    # Below 0
-    res_low = client.post(f"/instructor/reviews/{review_id}/resolve", json={
-        "status": "APPROVED",
-        "score": -1
-    }, headers=headers)
-    assert res_low.status_code == 400
-    assert "Score must be between 0 and 100" in res_low.json()["detail"]
-
-    # Above 100
-    res_high = client.post(f"/instructor/reviews/{review_id}/resolve", json={
-        "status": "APPROVED",
-        "score": 101
-    }, headers=headers)
-    assert res_high.status_code == 400
-    assert "Score must be between 0 and 100" in res_high.json()["detail"]
-
-    # Edge cases: 0 and 100 should succeed
-    res_0 = client.post(f"/instructor/reviews/{review_id}/resolve", json={
-        "status": "REJECTED",
-        "score": 0
-    }, headers=headers)
-    assert res_0.status_code == 200
-
-    res_100 = client.post(f"/instructor/reviews/{review_id}/resolve", json={
-        "status": "APPROVED",
-        "score": 100
-    }, headers=headers)
-    assert res_100.status_code == 200
-
-
 def test_instructor_pods_payload_minimization():
     conn = db.get_db_connection()
     try:
@@ -349,11 +328,13 @@ def test_instructor_student_progress_without_active_pod():
     s_hist = next(s for s in students if s["student_id"] == "historical_student")
     assert s_hist["active_pod"] is None
     assert len(s_hist["milestones"]) == 2
+    assert s_hist["pending_review_count"] == 0
 
     s_act = next(s for s in students if s["student_id"] == "active_student")
     assert s_act["active_pod"] is not None
     assert s_act["active_pod"]["pod_id"] == 21
     assert "vmid_kali" not in s_act["active_pod"]
+    assert s_act["pending_review_count"] == 0
 
     # 2. Get historical student progress by student_id
     res_single = client.get("/instructor/students/historical_student", headers=headers)
@@ -362,6 +343,43 @@ def test_instructor_student_progress_without_active_pod():
     assert single_data["student_id"] == "historical_student"
     assert single_data["active_pod"] is None
     assert len(single_data["milestones"]) == 2
+    assert single_data["reviews"] == []
+
+
+def test_instructor_student_progress_with_review_only():
+    conn = db.get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO review_cases (student_id, scenario_id, milestone_id, case_type, conflict_reason, status) "
+            "VALUES ('review_only_student', 5, 2, 'SCORING_CONFLICT', 'Verifier timed out', 'PENDING')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # 1. GET /instructor/students includes review_only_student with pending_review_count == 1
+    res_list = client.get("/instructor/students", headers=headers)
+    assert res_list.status_code == 200
+    students = res_list.json()["students"]
+    s = next((st for st in students if st["student_id"] == "review_only_student"), None)
+    assert s is not None
+    assert s["active_pod"] is None
+    assert s["milestones"] == []
+    assert s["pending_review_count"] == 1
+
+    # 2. GET /instructor/students/{student_id} returns reviews list
+    res_detail = client.get("/instructor/students/review_only_student", headers=headers)
+    assert res_detail.status_code == 200
+    detail = res_detail.json()
+    assert detail["student_id"] == "review_only_student"
+    assert detail["active_pod"] is None
+    assert detail["milestones"] == []
+    assert len(detail["reviews"]) == 1
+    assert detail["reviews"][0]["case_type"] == "SCORING_CONFLICT"
+    assert detail["reviews"][0]["conflict_reason"] == "Verifier timed out"
 
 
 def test_instructor_student_progress_not_found():
@@ -401,8 +419,5 @@ def test_instructor_rbac_forbidden_for_student(monkeypatch):
     res_list = client.get("/instructor/reviews", headers=headers)
     assert res_list.status_code == 403
 
-    res_resolve = client.post("/instructor/reviews/1/resolve", json={
-        "status": "APPROVED",
-        "score": 100
-    }, headers=headers)
-    assert res_resolve.status_code == 403
+    res_detail = client.get("/instructor/reviews/1", headers=headers)
+    assert res_detail.status_code == 403

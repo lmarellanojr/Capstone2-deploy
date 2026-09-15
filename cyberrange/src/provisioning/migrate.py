@@ -128,6 +128,8 @@ def apply(db_path: str | None = None) -> int:
                     conn.execute(
                         "ALTER TABLE milestone_verification ADD COLUMN student_id TEXT"
                     )
+                if version == 4:
+                    _upgrade_review_cases_schema(conn)
                 _run_sql_file(conn, sql_path)
                 conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)",
