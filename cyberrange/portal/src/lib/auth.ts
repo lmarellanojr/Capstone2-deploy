@@ -90,6 +90,12 @@ async function doRefresh(token: JWT): Promise<JWT> {
     return {
       ...token,
       accessToken: refreshed.access_token,
+      // Re-decode roles from the freshly-issued token, not carried over from
+      // initial sign-in: Keycloak evaluates role mappings at issuance time,
+      // so a role change made mid-session (e.g. an admin promoting/demoting
+      // a user) must show up on the next refresh, not only after the user's
+      // NextAuth session cookie expires and they fully re-authenticate.
+      roles: decodeRoles(refreshed.access_token),
       accessTokenExpires: Date.now() + refreshed.expires_in * 1000,
       refreshToken: refreshed.refresh_token ?? token.refreshToken,
       error: undefined,
