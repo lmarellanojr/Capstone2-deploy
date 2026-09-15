@@ -20,10 +20,6 @@ export function Sidebar({ navItems, sectionLabel }: SidebarProps) {
   const { data: session } = useSession();
   const scenarios = useScenarios();
 
-  // Exact match only: with nested section routes (e.g. /instructor and
-  // /instructor/students) a startsWith check would light up both at once.
-  const isActive = (href: string) => pathname === href;
-
   const defaultNavItems: NavItem[] = [
     { href: "/dashboard", label: "Dashboard", icon: "▦" },
     { href: "/scenarios", label: "My Labs", icon: "◎", badge: String(scenarios.length) },
@@ -33,6 +29,17 @@ export function Sidebar({ navItems, sectionLabel }: SidebarProps) {
   ];
 
   const items = navItems ?? defaultNavItems;
+
+  // Pick the longest matching href so a child route (e.g. /instructor/reviews/case-0142)
+  // still activates its section item ("Reviews") without also lighting up an unrelated
+  // sibling/parent that merely shares a string prefix.
+  const activeHref = items.reduce<string | null>((best, item) => {
+    if (item.disabled) return best;
+    const matches = pathname === item.href || pathname.startsWith(item.href + "/");
+    if (!matches) return best;
+    return best === null || item.href.length > best.length ? item.href : best;
+  }, null);
+  const isActive = (href: string) => href === activeHref;
 
   return (
     <aside className="w-64 max-w-full bg-secondary border-r border-border h-screen min-h-[100dvh] flex flex-col shadow-card">
