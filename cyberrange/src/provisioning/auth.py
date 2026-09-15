@@ -102,7 +102,7 @@ def caller_identity(claims: dict, fallback: Optional[str] = None) -> Optional[st
 
 
 def extract_roles(claims: dict) -> list:
-    """Extract all realm and resource roles from Keycloak claims."""
+    """Extract accepted realm and portal client roles from Keycloak claims."""
     roles = []
     if not claims:
         return roles
@@ -111,9 +111,9 @@ def extract_roles(claims: dict) -> list:
         roles.extend(realm_access.get("roles", []))
     resource_access = claims.get("resource_access", {})
     if isinstance(resource_access, dict):
-        for client_roles in resource_access.values():
-            if isinstance(client_roles, dict):
-                roles.extend(client_roles.get("roles", []))
+        portal_access = resource_access.get(KEYCLOAK_CLIENT_ID, {})
+        if isinstance(portal_access, dict):
+            roles.extend(portal_access.get("roles", []))
     return list(set(roles))
 
 

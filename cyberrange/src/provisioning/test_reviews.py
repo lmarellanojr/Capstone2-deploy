@@ -1,4 +1,4 @@
-"""Unit tests for v4 review_cases schema and review APIs."""
+"""Unit tests for v4 review_cases schema, review APIs, and RBAC isolation."""
 import os
 import sqlite3
 import tempfile
@@ -13,6 +13,20 @@ from auth import verify_token
 from provision_api_fastapi import app
 
 
+def student_claims(username="student1"):
+    return {
+        "preferred_username": username,
+        "realm_access": {"roles": ["student"]}
+    }
+
+
+def instructor_claims(username="instructor1"):
+    return {
+        "preferred_username": username,
+        "realm_access": {"roles": ["instructor"]}
+    }
+
+
 @pytest.fixture(autouse=True)
 def temp_db(monkeypatch):
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
@@ -22,10 +36,8 @@ def temp_db(monkeypatch):
     monkeypatch.setattr("db.DB_PATH", db_path)
     monkeypatch.setattr("auth.AUTH_ENABLED", True)
 
-    app.dependency_overrides[verify_token] = lambda: {
-        "preferred_username": "student1",
-        "realm_access": {"roles": ["student", "instructor", "admin"]}
-    }
+    # By default, tests use a student-only token
+    app.dependency_overrides[verify_token] = lambda: student_claims("student1")
 
     migrate.apply(db_path)
     yield db_path
@@ -59,7 +71,7 @@ def test_v4_migration_creates_review_cases():
 def test_migration_upgrades_legacy_review_cases(tmp_path):
     db_file = str(tmp_path / "legacy_review_test.db")
     conn = sqlite3.connect(db_file)
-    # 1. Creates the old review table
+    # 1. Creates the old review table with report_text NOT NULL and score DEFAULT 0
     conn.execute("""
         CREATE TABLE schema_version (
             version INTEGER PRIMARY KEY,
@@ -93,7 +105,7 @@ def test_migration_upgrades_legacy_review_cases(tmp_path):
     # 3. Runs migrate.apply()
     assert migrate.apply(db_file) >= 4
 
-    # 4. Confirms the row still exists
+    # 4. Confirms the row still exists and ungraded score is NULL
     conn = sqlite3.connect(db_file)
     row = conn.execute("SELECT * FROM review_cases WHERE student_id='legacy_student'").fetchone()
     assert row is not None
@@ -102,6 +114,7 @@ def test_migration_upgrades_legacy_review_cases(tmp_path):
     assert row_dict["report_text"] == "Legacy report text content"
     assert row_dict["status"] == "PENDING"
     assert row_dict["case_type"] == "WRITTEN_REPORT"
+    assert row_dict["score"] is None
 
     # 5. Confirms the new columns and indexes exist
     col_names = {r[1] for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
@@ -116,11 +129,63 @@ def test_migration_upgrades_legacy_review_cases(tmp_path):
     conn.close()
 
 
+def test_migration_additive_without_rebuild(tmp_path):
+    db_file = str(tmp_path / "additive_review_test.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    # Table with nullable report_text but missing case_type, conflict_reason, evidence_data
+    conn.execute("""
+        CREATE TABLE review_cases (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            scenario_id INTEGER NOT NULL,
+            milestone_id INTEGER,
+            report_text TEXT,
+            score INTEGER,
+            status TEXT DEFAULT 'PENDING',
+            feedback TEXT,
+            graded_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, score, status) "
+        "VALUES ('additive_student', 2, 1, 'Additive report', 0, 'PENDING')"
+    )
+    conn.commit()
+    conn.close()
+
+    assert migrate.apply(db_file) >= 4
+
+    conn = sqlite3.connect(db_file)
+    row = conn.execute("SELECT * FROM review_cases WHERE student_id='additive_student'").fetchone()
+    assert row is not None
+    cols = [d[0] for d in conn.execute("SELECT * FROM review_cases").description]
+    row_dict = dict(zip(cols, row))
+    assert row_dict["report_text"] == "Additive report"
+    assert row_dict["case_type"] == "WRITTEN_REPORT"
+    # Ungraded pending review score should be cleaned up to NULL
+    assert row_dict["score"] is None
+
+    col_names = {r[1] for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
+    assert "case_type" in col_names
+    assert "conflict_reason" in col_names
+    assert "evidence_data" in col_names
+    conn.close()
+
+
 def test_submit_and_list_reviews():
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
 
-    # 1. Submit review
+    # 1. Submit review as student (uses student-only token)
     res = client.post("/reviews/submit", json={
         "scenario_id": 1,
         "milestone_id": 2,
@@ -131,7 +196,8 @@ def test_submit_and_list_reviews():
     assert data["status"] == "submitted"
     review_id = data["review_id"]
 
-    # 2. List reviews as instructor
+    # 2. List reviews as instructor (uses instructor-only token)
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
     res_list = client.get("/instructor/reviews", headers=headers)
     assert res_list.status_code == 200
     reviews = res_list.json()["reviews"]
@@ -139,8 +205,9 @@ def test_submit_and_list_reviews():
     assert reviews[0]["review_id"] == review_id
     assert reviews[0]["status"] == "PENDING"
     assert reviews[0]["student_id"] == "student1"
+    assert reviews[0]["score"] is None
 
-    # 3. Verify single review detail endpoint
+    # 3. Verify single review detail endpoint as instructor
     res_detail = client.get(f"/instructor/reviews/{review_id}", headers=headers)
     assert res_detail.status_code == 200
     detail = res_detail.json()
@@ -148,12 +215,14 @@ def test_submit_and_list_reviews():
     assert detail["status"] == "PENDING"
     assert detail["report_text"] == "Discovered SQL injection vulnerability on login portal."
     assert detail["case_type"] == "WRITTEN_REPORT"
+    assert detail["score"] is None
 
 
 def test_submit_scoring_conflict_without_report_text():
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
 
+    # Submit as student
     res = client.post("/reviews/submit", json={
         "scenario_id": 2,
         "milestone_id": 1,
@@ -164,7 +233,8 @@ def test_submit_scoring_conflict_without_report_text():
     assert res.status_code == 200
     review_id = res.json()["review_id"]
 
-    # Verify via detail endpoint
+    # Verify via detail endpoint as instructor
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
     res_detail = client.get(f"/instructor/reviews/{review_id}", headers=headers)
     assert res_detail.status_code == 200
     detail = res_detail.json()
@@ -172,6 +242,7 @@ def test_submit_scoring_conflict_without_report_text():
     assert detail["report_text"] is None
     assert detail["conflict_reason"] == "Flag submitted correctly but automated verifier failed."
     assert "flag{pwned_123}" in detail["evidence_data"]
+    assert detail["score"] is None
 
 
 def test_submit_invalid_case_type():
@@ -223,34 +294,35 @@ def test_get_review_detail():
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
 
+    # Submit as student
     res_sub = client.post("/reviews/submit", json={
         "scenario_id": 3,
         "report_text": "Detail test report."
     }, headers=headers)
     review_id = res_sub.json()["review_id"]
 
+    # View as instructor
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
     res = client.get(f"/instructor/reviews/{review_id}", headers=headers)
     assert res.status_code == 200
     data = res.json()
     assert data["review_id"] == review_id
     assert data["report_text"] == "Detail test report."
     assert data["student_id"] == "student1"
+    assert data["score"] is None
 
 
 def test_get_review_detail_not_found():
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
     res = client.get("/instructor/reviews/9999", headers=headers)
     assert res.status_code == 404
     assert "Review case not found" in res.json()["detail"]
 
 
-def test_get_review_detail_rbac_forbidden(monkeypatch):
-    monkeypatch.setattr("auth.AUTH_ENABLED", True)
-    app.dependency_overrides[verify_token] = lambda: {
-        "preferred_username": "plain_student",
-        "realm_access": {"roles": ["student"]}
-    }
+def test_get_review_detail_rbac_forbidden():
+    # Student token cannot access instructor review detail
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
     res = client.get("/instructor/reviews/1", headers=headers)
@@ -272,6 +344,8 @@ def test_instructor_pods_payload_minimization():
 
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
+    # Access as instructor
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
     res = client.get("/instructor/pods", headers=headers)
     assert res.status_code == 200
     pods = res.json()["pods"]
@@ -290,6 +364,42 @@ def test_instructor_pods_payload_minimization():
     assert test_pod["student_id"] == "student_test"
     assert test_pod["status"] == "READY"
     assert "milestones" in test_pod
+
+
+def test_instructor_pods_rbac_forbidden_for_student():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+    # Student token cannot access /instructor/pods
+    res = client.get("/instructor/pods", headers=headers)
+    assert res.status_code == 403
+
+
+def test_unrelated_client_role_does_not_grant_access():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # Token with admin/instructor in an unrelated client only
+    app.dependency_overrides[verify_token] = lambda: {
+        "preferred_username": "other_client_user",
+        "realm_access": {"roles": ["student"]},
+        "resource_access": {
+            "unrelated-client": {"roles": ["admin", "instructor"]}
+        }
+    }
+
+    assert client.get("/instructor/pods", headers=headers).status_code == 403
+    assert client.get("/instructor/reviews", headers=headers).status_code == 403
+    assert client.get("/instructor/students", headers=headers).status_code == 403
+
+    # But roles from the configured portal client DO grant access
+    app.dependency_overrides[verify_token] = lambda: {
+        "preferred_username": "portal_instructor",
+        "realm_access": {"roles": ["student"]},
+        "resource_access": {
+            "portal": {"roles": ["instructor"]}
+        }
+    }
+    assert client.get("/instructor/reviews", headers=headers).status_code == 200
 
 
 def test_instructor_student_progress_without_active_pod():
@@ -320,6 +430,8 @@ def test_instructor_student_progress_without_active_pod():
 
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
+    # Access as instructor
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
 
     # 1. List all students
     res_list = client.get("/instructor/students", headers=headers)
@@ -359,6 +471,8 @@ def test_instructor_student_progress_with_review_only():
 
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
+    # Access as instructor
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
 
     # 1. GET /instructor/students includes review_only_student with pending_review_count == 1
     res_list = client.get("/instructor/students", headers=headers)
@@ -380,22 +494,20 @@ def test_instructor_student_progress_with_review_only():
     assert len(detail["reviews"]) == 1
     assert detail["reviews"][0]["case_type"] == "SCORING_CONFLICT"
     assert detail["reviews"][0]["conflict_reason"] == "Verifier timed out"
+    assert detail["reviews"][0]["score"] is None
 
 
 def test_instructor_student_progress_not_found():
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
     res = client.get("/instructor/students/unknown_student_xyz", headers=headers)
     assert res.status_code == 404
     assert "Student not found" in res.json()["detail"]
 
 
-def test_instructor_students_rbac_forbidden(monkeypatch):
-    monkeypatch.setattr("auth.AUTH_ENABLED", True)
-    app.dependency_overrides[verify_token] = lambda: {
-        "preferred_username": "plain_student",
-        "realm_access": {"roles": ["student"]}
-    }
+def test_instructor_students_rbac_forbidden():
+    # Student token cannot access instructor student endpoints
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
 
@@ -406,13 +518,8 @@ def test_instructor_students_rbac_forbidden(monkeypatch):
     assert res_single.status_code == 403
 
 
-def test_instructor_rbac_forbidden_for_student(monkeypatch):
-    monkeypatch.setattr("auth.AUTH_ENABLED", True)
-    app.dependency_overrides[verify_token] = lambda: {
-        "preferred_username": "plain_student",
-        "realm_access": {"roles": ["student"]}
-    }
-
+def test_instructor_rbac_forbidden_for_student():
+    # Student token cannot access instructor review queue or detail
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
 

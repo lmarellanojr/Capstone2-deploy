@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS review_cases (
     report_text     TEXT,
     conflict_reason TEXT,
     evidence_data   TEXT,
-    score           INTEGER DEFAULT 0 CHECK(score >= 0 AND score <= 100),
+    score           INTEGER CHECK(score IS NULL OR (score >= 0 AND score <= 100)),
     status          TEXT CHECK(status IN ('PENDING','APPROVED','REJECTED','RETRY')) DEFAULT 'PENDING',
     feedback        TEXT,
     graded_by       TEXT,
