@@ -1,3 +1,4 @@
+// Shared nav item shape for the Instructor/Admin sidebars (see Sidebar.tsx).
 export interface NavItem {
   href: string;
   label: string;
