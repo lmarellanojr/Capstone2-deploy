@@ -94,6 +94,9 @@ def test_migration_upgrades_legacy_review_cases(tmp_path):
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Pre-create indexes on old table to verify they are not lost during rebuild
+    conn.execute("CREATE INDEX idx_review_cases_student ON review_cases(student_id)")
+    conn.execute("CREATE INDEX idx_review_cases_status ON review_cases(status)")
     # 2. Inserts an old review row
     conn.execute(
         "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, status) "
@@ -127,6 +130,129 @@ def test_migration_upgrades_legacy_review_cases(tmp_path):
     assert "idx_review_cases_student" in index_names
     assert "idx_review_cases_status" in index_names
     conn.close()
+
+
+def test_migration_preserves_indexes_when_old_table_had_indexes(tmp_path):
+    db_file = str(tmp_path / "legacy_indexes_test.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    conn.execute("""
+        CREATE TABLE review_cases (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            scenario_id INTEGER NOT NULL,
+            milestone_id INTEGER,
+            report_text TEXT NOT NULL,
+            score INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'PENDING',
+            feedback TEXT,
+            graded_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # Pre-create the index names on the old table
+    conn.execute("CREATE INDEX idx_review_cases_student ON review_cases(student_id)")
+    conn.execute("CREATE INDEX idx_review_cases_status ON review_cases(status)")
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, status) "
+        "VALUES ('indexed_student', 1, 1, 'Indexed report', 'PENDING')"
+    )
+    conn.commit()
+    conn.close()
+
+    assert migrate.apply(db_file) >= 4
+
+    conn = sqlite3.connect(db_file)
+    # Check that review_cases has all three indexes attached
+    index_names = {r[1] for r in conn.execute("PRAGMA index_list(review_cases)").fetchall()}
+    assert "idx_review_cases_student" in index_names
+    assert "idx_review_cases_status" in index_names
+    assert "idx_review_cases_case_type" in index_names
+
+    # Check sqlite_master that they are attached to review_cases, not _review_cases_old
+    master_indexes = conn.execute(
+        "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_review_cases_%'"
+    ).fetchall()
+    assert len(master_indexes) == 3
+    for name, tbl in master_indexes:
+        assert tbl == "review_cases"
+    conn.close()
+
+
+def test_migration_rebuilds_when_score_has_default_zero(tmp_path, monkeypatch):
+    db_file = str(tmp_path / "score_default_test.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    # Schema with nullable report_text BUT score DEFAULT 0!
+    conn.execute("""
+        CREATE TABLE review_cases (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            scenario_id INTEGER NOT NULL,
+            milestone_id INTEGER,
+            report_text TEXT,
+            score INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'PENDING',
+            feedback TEXT,
+            graded_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, status) "
+        "VALUES ('existing_student', 1, 1, 'Some report', 'PENDING')"
+    )
+    conn.commit()
+    conn.close()
+
+    # Apply migration
+    assert migrate.apply(db_file) >= 4
+
+    # Verify score column no longer has DEFAULT 0 in PRAGMA table_info
+    conn = sqlite3.connect(db_file)
+    cols = {r[1]: r for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
+    # r[4] is dflt_value
+    assert cols["score"][4] is None
+    # Verify existing pending review score was cleaned to NULL
+    row = conn.execute("SELECT score FROM review_cases WHERE student_id='existing_student'").fetchone()
+    assert row[0] is None
+    conn.close()
+
+    # Point test app to this migrated database and submit a new pending review
+    monkeypatch.setattr("config.DB_PATH", db_file)
+    monkeypatch.setattr("db.DB_PATH", db_file)
+    monkeypatch.setattr("auth.AUTH_ENABLED", True)
+    app.dependency_overrides[verify_token] = lambda: student_claims("new_student")
+
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+    res = client.post("/reviews/submit", json={
+        "scenario_id": 2,
+        "milestone_id": 3,
+        "report_text": "New pending review after migration."
+    }, headers=headers)
+    assert res.status_code == 200
+    new_review_id = res.json()["review_id"]
+
+    # Confirm the new review's score is NULL
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
+    res_detail = client.get(f"/instructor/reviews/{new_review_id}", headers=headers)
+    assert res_detail.status_code == 200
+    assert res_detail.json()["score"] is None
 
 
 def test_migration_additive_without_rebuild(tmp_path):

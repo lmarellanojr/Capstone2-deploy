@@ -64,8 +64,15 @@ def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
         return
     cols = {r[1]: r for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
     report_text_col = cols.get("report_text")
-    # table_info: (cid, name, type, notnull, dflt_value, pk) -> r[3] is notnull
-    needs_rebuild = bool(report_text_col and report_text_col[3] == 1)
+    score_col = cols.get("score")
+    # Table rebuild is required if:
+    # 1. report_text has NOT NULL constraint (r[3] == 1)
+    # 2. score has a DEFAULT 0 constraint (r[4] is 0 or evaluates to 0)
+    has_not_null_report_text = bool(report_text_col and report_text_col[3] == 1)
+    has_zero_default_score = bool(
+        score_col and score_col[4] is not None and str(score_col[4]).strip("'\"") in ("0", "0.0")
+    )
+    needs_rebuild = has_not_null_report_text or has_zero_default_score
 
     if needs_rebuild:
         old_cols = set(cols.keys())
@@ -82,6 +89,9 @@ def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
 
         with conn:
             conn.execute("ALTER TABLE review_cases RENAME TO _review_cases_old")
+            # Drop old indexes so they do not block creation or get deleted with old table
+            for idx in ("idx_review_cases_student", "idx_review_cases_status", "idx_review_cases_case_type"):
+                conn.execute(f"DROP INDEX IF EXISTS {idx}")
             # Shared source: use v4.sql directly for table definition and indexes
             v4_path = os.path.join(_schema_dir(), "v4.sql")
             _run_sql_file(conn, v4_path)
@@ -98,6 +108,10 @@ def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
                 FROM _review_cases_old
             """)
             conn.execute("DROP TABLE _review_cases_old")
+            # Create/ensure all three indexes exist on review_cases after dropping the old table
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_student ON review_cases(student_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_status ON review_cases(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_case_type ON review_cases(case_type)")
     else:
         # Additive migration: add missing columns using ALTER TABLE ... ADD COLUMN
         with conn:
