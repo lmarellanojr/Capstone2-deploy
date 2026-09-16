@@ -17,7 +17,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (status === "unauthenticated") {
-      router.push(`/login?callbackUrl=${pathname}`);
+      const params = new URLSearchParams();
+      params.set("callbackUrl", pathname);
+      router.push(`/login?${params.toString()}`);
     }
   }, [status, router, pathname]);
 

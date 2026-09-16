@@ -19,7 +19,7 @@ export default function ReviewDetailPage() {
   const reviewCase = mockReviewQueue.find((c) => c.id === params.id);
 
   return (
-    <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor">
+    <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor" hideSearch>
       <div className="mb-6">
         <Link href="/instructor/reviews" className="text-sm text-brand font-semibold hover:underline">
           ← Back to Review Queue

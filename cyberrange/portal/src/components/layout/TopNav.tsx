@@ -29,8 +29,8 @@ export function TopNav({ onSearch, showLogo = false, onMenuClick, hideSearch = f
         </div>
       )}
 
-      <div className="flex-1 min-w-0 max-w-lg">
-        {!hideSearch && (
+      {!hideSearch && (
+        <div className="flex-1 min-w-0 max-w-lg">
           <input
             type="text"
             placeholder="Search labs..."
@@ -41,10 +41,10 @@ export function TopNav({ onSearch, showLogo = false, onMenuClick, hideSearch = f
             }}
             className="w-full bg-muted border border-border rounded-lg px-4 py-2 text-sm text-text-main placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40"
           />
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="flex items-center gap-1 sm:gap-4 sm:ml-2 shrink-0">
+      <div className="flex items-center gap-1 sm:gap-4 ml-auto shrink-0">
         <button
           className="hidden sm:block relative text-text-muted hover:text-text-main transition p-2"
           aria-label="Notifications"

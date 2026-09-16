@@ -15,7 +15,7 @@ const POD_BADGE: Record<string, "success" | "warning" | "info" | "danger" | "def
 
 export default function AdminPodsPage() {
   return (
-    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin">
+    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">Pods</h1>

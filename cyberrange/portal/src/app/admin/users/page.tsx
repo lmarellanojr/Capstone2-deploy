@@ -13,7 +13,7 @@ const ROLE_BADGE: Record<string, "brand" | "info" | "default"> = {
 
 export default function AdminUsersPage() {
   return (
-    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin">
+    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">Users</h1>

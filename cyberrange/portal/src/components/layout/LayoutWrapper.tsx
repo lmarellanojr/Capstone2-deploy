@@ -12,9 +12,12 @@ interface LayoutWrapperProps {
   /** Passed through to Sidebar so Instructor/Admin shells can reuse this same shell with their own nav. */
   navItems?: NavItem[];
   sectionLabel?: string;
+  /** Explicit, independent of sectionLabel: a section can have its own sidebar label
+   *  without losing a working search box. Instructor/Admin pages set this themselves. */
+  hideSearch?: boolean;
 }
 
-export function LayoutWrapper({ children, onSearch, navItems, sectionLabel }: LayoutWrapperProps) {
+export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hideSearch = false }: LayoutWrapperProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
 
@@ -31,7 +34,7 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel }: La
           onSearch={onSearch}
           showLogo
           onMenuClick={() => setMenuOpen(true)}
-          hideSearch={Boolean(sectionLabel)}
+          hideSearch={hideSearch}
         />
         <main className="flex-1 overflow-y-auto">
           <div className="p-3 sm:p-6 lg:p-8">{children}</div>

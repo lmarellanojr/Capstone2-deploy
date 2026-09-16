@@ -16,7 +16,7 @@ export default function AdminSystemPage() {
   const storagePct = Math.round((mockCapacity.storageUsedGb / mockCapacity.storageCapacityGb) * 100);
 
   return (
-    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin">
+    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">System Health</h1>

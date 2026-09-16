@@ -19,7 +19,7 @@ export default function InstructorDashboardPage() {
   const activePods = mockStudents.filter((s) => s.activePod).length;
 
   return (
-    <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor">
+    <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">Instructor Dashboard</h1>
