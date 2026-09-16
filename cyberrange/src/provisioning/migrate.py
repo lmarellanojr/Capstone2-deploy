@@ -47,6 +47,26 @@ def _run_sql_file(conn: sqlite3.Connection, path: str) -> None:
     conn.executescript(sql)
 
 
+def _get_create_table_sql(path: str, table_name: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        sql = f.read()
+    target = table_name.upper()
+    for stmt in sql.split(";"):
+        clean = stmt.strip()
+        uncommented_lines = [
+            line for line in clean.splitlines() if not line.strip().startswith("--")
+        ]
+        norm = " ".join(" ".join(uncommented_lines).upper().split())
+        if (
+            norm.startswith(f"CREATE TABLE IF NOT EXISTS {target} ")
+            or norm.startswith(f"CREATE TABLE IF NOT EXISTS {target}(")
+            or norm.startswith(f"CREATE TABLE {target} ")
+            or norm.startswith(f"CREATE TABLE {target}(")
+        ):
+            return clean
+    raise ValueError(f"CREATE TABLE for {table_name} not found in {path}")
+
+
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     # table_info: cid, name, type, notnull, dflt_value, pk — name is r[1]
     return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
@@ -60,6 +80,20 @@ def _has_table(conn: sqlite3.Connection, table: str) -> bool:
 
 
 def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
+    if _has_table(conn, "_review_cases_old"):
+        old_count = conn.execute("SELECT COUNT(*) FROM _review_cases_old").fetchone()[0]
+        cur_count = (
+            conn.execute("SELECT COUNT(*) FROM review_cases").fetchone()[0]
+            if _has_table(conn, "review_cases")
+            else 0
+        )
+        if cur_count == 0 and old_count > 0:
+            if _has_table(conn, "review_cases"):
+                conn.execute("DROP TABLE review_cases")
+            conn.execute("ALTER TABLE _review_cases_old RENAME TO review_cases")
+        else:
+            conn.execute("DROP TABLE _review_cases_old")
+
     if not _has_table(conn, "review_cases"):
         return
     cols = {r[1]: r for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
@@ -103,21 +137,33 @@ def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
         case_type_expr = "case_type" if "case_type" in old_cols else "'WRITTEN_REPORT'"
         conflict_expr = "conflict_reason" if "conflict_reason" in old_cols else "NULL"
         evidence_expr = "evidence_data" if "evidence_data" in old_cols else "NULL"
-        score_expr = "CASE WHEN status = 'PENDING' AND graded_by IS NULL THEN NULL ELSE score END" if "score" in old_cols else "NULL"
+        if "score" not in old_cols:
+            score_expr = "NULL"
+        elif "status" in old_cols and "graded_by" in old_cols:
+            score_expr = "CASE WHEN status = 'PENDING' AND graded_by IS NULL THEN NULL ELSE score END"
+        elif "status" in old_cols:
+            score_expr = "CASE WHEN status = 'PENDING' THEN NULL ELSE score END"
+        elif "graded_by" in old_cols:
+            score_expr = "CASE WHEN graded_by IS NULL THEN NULL ELSE score END"
+        else:
+            score_expr = "score"
         status_expr = "status" if "status" in old_cols else "'PENDING'"
         feedback_expr = "feedback" if "feedback" in old_cols else "NULL"
         graded_by_expr = "graded_by" if "graded_by" in old_cols else "NULL"
         created_at_expr = "created_at" if "created_at" in old_cols else "CURRENT_TIMESTAMP"
         updated_at_expr = "updated_at" if "updated_at" in old_cols else "CURRENT_TIMESTAMP"
 
+        v4_path = os.path.join(_schema_dir(), "v4.sql")
+        create_table_sql = _get_create_table_sql(v4_path, "review_cases")
+
         with conn:
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
             conn.execute("ALTER TABLE review_cases RENAME TO _review_cases_old")
             # Drop old indexes so they do not block creation or get deleted with old table
             for idx in ("idx_review_cases_student", "idx_review_cases_status", "idx_review_cases_case_type"):
                 conn.execute(f"DROP INDEX IF EXISTS {idx}")
-            # Shared source: use v4.sql directly for table definition and indexes
-            v4_path = os.path.join(_schema_dir(), "v4.sql")
-            _run_sql_file(conn, v4_path)
+            conn.execute(create_table_sql)
             conn.execute(f"""
                 INSERT INTO review_cases (
                     review_id, student_id, scenario_id, milestone_id, case_type,

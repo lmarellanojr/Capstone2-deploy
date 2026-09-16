@@ -420,6 +420,144 @@ def test_migration_rebuilds_when_v4_constraints_missing(tmp_path):
     conn.close()
 
 
+def test_migration_rebuilds_when_score_exists_without_graded_by(tmp_path):
+    db_file = str(tmp_path / "score_no_graded_by_test.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    # Table with score, status, no graded_by, and no v4 checks
+    conn.execute("""
+        CREATE TABLE review_cases (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            scenario_id INTEGER NOT NULL,
+            milestone_id INTEGER,
+            report_text TEXT,
+            score INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'PENDING',
+            feedback TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, score, status) "
+        "VALUES ('legacy_pending', 1, 1, 'Pending report without graded_by', 0, 'PENDING')"
+    )
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, score, status) "
+        "VALUES ('legacy_approved', 1, 1, 'Approved report without graded_by', 85, 'APPROVED')"
+    )
+    conn.commit()
+    conn.close()
+
+    assert migrate.apply(db_file) >= 4
+
+    conn = sqlite3.connect(db_file)
+    # 1. Verify _review_cases_old is removed from sqlite_master
+    old_tables = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='_review_cases_old'"
+    ).fetchall()
+    assert len(old_tables) == 0
+
+    # 2. Verify rows survive, pending score converted to NULL, approved score preserved
+    rows = {
+        r[1]: r
+        for r in conn.execute(
+            "SELECT review_id, student_id, score, status, case_type, graded_by FROM review_cases"
+        ).fetchall()
+    }
+    assert "legacy_pending" in rows
+    assert "legacy_approved" in rows
+
+    pending_row = rows["legacy_pending"]
+    assert pending_row[2] is None  # pending score cleaned to NULL
+    assert pending_row[3] == "PENDING"
+    assert pending_row[4] == "WRITTEN_REPORT"
+    assert pending_row[5] is None  # graded_by
+
+    approved_row = rows["legacy_approved"]
+    assert approved_row[2] == 85  # earned score preserved
+    assert approved_row[3] == "APPROVED"
+    assert approved_row[4] == "WRITTEN_REPORT"
+    assert approved_row[5] is None
+
+    # 3. Verify v4 CHECK constraints exist in sqlite_master
+    master_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='review_cases'"
+    ).fetchone()[0]
+    norm_sql = " ".join(master_sql.upper().split())
+    assert "SCORE >= 0" in norm_sql and "SCORE <= 100" in norm_sql
+    assert all(s in norm_sql for s in ("'PENDING'", "'APPROVED'", "'REJECTED'", "'RETRY'"))
+    assert all(ct in norm_sql for ct in ("'WRITTEN_REPORT'", "'SCORING_CONFLICT'", "'MANUAL_REVIEW'"))
+
+    # 4. Verify all 3 indexes exist on review_cases
+    indexes = {r[1] for r in conn.execute("PRAGMA index_list(review_cases)").fetchall()}
+    assert "idx_review_cases_student" in indexes
+    assert "idx_review_cases_status" in indexes
+    assert "idx_review_cases_case_type" in indexes
+    conn.close()
+
+
+def test_migration_rebuild_rolls_back_atomically_on_error(tmp_path, monkeypatch):
+    db_file = str(tmp_path / "rollback_test.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    conn.execute("""
+        CREATE TABLE review_cases (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            scenario_id INTEGER NOT NULL,
+            milestone_id INTEGER,
+            report_text TEXT,
+            score INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'PENDING',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, score, status) "
+        "VALUES ('rollback_student', 1, 1, 'Pre-rollback report', 0, 'PENDING')"
+    )
+    conn.commit()
+    conn.close()
+
+    # Simulate a failure during rebuild after rename
+    def fail_get_sql(path, table_name):
+        return "CREATE TABLE review_cases (SYNTAX ERROR INVALID SQL)"
+
+    monkeypatch.setattr("migrate._get_create_table_sql", fail_get_sql)
+
+    with pytest.raises(sqlite3.OperationalError):
+        migrate.apply(db_file)
+
+    conn = sqlite3.connect(db_file)
+    # Rebuild must have rolled back atomically:
+    # 1. review_cases still exists and contains the original row
+    row = conn.execute("SELECT student_id FROM review_cases").fetchone()
+    assert row is not None
+    assert row[0] == "rollback_student"
+
+    # 2. _review_cases_old is NOT stranded
+    old_tables = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='_review_cases_old'"
+    ).fetchall()
+    assert len(old_tables) == 0
+    conn.close()
+
+
 def test_submit_and_list_reviews():
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
