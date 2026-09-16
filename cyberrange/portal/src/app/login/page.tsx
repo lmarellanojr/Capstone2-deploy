@@ -1,12 +1,11 @@
 "use client";
 
 import { signIn, useSession } from "next-auth/react";
+import type { Role } from "next-auth";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { Logo } from "@/components/layout/Logo";
 import { Button } from "@/components/ui";
-
-type Role = "student" | "instructor" | "admin";
 
 function LoginContent() {
   const searchParams = useSearchParams();

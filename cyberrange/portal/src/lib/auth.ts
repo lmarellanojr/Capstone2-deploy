@@ -183,6 +183,16 @@ export const authOptions: NextAuthOptions = {
         token.accessTokenExpires = expiresInSec * 1000
         return token
       }
+      // Backfill for a session cookie created before role extraction existed:
+      // token.roles is only ever set in the `account` branch above or in
+      // refreshAccessToken() below, so a pre-existing session hitting this
+      // reuse path would otherwise carry token.roles === undefined forward
+      // indefinitely while its still-valid access token already has the real
+      // claims. Decode from the token already on hand rather than waiting for
+      // the next refresh or a full re-login.
+      if (token.roles === undefined) {
+        token.roles = decodeRoles(token.accessToken as string | undefined)
+      }
       // Still valid (60s safety buffer before real expiry) → reuse.
       if (token.accessTokenExpires && Date.now() < token.accessTokenExpires - 60_000) {
         return token
