@@ -6,15 +6,21 @@ import { useSession } from "next-auth/react";
 import { Badge } from "@/components/ui";
 import { Logo } from "./Logo";
 import { useScenarios } from "@/hooks/useScenarios";
+import type { NavItem } from "@/lib/navigation";
 
-export function Sidebar() {
+interface SidebarProps {
+  /** Overrides the default Student nav. Instructor/Admin shells pass their own set. */
+  navItems?: NavItem[];
+  /** Small label under the logo (e.g. "Instructor", "Admin") so the shared shell reads as that section. */
+  sectionLabel?: string;
+}
+
+export function Sidebar({ navItems, sectionLabel }: SidebarProps) {
   const pathname = usePathname();
   const { data: session } = useSession();
   const scenarios = useScenarios();
 
-  const isActive = (href: string) => pathname.startsWith(href);
-
-  const navItems = [
+  const defaultNavItems: NavItem[] = [
     { href: "/dashboard", label: "Dashboard", icon: "▦" },
     { href: "/scenarios", label: "My Labs", icon: "◎", badge: String(scenarios.length) },
     { href: "#", label: "Leaderboard", icon: "▲", disabled: true },
@@ -22,14 +28,32 @@ export function Sidebar() {
     { href: "#", label: "Settings", icon: "⚙", disabled: true },
   ];
 
+  const items = navItems ?? defaultNavItems;
+
+  // Pick the longest matching href so a child route (e.g. /instructor/reviews/case-0142)
+  // still activates its section item ("Reviews") without also lighting up an unrelated
+  // sibling/parent that merely shares a string prefix.
+  const activeHref = items.reduce<string | null>((best, item) => {
+    if (item.disabled) return best;
+    const matches = pathname === item.href || pathname.startsWith(item.href + "/");
+    if (!matches) return best;
+    return best === null || item.href.length > best.length ? item.href : best;
+  }, null);
+  const isActive = (href: string) => href === activeHref;
+
   return (
     <aside className="w-64 max-w-full bg-secondary border-r border-border h-screen min-h-[100dvh] flex flex-col shadow-card">
       <div className="p-6 border-b border-border">
         <Logo showSubtitle />
+        {sectionLabel && (
+          <span className="mt-3 inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide bg-brand/10 text-brand border border-brand/20">
+            {sectionLabel}
+          </span>
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-6 space-y-1">
-        {navItems.map((item) => {
+        {items.map((item) => {
           const active = !item.disabled && isActive(item.href);
           const className = `flex items-center justify-between px-4 py-3 rounded-lg transition text-sm ${
             item.disabled
