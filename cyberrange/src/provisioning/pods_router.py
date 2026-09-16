@@ -225,7 +225,10 @@ async def provision_pod(
 
 @router.get("/pods")
 def list_pods(student_id: Optional[str] = None, claims: dict = Depends(verify_token)):
-    student_id = caller_identity(claims, student_id)
+    # Preserve query ?student_id= before caller_identity overwrites it under AUTH_ENABLED.
+    # Non-admins never use the query (identity wins). Admins may filter with it; omit for all.
+    query_student_id = (student_id or "").strip() or None
+    identity = caller_identity(claims, student_id)
     # With AUTH_ENABLED=true, caller_identity ignores the query fallback and
     # returns only claims["preferred_username"]. A token that introspects as
     # active but omits that claim (service account, misconfigured mapper,
@@ -233,12 +236,21 @@ def list_pods(student_id: Optional[str] = None, claims: dict = Depends(verify_to
     # below and enumerate every student's pods (branch-review Issue 1). The
     # unfiltered branch stays reachable only in AUTH_ENABLED=false bootstrap
     # mode, where it is the existing documented admin-list behaviour.
-    if auth.AUTH_ENABLED and not student_id:
+    # Admin (Issue #29): no query → all live pods; ?student_id= → that owner only.
+    if auth.AUTH_ENABLED and not identity:
         raise HTTPException(status_code=401, detail="Identity required")
+    is_admin = auth.AUTH_ENABLED and "admin" in auth.extract_roles(claims)
     conn = get_db_connection()
     base = "SELECT * FROM pods WHERE status NOT IN ('DESTROYED','FAILED_ROLLBACK_COMPLETE')"
-    if student_id:
-        rows = conn.execute(base + " AND student_id=? ORDER BY pod_id", (student_id,)).fetchall()
+    if is_admin:
+        if query_student_id:
+            rows = conn.execute(
+                base + " AND student_id=? ORDER BY pod_id", (query_student_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(base + " ORDER BY pod_id").fetchall()
+    elif identity:
+        rows = conn.execute(base + " AND student_id=? ORDER BY pod_id", (identity,)).fetchall()
     else:
         rows = conn.execute(base + " ORDER BY pod_id").fetchall()
     conn.close()
@@ -253,7 +265,7 @@ def get_pod_status(pod_id: int, claims: dict = Depends(verify_token)):
         conn.close()
         raise HTTPException(status_code=404, detail="Pod not found")
 
-    require_owner(pod, claims)
+    auth.require_owner_or_admin(pod, claims)
 
     if pod["status"] == "ACTIVE":
         conn.execute("UPDATE pods SET last_heartbeat=CURRENT_TIMESTAMP WHERE pod_id=?", (pod_id,))
@@ -342,6 +354,40 @@ async def destroy_pod(
         raise HTTPException(
             status_code=409,
             detail=f"Pod is {pod['status']}, cannot destroy from this state",
+        )
+    conn.commit()
+    conn.close()
+
+    background_tasks.add_task(perform_destruction, dict(pod))
+    return {"status": "destroying", "pod_id": pod_id}
+
+
+@router.delete("/admin/pods/{pod_id}/force-destroy")
+async def admin_force_destroy_pod(
+    pod_id: int, background_tasks: BackgroundTasks, claims: dict = Depends(verify_token)
+):
+    """Admin-only destroy via existing teardown (ACTIVE / FAILED_ROLLBACK_COMPLETE)."""
+    auth.require_role(["admin"], claims)
+    conn = get_db_connection()
+    pod = conn.execute("SELECT * FROM pods WHERE pod_id=?", (pod_id,)).fetchone()
+    if not pod:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Pod not found")
+
+    # PROVISIONING excluded: in-flight perform_provisioning can still flip to ACTIVE.
+    # DESTROYING excluded: immediate re-dispatch would race concurrent LXD teardown;
+    # stuck DESTROYING retries stay with the reaper after STUCK_POD_GRACE_MINUTES.
+    cur = conn.execute(
+        "UPDATE pods SET status='DESTROYING' WHERE pod_id=? AND status IN "
+        "('ACTIVE','FAILED_ROLLBACK_COMPLETE')",
+        (pod_id,),
+    )
+    if cur.rowcount == 0:
+        status = pod["status"]
+        conn.close()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pod is {status}, cannot force-destroy from this state",
         )
     conn.commit()
     conn.close()
