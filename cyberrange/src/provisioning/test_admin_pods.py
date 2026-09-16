@@ -144,6 +144,23 @@ def test_admin_list_pods_returns_all_live_pods():
     assert all("vmid_kali" in p for p in pods)
 
 
+def test_admin_list_pods_honors_student_id_query():
+    _insert_pod(1, "student1", status="ACTIVE")
+    _insert_pod(2, "student2", status="ACTIVE")
+    app.dependency_overrides[verify_token] = lambda: admin_claims()
+    client = TestClient(app)
+    res = client.get(
+        "/pods",
+        params={"student_id": "student2"},
+        headers={"Authorization": "Bearer mock"},
+    )
+    assert res.status_code == 200
+    pods = res.json()["pods"]
+    assert len(pods) == 1
+    assert pods[0]["student_id"] == "student2"
+    assert "vmid_kali" in pods[0]
+
+
 def test_student_list_pods_self_scoped():
     _insert_pod(1, "student1", status="ACTIVE")
     _insert_pod(2, "student2", status="ACTIVE")
@@ -243,7 +260,8 @@ def test_admin_force_destroy_active(monkeypatch):
     assert destroyed == [1]
 
 
-def test_admin_force_destroy_destroying_retries(monkeypatch):
+def test_admin_force_destroy_destroying_409(monkeypatch):
+    """Already-DESTROYING: no re-dispatch (avoids concurrent LXD); reaper owns stuck retry."""
     destroyed = []
     monkeypatch.setattr(
         "pods_router.perform_destruction",
@@ -253,8 +271,8 @@ def test_admin_force_destroy_destroying_retries(monkeypatch):
     app.dependency_overrides[verify_token] = lambda: admin_claims()
     client = TestClient(app)
     res = client.delete("/admin/pods/1/force-destroy", headers={"Authorization": "Bearer mock"})
-    assert res.status_code == 200
-    assert destroyed == [1]
+    assert res.status_code == 409
+    assert destroyed == []
 
 
 def test_admin_force_destroy_provisioning_409(monkeypatch):
