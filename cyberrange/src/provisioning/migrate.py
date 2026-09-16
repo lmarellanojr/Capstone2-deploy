@@ -68,11 +68,34 @@ def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
     # Table rebuild is required if:
     # 1. report_text has NOT NULL constraint (r[3] == 1)
     # 2. score has a DEFAULT 0 constraint (r[4] is 0 or evaluates to 0)
+    # 3. created_at or updated_at is missing (ALTER TABLE ADD COLUMN cannot add CURRENT_TIMESTAMP in SQLite)
+    # 4. Required v4 CHECK constraints are absent from existing table definition
     has_not_null_report_text = bool(report_text_col and report_text_col[3] == 1)
     has_zero_default_score = bool(
         score_col and score_col[4] is not None and str(score_col[4]).strip("'\"") in ("0", "0.0")
     )
-    needs_rebuild = has_not_null_report_text or has_zero_default_score
+    missing_timestamps = ("created_at" not in cols) or ("updated_at" not in cols)
+
+    table_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='review_cases'"
+    ).fetchone()
+    table_sql = (table_sql_row[0] or "") if table_sql_row else ""
+    norm_sql = " ".join(table_sql.upper().split())
+
+    missing_constraints = False
+    if "score" in cols and ("SCORE >= 0" not in norm_sql or "SCORE <= 100" not in norm_sql):
+        missing_constraints = True
+    if "status" in cols and not all(s in norm_sql for s in ("'PENDING'", "'APPROVED'", "'REJECTED'", "'RETRY'")):
+        missing_constraints = True
+    if "case_type" in cols and not all(ct in norm_sql for ct in ("'WRITTEN_REPORT'", "'SCORING_CONFLICT'", "'MANUAL_REVIEW'")):
+        missing_constraints = True
+
+    needs_rebuild = (
+        has_not_null_report_text
+        or has_zero_default_score
+        or missing_timestamps
+        or missing_constraints
+    )
 
     if needs_rebuild:
         old_cols = set(cols.keys())
@@ -133,10 +156,6 @@ def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
                 conn.execute("ALTER TABLE review_cases ADD COLUMN feedback TEXT")
             if "graded_by" not in cols:
                 conn.execute("ALTER TABLE review_cases ADD COLUMN graded_by TEXT")
-            if "created_at" not in cols:
-                conn.execute("ALTER TABLE review_cases ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-            if "updated_at" not in cols:
-                conn.execute("ALTER TABLE review_cases ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
             # Ungraded pending reviews return score: null
             conn.execute("UPDATE review_cases SET score = NULL WHERE status = 'PENDING' AND graded_by IS NULL AND score = 0")
             # Ensure indexes exist

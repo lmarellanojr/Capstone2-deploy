@@ -5,6 +5,18 @@ import tempfile
 import pytest
 from fastapi.testclient import TestClient
 
+import sys
+from types import ModuleType
+
+if "pylxd" not in sys.modules:
+    _pylxd = ModuleType("pylxd")
+    _exc = ModuleType("pylxd.exceptions")
+    _exc.NotFound = type("NotFound", (Exception,), {})
+    _pylxd.exceptions = _exc
+    _pylxd.Client = object
+    sys.modules["pylxd"] = _pylxd
+    sys.modules["pylxd.exceptions"] = _exc
+
 import migrate
 import db
 import config
@@ -265,7 +277,8 @@ def test_migration_additive_without_rebuild(tmp_path):
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
-    # Table with nullable report_text but missing case_type, conflict_reason, evidence_data
+    # Table with nullable report_text, score without default, timestamps, and v4 check constraints
+    # Missing only case_type, conflict_reason, evidence_data
     conn.execute("""
         CREATE TABLE review_cases (
             review_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -273,8 +286,8 @@ def test_migration_additive_without_rebuild(tmp_path):
             scenario_id INTEGER NOT NULL,
             milestone_id INTEGER,
             report_text TEXT,
-            score INTEGER,
-            status TEXT DEFAULT 'PENDING',
+            score INTEGER CHECK(score IS NULL OR (score >= 0 AND score <= 100)),
+            status TEXT CHECK(status IN ('PENDING','APPROVED','REJECTED','RETRY')) DEFAULT 'PENDING',
             feedback TEXT,
             graded_by TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -304,6 +317,106 @@ def test_migration_additive_without_rebuild(tmp_path):
     assert "case_type" in col_names
     assert "conflict_reason" in col_names
     assert "evidence_data" in col_names
+
+    # Verify resulting table SQL in sqlite_master contains added columns and constraints
+    master_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='review_cases'"
+    ).fetchone()[0]
+    assert "case_type" in master_sql
+    assert "conflict_reason" in master_sql
+    assert "evidence_data" in master_sql
+    assert "CHECK" in master_sql
+    conn.close()
+
+
+def test_migration_rebuilds_when_timestamps_missing(tmp_path):
+    db_file = str(tmp_path / "missing_timestamps_test.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    # Legacy table missing created_at and updated_at
+    conn.execute("""
+        CREATE TABLE review_cases (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            scenario_id INTEGER NOT NULL,
+            milestone_id INTEGER,
+            report_text TEXT,
+            score INTEGER CHECK(score IS NULL OR (score >= 0 AND score <= 100)),
+            status TEXT CHECK(status IN ('PENDING','APPROVED','REJECTED','RETRY')) DEFAULT 'PENDING',
+            feedback TEXT,
+            graded_by TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, status) "
+        "VALUES ('ts_student', 1, 1, 'Report without timestamps', 'PENDING')"
+    )
+    conn.commit()
+    conn.close()
+
+    # apply() should rebuild the table cleanly instead of failing on ALTER TABLE ADD COLUMN DEFAULT CURRENT_TIMESTAMP
+    assert migrate.apply(db_file) >= 4
+
+    conn = sqlite3.connect(db_file)
+    col_names = {r[1] for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
+    assert "created_at" in col_names
+    assert "updated_at" in col_names
+    row = conn.execute("SELECT created_at, updated_at FROM review_cases WHERE student_id='ts_student'").fetchone()
+    assert row[0] is not None
+    assert row[1] is not None
+    conn.close()
+
+
+def test_migration_rebuilds_when_v4_constraints_missing(tmp_path):
+    db_file = str(tmp_path / "missing_constraints_test.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    # Table missing CHECK constraints on score and status
+    conn.execute("""
+        CREATE TABLE review_cases (
+            review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id TEXT NOT NULL,
+            scenario_id INTEGER NOT NULL,
+            milestone_id INTEGER,
+            report_text TEXT,
+            score INTEGER,
+            status TEXT DEFAULT 'PENDING',
+            feedback TEXT,
+            graded_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, milestone_id, report_text, status) "
+        "VALUES ('constraint_student', 1, 1, 'Report without check constraints', 'PENDING')"
+    )
+    conn.commit()
+    conn.close()
+
+    assert migrate.apply(db_file) >= 4
+
+    conn = sqlite3.connect(db_file)
+    master_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='review_cases'"
+    ).fetchone()[0]
+    # Verify rebuilt table SQL contains v4 CHECK constraints
+    norm_sql = " ".join(master_sql.upper().split())
+    assert "SCORE >= 0" in norm_sql and "SCORE <= 100" in norm_sql
+    assert all(s in norm_sql for s in ("'PENDING'", "'APPROVED'", "'REJECTED'", "'RETRY'"))
+    assert all(ct in norm_sql for ct in ("'WRITTEN_REPORT'", "'SCORING_CONFLICT'", "'MANUAL_REVIEW'"))
     conn.close()
 
 

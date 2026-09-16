@@ -1,7 +1,7 @@
 """Pod provisioning and lifecycle API routes."""
 import json
 import sqlite3
-from typing import Any, Optional, Union
+from typing import Optional, Union
 from pydantic import BaseModel
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -441,37 +441,60 @@ def instructor_list_students(claims: dict = Depends(verify_token)):
         ") ORDER BY student_id"
     ).fetchall()
 
+    # 1. Grouped query for active pods across all students (latest non-destroyed pod per student)
+    active_pod_rows = conn.execute(
+        "SELECT * FROM pods "
+        "WHERE status NOT IN ('DESTROYED', 'FAILED_ROLLBACK_COMPLETE') "
+        "  AND student_id IS NOT NULL AND TRIM(student_id) != '' "
+        "ORDER BY pod_id DESC"
+    ).fetchall()
+    active_pods_by_student = {}
+    for p_row in active_pod_rows:
+        sid = p_row["student_id"]
+        if sid not in active_pods_by_student:
+            active_pods_by_student[sid] = serialize_instructor_pod(p_row)
+
+    # 2. Grouped query for historical milestones across all students
+    milestone_rows = conn.execute(
+        "SELECT student_id, scenario_id, milestone_id, status, detection_score, verified_at "
+        "FROM milestone_verification "
+        "WHERE student_id IS NOT NULL AND TRIM(student_id) != '' "
+        "ORDER BY verified_at DESC"
+    ).fetchall()
+    milestones_by_student = {}
+    for m_row in milestone_rows:
+        sid = m_row["student_id"]
+        milestones_by_student.setdefault(sid, []).append({
+            "scenario_id": m_row["scenario_id"],
+            "milestone_id": m_row["milestone_id"],
+            "status": m_row["status"],
+            "detection_score": m_row["detection_score"],
+            "verified_at": m_row["verified_at"],
+        })
+
+    # 3. Grouped query for pending review counts per student
+    pending_rows = conn.execute(
+        "SELECT student_id, COUNT(*) AS pending_count "
+        "FROM review_cases "
+        "WHERE status = 'PENDING' AND student_id IS NOT NULL AND TRIM(student_id) != '' "
+        "GROUP BY student_id"
+    ).fetchall()
+    pending_counts_by_student = {
+        r["student_id"]: r["pending_count"] for r in pending_rows
+    }
+
+    conn.close()
+
     students = []
     for s_row in student_rows:
         sid = s_row["student_id"]
-        active_pod_row = conn.execute(
-            "SELECT * FROM pods WHERE student_id=? AND status NOT IN ('DESTROYED','FAILED_ROLLBACK_COMPLETE') "
-            "ORDER BY pod_id DESC LIMIT 1",
-            (sid,),
-        ).fetchone()
-        active_pod = serialize_instructor_pod(active_pod_row) if active_pod_row else None
-
-        milestone_rows = conn.execute(
-            "SELECT scenario_id, milestone_id, status, detection_score, verified_at "
-            "FROM milestone_verification "
-            "WHERE student_id = ? "
-            "ORDER BY verified_at DESC",
-            (sid,),
-        ).fetchall()
-
-        pending_reviews = conn.execute(
-            "SELECT COUNT(*) FROM review_cases WHERE student_id = ? AND status = 'PENDING'",
-            (sid,),
-        ).fetchone()[0]
-
         students.append({
             "student_id": sid,
-            "active_pod": active_pod,
-            "milestones": [dict(m) for m in milestone_rows],
-            "pending_review_count": pending_reviews,
+            "active_pod": active_pods_by_student.get(sid),
+            "milestones": milestones_by_student.get(sid, []),
+            "pending_review_count": pending_counts_by_student.get(sid, 0),
         })
 
-    conn.close()
     return {"students": students}
 
 
