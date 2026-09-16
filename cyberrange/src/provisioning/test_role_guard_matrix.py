@@ -19,35 +19,30 @@ anywhere else and are the reason this file exists:
    all", and malformed/missing role data must fail safely per this ticket's
    acceptance criteria.
 """
-import os
-import sys
-import tempfile
-from types import ModuleType
-
-if "pylxd" not in sys.modules:
-    _pylxd = ModuleType("pylxd")
-    _exc = ModuleType("pylxd.exceptions")
-    _exc.NotFound = type("NotFound", (Exception,), {})
-    _pylxd.exceptions = _exc
-    _pylxd.Client = object
-    sys.modules["pylxd"] = _pylxd
-    sys.modules["pylxd.exceptions"] = _exc
-
+# pylxd stub and the temp_db autouse fixture (fresh SQLite per test, default
+# student claim on verify_token) live in conftest.py, shared with
+# test_admin_pods.py and test_reviews.py. This file's own unauthenticated
+# tests explicitly clear that default override (see below) rather than
+# needing a variant fixture without one.
 import pytest
 from fastapi.testclient import TestClient
 
-import migrate
 from auth import verify_token
 from provision_api_fastapi import app
 
-# Every route currently gated by require_role(["instructor", "admin"], claims)
-# or require_role(["admin"], claims). Kept as an explicit list (not introspected
-# from the router) so this test fails loudly -- not silently -- if a route is
-# renamed without updating this matrix.
+# Every route currently gated by require_role(["instructor", "admin"], claims).
+# Kept as an explicit list (not introspected from the router) so this test
+# fails loudly -- not silently -- if a route is renamed without updating this
+# matrix. All 5 are unauthenticated-safe to hit with a placeholder path param:
+# verify_token() rejects a request with no Authorization header before the
+# route body (and therefore require_role()) ever runs, so the placeholder
+# student_id/review_id below is never actually looked up.
 INSTRUCTOR_OR_ADMIN_GET_ROUTES = [
     "/instructor/pods",
     "/instructor/students",
+    "/instructor/students/placeholder-student-id",
     "/instructor/reviews",
+    "/instructor/reviews/999999",
 ]
 
 NO_APPLICATION_ROLE_CLAIMS = {
@@ -58,30 +53,15 @@ NO_APPLICATION_ROLE_CLAIMS = {
 }
 
 
-@pytest.fixture(autouse=True)
-def temp_db(monkeypatch):
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
-        db_path = tf.name
-    tf.close()
-    monkeypatch.setattr("config.DB_PATH", db_path)
-    monkeypatch.setattr("db.DB_PATH", db_path)
-    monkeypatch.setattr("auth.AUTH_ENABLED", True)
-    migrate.apply(db_path)
-    yield db_path
-    app.dependency_overrides.clear()
-    if os.path.exists(db_path):
-        try:
-            os.unlink(db_path)
-        except OSError:
-            pass
-
-
 @pytest.mark.parametrize("path", INSTRUCTOR_OR_ADMIN_GET_ROUTES)
 def test_instructor_routes_require_authentication(path: str):
-    # No dependency_overrides at all -- real verify_token() runs, sees no
-    # Authorization header, and must reject before require_role() ever
-    # executes. This is what actually distinguishes "who are you" (401) from
-    # "you're someone, but not allowed here" (403).
+    # conftest.py's temp_db fixture defaults dependency_overrides[verify_token]
+    # to a student claim for every test in this package; pop it here so this
+    # request has NO override at all and the real verify_token() runs, sees no
+    # Authorization header, and rejects before require_role() ever executes.
+    # That's what actually distinguishes "who are you" (401) from "you're
+    # someone, but not allowed here" (403).
+    app.dependency_overrides.pop(verify_token, None)
     client = TestClient(app)
     res = client.get(path)
     assert res.status_code == 401

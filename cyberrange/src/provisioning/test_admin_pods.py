@@ -1,28 +1,17 @@
 """Unit tests for ADM-POD Admin list/inspect/force-destroy (Issue #29)."""
-import os
-import tempfile
-
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-import sys
-from types import ModuleType
-
-if "pylxd" not in sys.modules:
-    _pylxd = ModuleType("pylxd")
-    _exc = ModuleType("pylxd.exceptions")
-    _exc.NotFound = type("NotFound", (Exception,), {})
-    _pylxd.exceptions = _exc
-    _pylxd.Client = object
-    sys.modules["pylxd"] = _pylxd
-    sys.modules["pylxd.exceptions"] = _exc
-
-import migrate
 import db
 import auth
 from auth import verify_token
 from provision_api_fastapi import app
+
+# pylxd stub and the temp_db autouse fixture (fresh SQLite per test, default
+# student claim on verify_token) now live in conftest.py -- shared with
+# test_reviews.py and test_role_guard_matrix.py, which had byte-identical
+# copies of both.
 
 
 def student_claims(username="student1"):
@@ -44,27 +33,6 @@ def admin_claims(username="admin1"):
         "preferred_username": username,
         "realm_access": {"roles": ["admin"]},
     }
-
-
-@pytest.fixture(autouse=True)
-def temp_db(monkeypatch):
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
-        db_path = tf.name
-    tf.close()
-    monkeypatch.setattr("config.DB_PATH", db_path)
-    monkeypatch.setattr("db.DB_PATH", db_path)
-    monkeypatch.setattr("auth.AUTH_ENABLED", True)
-
-    app.dependency_overrides[verify_token] = lambda: student_claims("student1")
-
-    migrate.apply(db_path)
-    yield db_path
-    app.dependency_overrides.clear()
-    if os.path.exists(db_path):
-        try:
-            os.unlink(db_path)
-        except OSError:
-            pass
 
 
 def _insert_pod(
