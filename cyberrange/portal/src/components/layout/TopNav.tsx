@@ -8,9 +8,12 @@ interface TopNavProps {
   onSearch?: (query: string) => void;
   showLogo?: boolean;
   onMenuClick?: () => void;
+  /** Instructor/Admin shells have no lab catalog to search — hide the box entirely there
+   *  instead of rendering an input with no wired-up handler. */
+  hideSearch?: boolean;
 }
 
-export function TopNav({ onSearch, showLogo = false, onMenuClick }: TopNavProps) {
+export function TopNav({ onSearch, showLogo = false, onMenuClick, hideSearch = false }: TopNavProps) {
   const { data: session } = useSession();
   const [showDropdown, setShowDropdown] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -27,16 +30,18 @@ export function TopNav({ onSearch, showLogo = false, onMenuClick }: TopNavProps)
       )}
 
       <div className="flex-1 min-w-0 max-w-lg">
-        <input
-          type="text"
-          placeholder="Search labs..."
-          value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.target.value);
-            onSearch?.(e.target.value);
-          }}
-          className="w-full bg-muted border border-border rounded-lg px-4 py-2 text-sm text-text-main placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40"
-        />
+        {!hideSearch && (
+          <input
+            type="text"
+            placeholder="Search labs..."
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              onSearch?.(e.target.value);
+            }}
+            className="w-full bg-muted border border-border rounded-lg px-4 py-2 text-sm text-text-main placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40"
+          />
+        )}
       </div>
 
       <div className="flex items-center gap-1 sm:gap-4 sm:ml-2 shrink-0">

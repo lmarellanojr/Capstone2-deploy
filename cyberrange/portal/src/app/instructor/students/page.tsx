@@ -1,35 +1,11 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { LoadingSpinner, MockDataNotice } from "@/components/ui";
+import { MockDataNotice } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
 import { mockStudents } from "@/lib/mock/instructorMock";
 
 export default function InstructorStudentsPage() {
-  const { status } = useSession();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login?callbackUrl=/instructor/students");
-    }
-  }, [status, router]);
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-primary">
-        <LoadingSpinner message="Loading..." />
-      </div>
-    );
-  }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
-
   return (
     <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">

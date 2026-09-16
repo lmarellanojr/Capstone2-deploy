@@ -1,11 +1,9 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useRouter, useParams } from "next/navigation";
-import { useEffect } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, Button, LoadingSpinner, MockDataNotice } from "@/components/ui";
+import { Badge, Button, MockDataNotice } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
 import { mockReviewQueue } from "@/lib/mock/instructorMock";
 
@@ -17,28 +15,7 @@ const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = 
 };
 
 export default function ReviewDetailPage() {
-  const { status } = useSession();
-  const router = useRouter();
   const params = useParams<{ id: string }>();
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push(`/login?callbackUrl=/instructor/reviews/${params.id}`);
-    }
-  }, [status, router, params.id]);
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-primary">
-        <LoadingSpinner message="Loading..." />
-      </div>
-    );
-  }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
-
   const reviewCase = mockReviewQueue.find((c) => c.id === params.id);
 
   return (

@@ -1,10 +1,7 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, LoadingSpinner, MockDataNotice } from "@/components/ui";
+import { Badge, MockDataNotice } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
 import { mockUsers } from "@/lib/mock/adminMock";
 
@@ -15,27 +12,6 @@ const ROLE_BADGE: Record<string, "brand" | "info" | "default"> = {
 };
 
 export default function AdminUsersPage() {
-  const { status } = useSession();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login?callbackUrl=/admin/users");
-    }
-  }, [status, router]);
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-primary">
-        <LoadingSpinner message="Loading..." />
-      </div>
-    );
-  }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
-
   return (
     <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">

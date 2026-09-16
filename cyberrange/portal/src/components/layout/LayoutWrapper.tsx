@@ -27,7 +27,12 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel }: La
       </div>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <TopNav onSearch={onSearch} showLogo onMenuClick={() => setMenuOpen(true)} />
+        <TopNav
+          onSearch={onSearch}
+          showLogo
+          onMenuClick={() => setMenuOpen(true)}
+          hideSearch={Boolean(sectionLabel)}
+        />
         <main className="flex-1 overflow-y-auto">
           <div className="p-3 sm:p-6 lg:p-8">{children}</div>
         </main>
