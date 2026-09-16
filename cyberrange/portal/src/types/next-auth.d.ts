@@ -1,7 +1,27 @@
 declare module 'next-auth' {
+  // AUTH-01: Keycloak realm roles (realm_access.roles), decoded server-side
+  // in the jwt() callback (portal/src/lib/auth.ts) and mirrored here in the
+  // session() callback. Client-side only -- the FastAPI backend never trusts
+  // this value and re-derives roles itself from the bearer token it receives
+  // (see provisioning/auth.py's require_role()).
+  //
+  // Deliberately string[], not a narrow union: the raw array always also
+  // carries Keycloak-internal roles (offline_access, uma_authorization,
+  // default-roles-<realm>) alongside the three app roles below, and callers
+  // must tolerate roles this app doesn't know about without a type error.
+  // Role is exported as a convenience for callers checking a known value
+  // (e.g. `roles.includes(role satisfies Role)`), not as roles' own type.
+  export type Role = "student" | "instructor" | "admin";
+
   export interface Session {
     accessToken?: string;
     error?: string;
+    user?: {
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+      roles?: string[];
+    };
   }
   export interface NextAuthOptions {
     // Accept any options; customize as needed

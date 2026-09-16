@@ -1,5 +1,6 @@
 import type { NextAuthOptions } from "next-auth";
 import type { JWT } from "next-auth/jwt";
+import { decodeJwt } from "jose";
 // Session import merged into line 1
 
 // Split-brain Keycloak: internal URL for server-side token exchange,
@@ -25,6 +26,24 @@ const issuerPublic = process.env.KEYCLOAK_PUBLIC_ISSUER || issuerInternal
 // mint a token whose `iss` claim does not match the `issuer` validated
 // below, and login will fail. See Docs/2026-08-08_AUTH_110_HOTFIX-TRB.md.
 const issuerServerSide = process.env.KEYCLOAK_SERVER_SIDE_ISSUER || issuerInternal
+
+// AUTH-01: realm roles live in the Keycloak access token's own JWT payload
+// (realm_access.roles) -- Keycloak's token-introspection response (used
+// server-side by the FastAPI backend, see provisioning/auth.py) does not
+// reliably echo that claim, but the signed JWT itself always carries
+// whatever the realm mapped onto it. This is an unsigned payload decode, not
+// a second signature verification: NextAuth's own OAuth client already
+// validated this token during the authorization-code exchange, so we are
+// reading claims, not re-authenticating.
+function decodeRoles(accessToken?: string): string[] {
+  if (!accessToken) return []
+  try {
+    const claims = decodeJwt(accessToken) as { realm_access?: { roles?: string[] } }
+    return claims.realm_access?.roles ?? []
+  } catch {
+    return []
+  }
+}
 
 // Single-flight: many concurrent `useSession` reads can enter the near-expiry
 // window at once. Keyed by the current refresh token, they share ONE Keycloak
@@ -71,6 +90,12 @@ async function doRefresh(token: JWT): Promise<JWT> {
     return {
       ...token,
       accessToken: refreshed.access_token,
+      // Re-decode roles from the freshly-issued token, not carried over from
+      // initial sign-in: Keycloak evaluates role mappings at issuance time,
+      // so a role change made mid-session (e.g. an admin promoting/demoting
+      // a user) must show up on the next refresh, not only after the user's
+      // NextAuth session cookie expires and they fully re-authenticate.
+      roles: decodeRoles(refreshed.access_token),
       accessTokenExpires: Date.now() + refreshed.expires_in * 1000,
       refreshToken: refreshed.refresh_token ?? token.refreshToken,
       error: undefined,
@@ -150,12 +175,23 @@ export const authOptions: NextAuthOptions = {
       if (account) {
         token.accessToken = account.access_token
         token.refreshToken = account.refresh_token
+        token.roles = decodeRoles(account.access_token)
         const expiresInSec =
           (account.expires_at as number | undefined) ??
           (account.expires_in ? Math.floor(Date.now() / 1000) + (account.expires_in as number) : undefined) ??
           (Math.floor(Date.now() / 1000) + 300)
         token.accessTokenExpires = expiresInSec * 1000
         return token
+      }
+      // Backfill for a session cookie created before role extraction existed:
+      // token.roles is only ever set in the `account` branch above or in
+      // refreshAccessToken() below, so a pre-existing session hitting this
+      // reuse path would otherwise carry token.roles === undefined forward
+      // indefinitely while its still-valid access token already has the real
+      // claims. Decode from the token already on hand rather than waiting for
+      // the next refresh or a full re-login.
+      if (token.roles === undefined) {
+        token.roles = decodeRoles(token.accessToken as string | undefined)
       }
       // Still valid (60s safety buffer before real expiry) → reuse.
       if (token.accessTokenExpires && Date.now() < token.accessTokenExpires - 60_000) {
@@ -167,6 +203,12 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }: { session: any; token: any }) {
       session.accessToken = token.accessToken as string | undefined
       session.error = token.error as string | undefined
+      // AUTH-01: session.user is already populated by next-auth's default
+      // profile() merge (name/email/image) before this callback runs -- we
+      // only add roles onto it, we don't reconstruct it.
+      if (session.user) {
+        session.user.roles = (token.roles as string[] | undefined) ?? []
+      }
       return session
     },
   },
