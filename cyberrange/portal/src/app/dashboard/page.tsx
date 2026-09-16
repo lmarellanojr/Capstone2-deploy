@@ -25,12 +25,6 @@ export default function DashboardPage() {
   const [earned, setEarned] = useState<number | null>(null);
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login?callbackUrl=/dashboard");
-    }
-  }, [status, router]);
-
-  useEffect(() => {
     if (status !== "authenticated") return;
     let active = true;
     provisioning
@@ -74,18 +68,6 @@ export default function DashboardPage() {
     (sum, s) => sum + s.milestones.reduce((m, x) => m + x.points, 0),
     0
   );
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-primary">
-        <div className="animate-spin h-10 w-10 border-2 border-border border-t-brand rounded-full" />
-      </div>
-    );
-  }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
 
   return (
     <LayoutWrapper>

@@ -1,10 +1,7 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, Button, LoadingSpinner, MockDataNotice } from "@/components/ui";
+import { Badge, Button, MockDataNotice } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
 import { mockPods } from "@/lib/mock/adminMock";
 
@@ -17,29 +14,8 @@ const POD_BADGE: Record<string, "success" | "warning" | "info" | "danger" | "def
 };
 
 export default function AdminPodsPage() {
-  const { status } = useSession();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login?callbackUrl=/admin/pods");
-    }
-  }, [status, router]);
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-primary">
-        <LoadingSpinner message="Loading..." />
-      </div>
-    );
-  }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
-
   return (
-    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin">
+    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">Pods</h1>

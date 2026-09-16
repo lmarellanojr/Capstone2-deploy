@@ -1,11 +1,8 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, LoadingSpinner, MockDataNotice } from "@/components/ui";
+import { Badge, MockDataNotice } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
 import { mockCapacity, mockPods, mockServiceStatus, mockUsers } from "@/lib/mock/adminMock";
 
@@ -16,31 +13,10 @@ const SERVICE_BADGE: Record<string, "success" | "warning" | "danger"> = {
 };
 
 export default function AdminDashboardPage() {
-  const { status } = useSession();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login?callbackUrl=/admin");
-    }
-  }, [status, router]);
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-primary">
-        <LoadingSpinner message="Loading..." />
-      </div>
-    );
-  }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
-
   const activePods = mockPods.filter((p) => p.status === "active").length;
 
   return (
-    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin">
+    <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">Admin Dashboard</h1>

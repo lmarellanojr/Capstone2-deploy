@@ -1,11 +1,8 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, LoadingSpinner, MockDataNotice } from "@/components/ui";
+import { Badge, MockDataNotice } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
 import { mockReviewQueue, mockStudents } from "@/lib/mock/instructorMock";
 
@@ -17,33 +14,12 @@ const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = 
 };
 
 export default function InstructorDashboardPage() {
-  const { status } = useSession();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login?callbackUrl=/instructor");
-    }
-  }, [status, router]);
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-primary">
-        <LoadingSpinner message="Loading..." />
-      </div>
-    );
-  }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
-
   const pendingCount = mockReviewQueue.filter((c) => c.status === "pending" || c.status === "retry").length;
   const approvedToday = mockReviewQueue.filter((c) => c.status === "approved").length;
   const activePods = mockStudents.filter((s) => s.activePod).length;
 
   return (
-    <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor">
+    <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">Instructor Dashboard</h1>
