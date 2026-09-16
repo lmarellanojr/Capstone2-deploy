@@ -131,3 +131,16 @@ def require_owner(pod_row, claims: dict) -> None:
     caller = caller_identity(claims, owner)
     if caller != owner:
         raise HTTPException(status_code=404, detail="Pod not found")
+
+
+def require_owner_or_admin(pod_row, claims: dict) -> None:
+    """Owner may proceed; Admin may proceed for any pod; others get 404 (same as require_owner)."""
+    if not AUTH_ENABLED:
+        return
+    owner = pod_row["student_id"]
+    caller = caller_identity(claims, owner)
+    if caller == owner:
+        return
+    if "admin" in extract_roles(claims):
+        return
+    raise HTTPException(status_code=404, detail="Pod not found")
