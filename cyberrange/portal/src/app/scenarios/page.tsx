@@ -1,11 +1,8 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { ScenarioGrid } from "@/components/scenarios/ScenarioGrid";
-import { LoadingSpinner } from "@/components/ui";
 
 type Category = "all" | "offensive" | "defensive";
 
@@ -22,35 +19,15 @@ const DIFFICULTY_OPTIONS = [
 ];
 
 export default function ScenariosPage() {
-  const { status } = useSession();
-  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [category, setCategory] = useState<Category>("all");
   const [difficulties, setDifficulties] = useState<number[]>([]);
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login?callbackUrl=/scenarios");
-    }
-  }, [status, router]);
 
   const toggleDifficulty = (level: number) => {
     setDifficulties((prev) =>
       prev.includes(level) ? prev.filter((d) => d !== level) : [...prev, level]
     );
   };
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-primary">
-        <LoadingSpinner message="Loading..." />
-      </div>
-    );
-  }
-
-  if (status === "unauthenticated") {
-    return null;
-  }
 
   return (
     <LayoutWrapper onSearch={setSearchQuery}>
