@@ -101,6 +101,31 @@ def caller_identity(claims: dict, fallback: Optional[str] = None) -> Optional[st
     return claims.get("preferred_username")
 
 
+def extract_roles(claims: dict) -> list:
+    """Extract accepted realm and portal client roles from Keycloak claims."""
+    roles = []
+    if not claims:
+        return roles
+    realm_access = claims.get("realm_access", {})
+    if isinstance(realm_access, dict):
+        roles.extend(realm_access.get("roles", []))
+    resource_access = claims.get("resource_access", {})
+    if isinstance(resource_access, dict):
+        portal_access = resource_access.get(KEYCLOAK_CLIENT_ID, {})
+        if isinstance(portal_access, dict):
+            roles.extend(portal_access.get("roles", []))
+    return list(set(roles))
+
+
+def require_role(required_roles: list, claims: dict) -> None:
+    """Ensure the caller has at least one of the specified roles."""
+    if not AUTH_ENABLED:
+        return
+    user_roles = extract_roles(claims)
+    if not any(role in user_roles for role in required_roles):
+        raise HTTPException(status_code=403, detail="Forbidden: Insufficient privileges")
+
+
 def require_owner(pod_row, claims: dict) -> None:
     owner = pod_row["student_id"]
     caller = caller_identity(claims, owner)

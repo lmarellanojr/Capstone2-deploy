@@ -47,9 +47,167 @@ def _run_sql_file(conn: sqlite3.Connection, path: str) -> None:
     conn.executescript(sql)
 
 
+def _get_create_table_sql(path: str, table_name: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        sql = f.read()
+    target = table_name.upper()
+    for stmt in sql.split(";"):
+        clean = stmt.strip()
+        uncommented_lines = [
+            line for line in clean.splitlines() if not line.strip().startswith("--")
+        ]
+        norm = " ".join(" ".join(uncommented_lines).upper().split())
+        if (
+            norm.startswith(f"CREATE TABLE IF NOT EXISTS {target} ")
+            or norm.startswith(f"CREATE TABLE IF NOT EXISTS {target}(")
+            or norm.startswith(f"CREATE TABLE {target} ")
+            or norm.startswith(f"CREATE TABLE {target}(")
+        ):
+            return clean
+    raise ValueError(f"CREATE TABLE for {table_name} not found in {path}")
+
+
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     # table_info: cid, name, type, notnull, dflt_value, pk — name is r[1]
     return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _has_table(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return bool(row)
+
+
+def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
+    if _has_table(conn, "_review_cases_old"):
+        old_count = conn.execute("SELECT COUNT(*) FROM _review_cases_old").fetchone()[0]
+        cur_count = (
+            conn.execute("SELECT COUNT(*) FROM review_cases").fetchone()[0]
+            if _has_table(conn, "review_cases")
+            else 0
+        )
+        if cur_count == 0 and old_count > 0:
+            if _has_table(conn, "review_cases"):
+                conn.execute("DROP TABLE review_cases")
+            conn.execute("ALTER TABLE _review_cases_old RENAME TO review_cases")
+        else:
+            conn.execute("DROP TABLE _review_cases_old")
+
+    if not _has_table(conn, "review_cases"):
+        return
+    cols = {r[1]: r for r in conn.execute("PRAGMA table_info(review_cases)").fetchall()}
+    report_text_col = cols.get("report_text")
+    score_col = cols.get("score")
+    # Table rebuild is required if:
+    # 1. report_text has NOT NULL constraint (r[3] == 1)
+    # 2. score has a DEFAULT 0 constraint (r[4] is 0 or evaluates to 0)
+    # 3. created_at or updated_at is missing (ALTER TABLE ADD COLUMN cannot add CURRENT_TIMESTAMP in SQLite)
+    # 4. Required v4 CHECK constraints are absent from existing table definition
+    has_not_null_report_text = bool(report_text_col and report_text_col[3] == 1)
+    has_zero_default_score = bool(
+        score_col and score_col[4] is not None and str(score_col[4]).strip("'\"") in ("0", "0.0")
+    )
+    missing_timestamps = ("created_at" not in cols) or ("updated_at" not in cols)
+
+    table_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='review_cases'"
+    ).fetchone()
+    table_sql = (table_sql_row[0] or "") if table_sql_row else ""
+    norm_sql = " ".join(table_sql.upper().split())
+
+    missing_constraints = False
+    if "score" in cols and ("SCORE >= 0" not in norm_sql or "SCORE <= 100" not in norm_sql):
+        missing_constraints = True
+    if "status" in cols and not all(s in norm_sql for s in ("'PENDING'", "'APPROVED'", "'REJECTED'", "'RETRY'")):
+        missing_constraints = True
+    if "case_type" in cols and not all(ct in norm_sql for ct in ("'WRITTEN_REPORT'", "'SCORING_CONFLICT'", "'MANUAL_REVIEW'")):
+        missing_constraints = True
+
+    needs_rebuild = (
+        has_not_null_report_text
+        or has_zero_default_score
+        or missing_timestamps
+        or missing_constraints
+    )
+
+    if needs_rebuild:
+        old_cols = set(cols.keys())
+        milestone_expr = "milestone_id" if "milestone_id" in old_cols else "NULL"
+        case_type_expr = "case_type" if "case_type" in old_cols else "'WRITTEN_REPORT'"
+        conflict_expr = "conflict_reason" if "conflict_reason" in old_cols else "NULL"
+        evidence_expr = "evidence_data" if "evidence_data" in old_cols else "NULL"
+        if "score" not in old_cols:
+            score_expr = "NULL"
+        elif "status" in old_cols and "graded_by" in old_cols:
+            score_expr = "CASE WHEN status = 'PENDING' AND graded_by IS NULL THEN NULL ELSE score END"
+        elif "status" in old_cols:
+            score_expr = "CASE WHEN status = 'PENDING' THEN NULL ELSE score END"
+        elif "graded_by" in old_cols:
+            score_expr = "CASE WHEN graded_by IS NULL THEN NULL ELSE score END"
+        else:
+            score_expr = "score"
+        status_expr = "status" if "status" in old_cols else "'PENDING'"
+        feedback_expr = "feedback" if "feedback" in old_cols else "NULL"
+        graded_by_expr = "graded_by" if "graded_by" in old_cols else "NULL"
+        created_at_expr = "created_at" if "created_at" in old_cols else "CURRENT_TIMESTAMP"
+        updated_at_expr = "updated_at" if "updated_at" in old_cols else "CURRENT_TIMESTAMP"
+
+        v4_path = os.path.join(_schema_dir(), "v4.sql")
+        create_table_sql = _get_create_table_sql(v4_path, "review_cases")
+
+        with conn:
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            conn.execute("ALTER TABLE review_cases RENAME TO _review_cases_old")
+            # Drop old indexes so they do not block creation or get deleted with old table
+            for idx in ("idx_review_cases_student", "idx_review_cases_status", "idx_review_cases_case_type"):
+                conn.execute(f"DROP INDEX IF EXISTS {idx}")
+            conn.execute(create_table_sql)
+            conn.execute(f"""
+                INSERT INTO review_cases (
+                    review_id, student_id, scenario_id, milestone_id, case_type,
+                    report_text, conflict_reason, evidence_data, score, status,
+                    feedback, graded_by, created_at, updated_at
+                )
+                SELECT
+                    review_id, student_id, scenario_id, {milestone_expr}, {case_type_expr},
+                    report_text, {conflict_expr}, {evidence_expr}, {score_expr}, {status_expr},
+                    {feedback_expr}, {graded_by_expr}, {created_at_expr}, {updated_at_expr}
+                FROM _review_cases_old
+            """)
+            conn.execute("DROP TABLE _review_cases_old")
+            # Create/ensure all three indexes exist on review_cases after dropping the old table
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_student ON review_cases(student_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_status ON review_cases(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_case_type ON review_cases(case_type)")
+    else:
+        # Additive migration: add missing columns using ALTER TABLE ... ADD COLUMN
+        with conn:
+            if "case_type" not in cols:
+                conn.execute(
+                    "ALTER TABLE review_cases ADD COLUMN case_type TEXT "
+                    "CHECK(case_type IN ('WRITTEN_REPORT','SCORING_CONFLICT','MANUAL_REVIEW')) DEFAULT 'WRITTEN_REPORT'"
+                )
+            if "conflict_reason" not in cols:
+                conn.execute("ALTER TABLE review_cases ADD COLUMN conflict_reason TEXT")
+            if "evidence_data" not in cols:
+                conn.execute("ALTER TABLE review_cases ADD COLUMN evidence_data TEXT")
+            if "score" not in cols:
+                conn.execute(
+                    "ALTER TABLE review_cases ADD COLUMN score INTEGER "
+                    "CHECK(score IS NULL OR (score >= 0 AND score <= 100))"
+                )
+            if "feedback" not in cols:
+                conn.execute("ALTER TABLE review_cases ADD COLUMN feedback TEXT")
+            if "graded_by" not in cols:
+                conn.execute("ALTER TABLE review_cases ADD COLUMN graded_by TEXT")
+            # Ungraded pending reviews return score: null
+            conn.execute("UPDATE review_cases SET score = NULL WHERE status = 'PENDING' AND graded_by IS NULL AND score = 0")
+            # Ensure indexes exist
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_student ON review_cases(student_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_status ON review_cases(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_case_type ON review_cases(case_type)")
 
 
 def apply(db_path: str | None = None) -> int:
@@ -69,11 +227,14 @@ def apply(db_path: str | None = None) -> int:
                     conn.execute(
                         "ALTER TABLE milestone_verification ADD COLUMN student_id TEXT"
                     )
+                if version == 4:
+                    _upgrade_review_cases_schema(conn)
                 _run_sql_file(conn, sql_path)
                 conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (version,),
                 )
+        _upgrade_review_cases_schema(conn)
         return current_version(conn)
     finally:
         conn.close()

@@ -34,10 +34,10 @@ def _pragma_names(conn: sqlite3.Connection, table: str) -> set[str]:
 
 def test_migrate_to_v3(tmp_path: Path):
     db = tmp_path / "pod_mgmt.db"
-    assert migrate.apply(str(db)) == 3
+    assert migrate.apply(str(db)) >= 3
     conn = sqlite3.connect(db)
     try:
-        assert migrate.current_version(conn) == 3
+        assert migrate.current_version(conn) >= 3
         assert "student_id" in _pragma_names(conn, "milestone_verification")
     finally:
         conn.close()
@@ -69,7 +69,7 @@ def test_backfill_student_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         conn.close()
 
     monkeypatch.setattr(migrate, "_SCHEMA_DIR", str(real_schema))
-    assert migrate.apply(str(db)) == 3
+    assert migrate.apply(str(db)) >= 3
 
     conn = sqlite3.connect(db)
     try:
@@ -100,11 +100,11 @@ def test_v3_rerun_after_alter_without_version(tmp_path: Path, monkeypatch: pytes
         conn.close()
 
     monkeypatch.setattr(migrate, "_SCHEMA_DIR", str(real_schema))
-    assert migrate.apply(str(db)) == 3
+    assert migrate.apply(str(db)) >= 3
     conn = sqlite3.connect(db)
     try:
         assert "student_id" in _pragma_names(conn, "milestone_verification")
-        assert migrate.current_version(conn) == 3
+        assert migrate.current_version(conn) >= 3
     finally:
         conn.close()
 

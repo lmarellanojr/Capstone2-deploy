@@ -1,6 +1,8 @@
 """Pod provisioning and lifecycle API routes."""
+import json
 import sqlite3
-from typing import Optional
+from typing import Optional, Union
+from pydantic import BaseModel
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
@@ -32,6 +34,14 @@ def _scoring_deps() -> dict:
 def serialize_pod(row) -> dict:
     body = dict(row)
     body.update(ttl_payload(body.get("created_at")))
+    return body
+
+
+def serialize_instructor_pod(row) -> dict:
+    body = serialize_pod(row)
+    for k in list(body.keys()):
+        if k.startswith("vmid_") or k in ("connection_id", "wazuh_agent_id"):
+            body.pop(k, None)
     return body
 
 
@@ -429,3 +439,251 @@ def get_pod_milestones(pod_id: int, claims: dict = Depends(verify_token)):
         "student_id": pod["student_id"],
         "milestones": list_milestones_for_pod(dict(pod)),
     }
+
+
+@router.get("/instructor/pods")
+def instructor_list_pods(claims: dict = Depends(verify_token)):
+    """List all active student pods with milestone progress for instructor monitoring."""
+    auth.require_role(["instructor", "admin"], claims)
+    conn = get_db_connection()
+    rows = conn.execute(
+        "SELECT * FROM pods WHERE status NOT IN ('DESTROYED','FAILED_ROLLBACK_COMPLETE') ORDER BY pod_id"
+    ).fetchall()
+    pods = []
+    for r in rows:
+        pod_dict = serialize_instructor_pod(r)
+        pod_dict["milestones"] = list_milestones_for_pod(dict(r))
+        pods.append(pod_dict)
+    conn.close()
+    return {"pods": pods}
+
+
+@router.get("/instructor/students")
+def instructor_list_students(claims: dict = Depends(verify_token)):
+    """List all students across pods, milestone verifications, and reviews with their current and historical progress."""
+    auth.require_role(["instructor", "admin"], claims)
+    conn = get_db_connection()
+    student_rows = conn.execute(
+        "SELECT DISTINCT student_id FROM ("
+        "  SELECT student_id FROM milestone_verification WHERE student_id IS NOT NULL AND TRIM(student_id) != '' "
+        "  UNION "
+        "  SELECT student_id FROM pods WHERE student_id IS NOT NULL AND TRIM(student_id) != '' "
+        "  UNION "
+        "  SELECT student_id FROM review_cases WHERE student_id IS NOT NULL AND TRIM(student_id) != '' "
+        ") ORDER BY student_id"
+    ).fetchall()
+
+    # 1. Grouped query for active pods across all students (latest non-destroyed pod per student)
+    active_pod_rows = conn.execute(
+        "SELECT * FROM pods "
+        "WHERE status NOT IN ('DESTROYED', 'FAILED_ROLLBACK_COMPLETE') "
+        "  AND student_id IS NOT NULL AND TRIM(student_id) != '' "
+        "ORDER BY pod_id DESC"
+    ).fetchall()
+    active_pods_by_student = {}
+    for p_row in active_pod_rows:
+        sid = p_row["student_id"]
+        if sid not in active_pods_by_student:
+            active_pods_by_student[sid] = serialize_instructor_pod(p_row)
+
+    # 2. Grouped query for historical milestones across all students
+    milestone_rows = conn.execute(
+        "SELECT student_id, scenario_id, milestone_id, status, detection_score, verified_at "
+        "FROM milestone_verification "
+        "WHERE student_id IS NOT NULL AND TRIM(student_id) != '' "
+        "ORDER BY verified_at DESC"
+    ).fetchall()
+    milestones_by_student = {}
+    for m_row in milestone_rows:
+        sid = m_row["student_id"]
+        milestones_by_student.setdefault(sid, []).append({
+            "scenario_id": m_row["scenario_id"],
+            "milestone_id": m_row["milestone_id"],
+            "status": m_row["status"],
+            "detection_score": m_row["detection_score"],
+            "verified_at": m_row["verified_at"],
+        })
+
+    # 3. Grouped query for pending review counts per student
+    pending_rows = conn.execute(
+        "SELECT student_id, COUNT(*) AS pending_count "
+        "FROM review_cases "
+        "WHERE status = 'PENDING' AND student_id IS NOT NULL AND TRIM(student_id) != '' "
+        "GROUP BY student_id"
+    ).fetchall()
+    pending_counts_by_student = {
+        r["student_id"]: r["pending_count"] for r in pending_rows
+    }
+
+    conn.close()
+
+    students = []
+    for s_row in student_rows:
+        sid = s_row["student_id"]
+        students.append({
+            "student_id": sid,
+            "active_pod": active_pods_by_student.get(sid),
+            "milestones": milestones_by_student.get(sid, []),
+            "pending_review_count": pending_counts_by_student.get(sid, 0),
+        })
+
+    return {"students": students}
+
+
+@router.get("/instructor/students/{student_id}")
+def instructor_get_student_progress(student_id: str, claims: dict = Depends(verify_token)):
+    """Get active pod, historical milestone progress, and review cases for a specific student."""
+    auth.require_role(["instructor", "admin"], claims)
+    conn = get_db_connection()
+    exists = conn.execute(
+        "SELECT 1 FROM ("
+        "  SELECT student_id FROM milestone_verification WHERE student_id = ? "
+        "  UNION "
+        "  SELECT student_id FROM pods WHERE student_id = ? "
+        "  UNION "
+        "  SELECT student_id FROM review_cases WHERE student_id = ? "
+        ") LIMIT 1",
+        (student_id, student_id, student_id),
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    active_pod_row = conn.execute(
+        "SELECT * FROM pods WHERE student_id=? AND status NOT IN ('DESTROYED','FAILED_ROLLBACK_COMPLETE') "
+        "ORDER BY pod_id DESC LIMIT 1",
+        (student_id,),
+    ).fetchone()
+    active_pod = serialize_instructor_pod(active_pod_row) if active_pod_row else None
+
+    milestone_rows = conn.execute(
+        "SELECT scenario_id, milestone_id, status, detection_score, verified_at "
+        "FROM milestone_verification "
+        "WHERE student_id = ? "
+        "ORDER BY verified_at DESC",
+        (student_id,),
+    ).fetchall()
+
+    review_rows = conn.execute(
+        "SELECT * FROM review_cases WHERE student_id = ? ORDER BY created_at DESC",
+        (student_id,),
+    ).fetchall()
+    conn.close()
+
+    return {
+        "student_id": student_id,
+        "active_pod": active_pod,
+        "milestones": [dict(m) for m in milestone_rows],
+        "reviews": [dict(r) for r in review_rows],
+    }
+
+
+class ReviewSubmitRequest(BaseModel):
+    scenario_id: int
+    milestone_id: Optional[int] = None
+    case_type: Optional[str] = "WRITTEN_REPORT"
+    report_text: Optional[str] = None
+    conflict_reason: Optional[str] = None
+    evidence_data: Optional[Union[str, dict, list]] = None
+
+
+@router.post("/reviews/submit")
+def submit_student_review(
+    body: ReviewSubmitRequest, claims: dict = Depends(verify_token)
+):
+    """Student endpoint to submit review cases (written reports, scoring conflicts, manual reviews)."""
+    student_id = caller_identity(claims, None)
+    if not student_id:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    c_type = (body.case_type or "WRITTEN_REPORT").upper().strip()
+    valid_case_types = ("WRITTEN_REPORT", "SCORING_CONFLICT", "MANUAL_REVIEW")
+    if c_type not in valid_case_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid case_type: must be one of {valid_case_types}",
+        )
+
+    clean_report = body.report_text.strip() if (body.report_text and body.report_text.strip()) else None
+    clean_conflict = body.conflict_reason.strip() if (body.conflict_reason and body.conflict_reason.strip()) else None
+
+    if c_type == "WRITTEN_REPORT":
+        if not clean_report:
+            raise HTTPException(
+                status_code=400, detail="report_text cannot be empty for WRITTEN_REPORT"
+            )
+    else:
+        if not clean_report and not clean_conflict:
+            raise HTTPException(
+                status_code=400,
+                detail="Either conflict_reason or report_text is required for this case type",
+            )
+
+    evidence_text = None
+    if body.evidence_data is not None:
+        if isinstance(body.evidence_data, (dict, list)):
+            evidence_text = json.dumps(body.evidence_data)
+        else:
+            evidence_text = str(body.evidence_data)
+
+    conn = get_db_connection()
+    cursor = conn.execute(
+        "INSERT INTO review_cases ("
+        "  student_id, scenario_id, milestone_id, case_type, "
+        "  report_text, conflict_reason, evidence_data, status"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')",
+        (
+            student_id,
+            body.scenario_id,
+            body.milestone_id,
+            c_type,
+            clean_report,
+            clean_conflict,
+            evidence_text,
+        ),
+    )
+    review_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    return {"status": "submitted", "review_id": review_id}
+
+
+@router.get("/instructor/reviews")
+def list_student_reviews(
+    status_filter: Optional[str] = None, claims: dict = Depends(verify_token)
+):
+    """Instructor / Admin endpoint to list student review cases."""
+    auth.require_role(["instructor", "admin"], claims)
+    conn = get_db_connection()
+    if status_filter:
+        rows = conn.execute(
+            "SELECT * FROM review_cases WHERE status=? ORDER BY created_at DESC",
+            (status_filter.upper(),),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM review_cases ORDER BY created_at DESC"
+        ).fetchall()
+    conn.close()
+    return {"reviews": [dict(r) for r in rows]}
+
+
+@router.get("/instructor/reviews/{review_id}")
+def get_student_review_detail(
+    review_id: int, claims: dict = Depends(verify_token)
+):
+    """Instructor / Admin endpoint to view details of a specific review case."""
+    auth.require_role(["instructor", "admin"], claims)
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM review_cases WHERE review_id=?", (review_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Review case not found")
+    return dict(row)
+
+
+
