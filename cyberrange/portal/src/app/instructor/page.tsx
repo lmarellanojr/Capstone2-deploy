@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, MockDataNotice } from "@/components/ui";
+import { AccessDenied, Badge, LoadingSpinner, MockDataNotice } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
-import { mockReviewQueue, mockStudents } from "@/lib/mock/instructorMock";
+import { mockReviewQueue } from "@/lib/mock/instructorMock";
+import { useInstructorStudents } from "@/hooks/useInstructorStudents";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   pending: "warning",
@@ -14,36 +15,60 @@ const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = 
 };
 
 export default function InstructorDashboardPage() {
-  const pendingCount = mockReviewQueue.filter((c) => c.status === "pending" || c.status === "retry").length;
-  const approvedToday = mockReviewQueue.filter((c) => c.status === "approved").length;
-  const activePods = mockStudents.filter((s) => s.activePod).length;
+  const { students, loading, error, forbidden } = useInstructorStudents();
+
+  if (forbidden) {
+    return (
+      <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor" hideSearch>
+        <AccessDenied message="You need an instructor or admin role to view the dashboard." />
+      </LayoutWrapper>
+    );
+  }
+
+  const studentCount = students.length;
+  const activePods = students.filter((s) => s.active_pod).length;
+  const pendingReviews = students.reduce((sum, s) => sum + s.pending_review_count, 0);
 
   return (
     <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">Instructor Dashboard</h1>
-          <p className="text-text-muted mt-1">Route shell for review and student-progress tools</p>
+          <p className="text-text-muted mt-1">Student roster and progress overview</p>
         </div>
-        <MockDataNotice />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        {[
-          { label: "Students", value: String(mockStudents.length) },
-          { label: "Pending Reviews", value: String(pendingCount) },
-          { label: "Active Pods", value: String(activePods) },
-        ].map((stat) => (
-          <div key={stat.label} className="card-surface p-6 text-center">
-            <p className="text-3xl font-bold text-text-main">{stat.value}</p>
-            <p className="text-sm text-text-muted mt-1">{stat.label}</p>
-          </div>
-        ))}
-      </div>
+      {error && (
+        <div className="mb-4 p-3 alert-error text-sm">
+          <p>{error}</p>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <LoadingSpinner message="Loading dashboard..." />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+          {[
+            { label: "Students", value: String(studentCount) },
+            { label: "Pending Reviews", value: String(pendingReviews) },
+            { label: "Active Pods", value: String(activePods) },
+          ].map((stat) => (
+            <div key={stat.label} className="card-surface p-6 text-center">
+              <p className="text-3xl font-bold text-text-main">{stat.value}</p>
+              <p className="text-sm text-text-muted mt-1">{stat.label}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="card-surface p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-text-main">Review Queue</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-bold text-text-main">Review Queue</h2>
+            <MockDataNotice />
+          </div>
           <Link href="/instructor/reviews" className="text-sm text-brand font-semibold hover:underline">
             View all reviews →
           </Link>
