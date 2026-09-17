@@ -121,7 +121,7 @@ Planned in [portal/src/app/instructor/students/page.tsx](../portal/src/app/instr
 | **Pod Slot & TTL** | `active_pod.pod_id`, `active_pod.remaining_seconds` | `number`, `number` | Display active slot (e.g. `Slot #3`) and format `remaining_seconds` into `mm:ss`. |
 | **Completed Milestones** | `milestones` | `array[object]` | Array of `{scenario_id, milestone_id, status, detection_score, verified_at}` from automated verifications. |
 | **Progress % Calculation** | `milestones.filter(m => m.status === 'PASS').length` | `number` | Compute ratio of passed automated milestones against total scenario milestones. |
-| **Pending Reviews** | `pending_review_count` | `integer` | Number of unresolved reviews for this student. Alert badge if `> 0`. |
+| **Pending Reviews** | `pending_review_count` | `integer` | Number of reviews with PENDING status for this student. Alert badge if `> 0`. |
 | **Last Activity** | `milestones[0].verified_at` or `active_pod.created_at` | `string` | Most recent student event recorded in database. |
 
 ---
