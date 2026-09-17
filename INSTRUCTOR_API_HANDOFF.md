@@ -1,0 +1,517 @@
+# Instructor API Handoff & Integration Specification
+
+**Author:** Shekinah (Backend / Instructor API & Review Engine)  
+**Recipients:** Maricar (Frontend UI Lead), Lenie (Auth & Security Lead)  
+**Date:** September 17, 2026  
+**Status:** Completed (`DB-01`, `INST-API`, `AUTH-02`); Queued (`INST-03`)  
+**Related Issue:** Relates to Issue #34 (Tracking instructor review queue & scoring evaluation).  
+> [!IMPORTANT]
+> **PR Notice:** This pull request is strictly for **handoff and documentation preparation**. It **does NOT close Issue #34**, as the backend resolution endpoints and evaluation synchronization remain queued for `INST-03`.
+
+**Target Codebase:** [`cyberrange/src/provisioning`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning) and [`cyberrange/portal`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal)
+
+---
+
+## 1. Executive Summary & Context
+
+The backend infrastructure for database persistence (`DB-01`), Instructor API endpoints (`INST-API`), and FastAPI role-based access control guards (`AUTH-02`) has been successfully implemented, audited, and verified with 100% test suite pass rates (26 review tests in [`test_reviews.py`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/test_reviews.py) and 12 persistence tests in [`test_score_persistence.py`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/test_score_persistence.py)).
+
+This handoff document provides Maricar with exact field-level API mappings to her planned UI route shells (`/instructor`, `/instructor/reviews`, `/instructor/reviews/[id]`, `/instructor/students`, `/instructor/pods`), sanitized request and response payloads, error models, and integration instructions. It also reviews the authorization checklist and role contracts with Lenie, and documents the existing Approve/Reject/Retry data structures along with the remaining gaps queued for `INST-03`.
+
+### 1.1 Recorded Test Verification Evidence
+The cited test suites were executed against the active Python 3.14 / pytest runtime and passed with zero errors:
+
+```text
+============================= test session starts =============================
+platform win32 -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\Windows\OneDrive\Capstone2-deploy\Capstone2-deploy\cyberrange
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collected 26 items
+
+src\provisioning\test_reviews.py ..........................              [100%]
+====================== 26 passed, 10 warnings in 11.47s =======================
+
+============================= test session starts =============================
+platform win32 -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\Windows\OneDrive\Capstone2-deploy\Capstone2-deploy\cyberrange
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collected 12 items
+
+src\provisioning\test_score_persistence.py ............                  [100%]
+============================= 12 passed in 2.54s ==============================
+```
+
+---
+
+## 2. API Field Mapping to Planned UI Screens
+
+### 2.1 Screen: Instructor Overview / Dashboard (`/instructor` or `/instructor/dashboard`)
+Planned by Maricar in [`portal/src/app/instructor/page.tsx`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/app/instructor/page.tsx) and [`instructorMock.ts`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/lib/mock/instructorMock.ts).
+
+| UI Element / Mock Field | Backend API Source | API Field Name | Type / Format | Notes / Transformation |
+| :--- | :--- | :--- | :--- | :--- |
+| **Total Enrolled Students** (`stat.value`) | `GET /instructor/students` | `students.length` | `integer` | Count of unique students across verifications, active pods, and review cases. |
+| **Pending Reviews** (`pendingCount`) | `GET /instructor/reviews?status_filter=PENDING` or `GET /instructor/students` | `reviews.length` or `sum(pending_review_count)` | `integer` | High-priority count of reports requiring instructor grading. |
+| **Active Pods** (`activePods`) | `GET /instructor/pods` | `pods.length` | `integer` | Active LXD slots currently occupied (`0` to `MAX_PODS = 6`). |
+| **Review Queue Preview Table** | `GET /instructor/reviews` | `reviews[0..4]` | `array[object]` | Top 4 most recent submissions. |
+| ↳ **Case ID** (`c.id`) | `GET /instructor/reviews` | `review_id` | `integer` | Format for UI display as `#REV-{review_id}` or `case-{review_id}`. |
+| ↳ **Student** (`c.student`) | `GET /instructor/reviews` | `student_id` | `string` | Student Keycloak username (e.g. `student1`). |
+| ↳ **Scenario** (`c.scenario`) | `GET /instructor/reviews` | `scenario_id` | `integer` | Map integer `1` -> `"01 - Network Recon"`, `2` -> `"02 - SSH Hardening"`, etc. |
+| ↳ **Submitted At** (`c.submitted`) | `GET /instructor/reviews` | `created_at` | `string (ISO / UTC)` | Render with local time formatter (`YYYY-MM-DD HH:mm`). |
+| ↳ **Status** (`c.status`) | `GET /instructor/reviews` | `status` | `string` | Backend returns `"PENDING"`, `"APPROVED"`, `"REJECTED"`, `"RETRY"`. Convert to lowercase for UI badge matching. |
+
+---
+
+### 2.2 Screen: Review Queue (`/instructor/reviews`)
+Planned in [`portal/src/app/instructor/reviews/page.tsx`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/app/instructor/reviews/page.tsx).
+
+| UI Element / Column | Backend API Source | API Field Name | Type / Format | Notes / Transformation |
+| :--- | :--- | :--- | :--- | :--- |
+| **Status Filter Tabs** (`PENDING`, `APPROVED`, etc.) | `GET /instructor/reviews?status_filter={STATUS}` | Query Parameter `status_filter` | `string` | Pass `PENDING`, `APPROVED`, `REJECTED`, `RETRY`. Omit parameter for `ALL`. |
+| **Case ID** | `GET /instructor/reviews` | `review_id` | `integer` | Primary key in `review_cases`. |
+| **Student** | `GET /instructor/reviews` | `student_id` | `string` | Student identity. |
+| **Scenario / Milestone** | `GET /instructor/reviews` | `scenario_id`, `milestone_id` | `integer`, `integer | null` | If `milestone_id` is null, display `Scenario #{scenario_id} · Overall Report`. |
+| **Case Type** | `GET /instructor/reviews` | `case_type` | `string` | `"WRITTEN_REPORT"`, `"SCORING_CONFLICT"`, or `"MANUAL_REVIEW"`. |
+| **Submitted** | `GET /instructor/reviews` | `created_at` | `timestamp` | Submission timestamp. |
+| **Status Badge** | `GET /instructor/reviews` | `status` | `string` | Color code: `PENDING` (amber), `APPROVED` (green), `RETRY` (blue), `REJECTED` (red). |
+| **Score Assigned** | `GET /instructor/reviews` | `score` | `integer | null` | `null` indicates unreviewed/ungraded. Range `0..100`. |
+| **Action Link** | UI Navigation | — | — | Link destination: `/instructor/reviews/${review_id}`. |
+
+---
+
+### 2.3 Screen: Review Detail & Evaluation (`/instructor/reviews/[id]`)
+Planned in [`portal/src/app/instructor/reviews/[id]/page.tsx`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/app/instructor/reviews/[id]/page.tsx).
+
+| Screen Section | Backend API Field | Type | Description & Frontend Handling |
+| :--- | :--- | :--- | :--- |
+| **Header Meta** | `review_id`, `student_id`, `scenario_id`, `milestone_id`, `status` | `number`, `string`, `number`, `number`, `string` | Shows target student, scenario/milestone identifiers, and current resolution badge. |
+| **Case Type & Reason** | `case_type`, `report_text`, `conflict_reason` | `string`, `string | null`, `string | null` | If `case_type == "WRITTEN_REPORT"`, display `report_text` in student writeup box.<br>If `case_type == "SCORING_CONFLICT"`, display `conflict_reason`. |
+| **Student Evidence** | `evidence_data` | `string | null` (JSON string) | Contains student commands, terminal outputs, or exploit payload proof. Parse with `JSON.parse()` if valid JSON, otherwise render as pre-formatted text. |
+| **Automated Verifier Evidence** | Correlated from `milestone_verification` via `GET /instructor/students/{student_id}` | `object` (`status`, `detection_score`, `verified_at`) | Shows whether automated scoring passed or failed and any Wazuh detection score recorded. |
+| **Instructor Notes** | `feedback` | `string | null` | Existing instructor evaluation remarks, retry instructions, or grading justification. |
+| **Persisted Evaluator** | `graded_by` | `string | null` | Keycloak username of instructor who resolved or graded this case. |
+| **Score Points** | `score` | `integer | null` | Points awarded (`0` to `100`). Remains `null` while `status == 'PENDING'`. |
+| **Timestamps** | `created_at`, `updated_at` | `timestamp` | Submission date and last review update timestamp. |
+| **Decision Buttons** | Queued for `INST-03` | Action Payload | `Approve` (`score=100`, `status='APPROVED'`), `Reject` (`score=0`, `status='REJECTED'`), `Request Retry` (`status='RETRY'`). |
+
+---
+
+### 2.4 Screen: Student Roster & Progress (`/instructor/students`)
+Planned in [`portal/src/app/instructor/students/page.tsx`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/app/instructor/students/page.tsx).
+
+| UI Element | Backend API Field (`GET /instructor/students`) | Type | Notes & Calculations |
+| :--- | :--- | :--- | :--- |
+| **Student ID** | `student_id` | `string` | Unique username from Keycloak. |
+| **Active Pod Status** | `active_pod` | `object | null` | `null` if student has no running container pod.<br>If object: contains `pod_id`, `scenario_id`, `status`, `remaining_seconds`. |
+| **Pod Slot & TTL** | `active_pod.pod_id`, `active_pod.remaining_seconds` | `number`, `number` | Display active slot (e.g. `Slot #3`) and format `remaining_seconds` into `mm:ss`. |
+| **Completed Milestones** | `milestones` | `array[object]` | Array of `{scenario_id, milestone_id, status, detection_score, verified_at}`. |
+| **Progress % Calculation** | `milestones.filter(m => m.status === 'PASS').length` | `number` | Compute ratio of passed milestones against total scenario milestones. |
+| **Pending Reviews** | `pending_review_count` | `integer` | Number of unresolved reviews for this student. Alert badge if `> 0`. |
+| **Last Activity** | `milestones[0].verified_at` or `active_pod.created_at` | `string` | Most recent student event recorded in database. |
+
+---
+
+### 2.5 Screen: Active Student Pods (`/instructor/pods`)
+Implemented in [`portal/src/app/instructor/pods/page.tsx`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/app/instructor/pods/page.tsx).
+
+| Field | Source (`GET /instructor/pods`) | Type | Security & RBAC Guarantees |
+| :--- | :--- | :--- | :--- |
+| `pod_id` | `pod.pod_id` | `integer` (1..6) | Pod slot number. |
+| `student_id` | `pod.student_id` | `string` | Student owner. |
+| `scenario_id` | `pod.scenario_id` | `integer` | Scenario currently running in containers. |
+| `status` | `pod.status` | `string` | `ACTIVE`, `PROVISIONING`, `DESTROYING`. |
+| `remaining_seconds` | `pod.remaining_seconds` | `integer` | Auto-teardown countdown. |
+| `milestones` | `pod.milestones` | `array[object]` | Automated scoring verification history for this active pod. |
+| **Sanitization** | Stripped by `serialize_instructor_pod` | — | Internal LXD identifiers (`vmid_kali`, `vmid_meta`, `vmid_dvwa`), Guacamole `connection_id`, and Wazuh agent tokens are deliberately purged from this response. |
+
+---
+
+## 3. Sanitized Response Payloads
+
+### 3.1 Review Queue List (`GET /instructor/reviews`)
+
+```http
+GET /instructor/reviews HTTP/1.1
+Host: 10.115.77.1:8000
+Authorization: Bearer <INSTRUCTOR_JWT_TOKEN>
+```
+
+```json
+{
+  "reviews": [
+    {
+      "review_id": 142,
+      "student_id": "student_juan",
+      "scenario_id": 1,
+      "milestone_id": 2,
+      "case_type": "WRITTEN_REPORT",
+      "report_text": "Identified SQL injection in DVWA login. Tested `' OR '1'='1` bypass which allowed bypassing authentication and dumped user credentials table.",
+      "conflict_reason": null,
+      "evidence_data": "{\"payload\": \"admin' OR '1'='1#\", \"extracted_user\": \"admin\", \"hash_prefix\": \"$6$rounds=5000$\"}",
+      "score": null,
+      "status": "PENDING",
+      "feedback": null,
+      "graded_by": null,
+      "created_at": "2026-09-17 10:15:22",
+      "updated_at": "2026-09-17 10:15:22"
+    },
+    {
+      "review_id": 141,
+      "student_id": "student_pedro",
+      "scenario_id": 2,
+      "milestone_id": 1,
+      "case_type": "SCORING_CONFLICT",
+      "report_text": null,
+      "conflict_reason": "Automated verification timed out during SSH root login check, but SSH config was hardened according to manual instructions.",
+      "evidence_data": "{\"sshd_config_snippet\": \"PermitRootLogin no\\nPasswordAuthentication no\", \"service_status\": \"sshd is running\"}",
+      "score": null,
+      "status": "PENDING",
+      "feedback": null,
+      "graded_by": null,
+      "created_at": "2026-09-17 09:40:05",
+      "updated_at": "2026-09-17 09:40:05"
+    },
+    {
+      "review_id": 139,
+      "student_id": "student_maria",
+      "scenario_id": 1,
+      "milestone_id": 3,
+      "case_type": "WRITTEN_REPORT",
+      "report_text": "Completed XSS stored payload injection on guestbook form.",
+      "conflict_reason": null,
+      "evidence_data": "{\"input_payload\": \"<script>alert(document.cookie)</script>\"}",
+      "score": 60,
+      "status": "RETRY",
+      "feedback": "Partial credit awarded. Please document how you bypassed the client-side character length limit before full approval.",
+      "graded_by": "instructor_demo",
+      "created_at": "2026-09-16 16:30:00",
+      "updated_at": "2026-09-16 17:10:14"
+    },
+    {
+      "review_id": 130,
+      "student_id": "student_juan",
+      "scenario_id": 1,
+      "milestone_id": 1,
+      "case_type": "WRITTEN_REPORT",
+      "report_text": "Completed network reconnaissance using Nmap against target subnet 10.10.10.0/24.",
+      "conflict_reason": null,
+      "evidence_data": "{\"open_ports\": [22, 80, 3306], \"os_detection\": \"Linux 5.x\"}",
+      "score": 100,
+      "status": "APPROVED",
+      "feedback": "Excellent port scan analysis and service version enumeration.",
+      "graded_by": "instructor_demo",
+      "created_at": "2026-09-15 11:20:00",
+      "updated_at": "2026-09-15 14:05:30"
+    }
+  ]
+}
+```
+
+---
+
+### 3.2 Review Detail: Written Report (`GET /instructor/reviews/142`)
+
+```http
+GET /instructor/reviews/142 HTTP/1.1
+Host: 10.115.77.1:8000
+Authorization: Bearer <INSTRUCTOR_JWT_TOKEN>
+```
+
+```json
+{
+  "review_id": 142,
+  "student_id": "student_juan",
+  "scenario_id": 1,
+  "milestone_id": 2,
+  "case_type": "WRITTEN_REPORT",
+  "report_text": "Identified SQL injection in DVWA login. Tested `' OR '1'='1` bypass which allowed bypassing authentication and dumped user credentials table.",
+  "conflict_reason": null,
+  "evidence_data": "{\"payload\": \"admin' OR '1'='1#\", \"extracted_user\": \"admin\", \"hash_prefix\": \"$6$rounds=5000$\"}",
+  "score": null,
+  "status": "PENDING",
+  "feedback": null,
+  "graded_by": null,
+  "created_at": "2026-09-17 10:15:22",
+  "updated_at": "2026-09-17 10:15:22"
+}
+```
+
+---
+
+### 3.3 Review Detail: Scoring Conflict Resolution (`GET /instructor/reviews/141`)
+
+```http
+GET /instructor/reviews/141 HTTP/1.1
+Host: 10.115.77.1:8000
+Authorization: Bearer <INSTRUCTOR_JWT_TOKEN>
+```
+
+```json
+{
+  "review_id": 141,
+  "student_id": "student_pedro",
+  "scenario_id": 2,
+  "milestone_id": 1,
+  "case_type": "SCORING_CONFLICT",
+  "report_text": null,
+  "conflict_reason": "Automated verification timed out during SSH root login check, but SSH config was hardened according to manual instructions.",
+  "evidence_data": "{\"sshd_config_snippet\": \"PermitRootLogin no\\nPasswordAuthentication no\", \"service_status\": \"sshd is running\"}",
+  "score": 100,
+  "status": "APPROVED",
+  "feedback": "Confirmed that sshd configuration was modified correctly and verifier encountered transient network timeout. Overriding milestone to PASS.",
+  "graded_by": "instructor_demo",
+  "created_at": "2026-09-17 09:40:05",
+  "updated_at": "2026-09-17 11:02:18"
+}
+```
+
+---
+
+### 3.4 Correlated Automated Verifier Evidence (`GET /instructor/students/student_pedro`)
+
+When rendering the verifier evidence card in `/instructor/reviews/[id]`, the frontend correlates the review's `scenario_id` and `milestone_id` with the student's historical `milestones` verification records:
+
+```json
+{
+  "student_id": "student_pedro",
+  "active_pod": {
+    "pod_id": 2,
+    "student_id": "student_pedro",
+    "scenario_id": 2,
+    "status": "ACTIVE",
+    "remaining_seconds": 3120,
+    "created_at": "2026-09-17 09:15:00"
+  },
+  "milestones": [
+    {
+      "scenario_id": 2,
+      "milestone_id": 1,
+      "status": "FAIL",
+      "detection_score": 0,
+      "verified_at": "2026-09-17 09:35:10"
+    }
+  ],
+  "reviews": [
+    {
+      "review_id": 141,
+      "scenario_id": 2,
+      "milestone_id": 1,
+      "case_type": "SCORING_CONFLICT",
+      "status": "APPROVED",
+      "score": 100
+    }
+  ]
+}
+```
+
+---
+
+### 3.5 Error Payloads & Status Codes
+
+All backend endpoints use standardized HTTP status codes and structured RFC-compliant JSON responses:
+
+#### 1. 400 Bad Request (Validation Failure)
+```json
+{
+  "detail": "Invalid case_type: must be one of ('WRITTEN_REPORT', 'SCORING_CONFLICT', 'MANUAL_REVIEW')"
+}
+```
+Or for empty student reports:
+```json
+{
+  "detail": "report_text cannot be empty for WRITTEN_REPORT"
+}
+```
+
+#### 2. 401 Unauthorized (Missing or Invalid Bearer Token)
+```json
+{
+  "detail": "Missing or malformed Authorization header"
+}
+```
+Or when token is expired:
+```json
+{
+  "detail": "Invalid or expired token"
+}
+```
+
+#### 3. 403 Forbidden (RBAC Role Violation)
+Returned when a user with only `student` role attempts to access `/instructor/*` or `/admin/*`:
+```json
+{
+  "detail": "Forbidden: Insufficient privileges"
+}
+```
+
+#### 4. 404 Not Found (Resource Does Not Exist or Ownership Mismatch)
+```json
+{
+  "detail": "Review case not found"
+}
+```
+Or when student is not found in roster:
+```json
+{
+  "detail": "Student not found"
+}
+```
+
+#### 5. 503 Service Unavailable (Auth Introspection Failure or Host Capacity Full)
+```json
+{
+  "detail": "Auth service unavailable"
+}
+```
+Or when LXD slot cap is reached:
+```json
+{
+  "detail": "POD_CAP_REACHED"
+}
+```
+
+---
+
+## 4. Existing Approve/Reject/Retry Behavior & Field Persistence
+
+### 4.1 Schema & Storage Design (Database Level - `DB-01`)
+The `review_cases` table is defined in [`cyberrange/src/provisioning/schema/v4.sql`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/schema/v4.sql) and migrated via [`migrate.py`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/migrate.py):
+
+```sql
+CREATE TABLE IF NOT EXISTS review_cases (
+    review_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id      TEXT NOT NULL,
+    scenario_id     INTEGER NOT NULL,
+    milestone_id    INTEGER,
+    case_type       TEXT CHECK(case_type IN ('WRITTEN_REPORT','SCORING_CONFLICT','MANUAL_REVIEW')) DEFAULT 'WRITTEN_REPORT',
+    report_text     TEXT,
+    conflict_reason TEXT,
+    evidence_data   TEXT,
+    score           INTEGER CHECK(score IS NULL OR (score >= 0 AND score <= 100)),
+    status          TEXT CHECK(status IN ('PENDING','APPROVED','REJECTED','RETRY')) DEFAULT 'PENDING',
+    feedback        TEXT,
+    graded_by       TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 4.2 Field Behavior & Persistence Rules
+1. **Status Field (`status`):**
+   - Restricted by CHECK constraint to `'PENDING'`, `'APPROVED'`, `'REJECTED'`, `'RETRY'`.
+   - Defaults to `'PENDING'` on student submission.
+2. **Score Field (`score`):**
+   - Restricted by CHECK constraint to `score IS NULL OR (score >= 0 AND score <= 100)`.
+   - Ungraded cases **must** have `score = NULL` (commit `217b5f7` ensures `DEFAULT 0` from legacy migrations is scrubbed).
+   - Approval assigns `score` between `0` and `100` (typically `100` or custom points).
+   - Rejection persists `score = 0`.
+   - Retry leaves `score` either `NULL` or records partial credit.
+3. **Persisted Reviewer (`graded_by`):**
+   - Stores the `preferred_username` extracted from the instructor's validated Keycloak JWT token (e.g., `"instructor_demo"` or `"jabez-shekinah"`).
+   - Prevents anonymous grading and enables audit trails.
+4. **Persisted Notes (`feedback`):**
+   - Free-form text column storing instructor comments, rationale, or retry instructions.
+5. **Timestamps (`created_at`, `updated_at`):**
+   - `created_at`: recorded automatically via SQLite `CURRENT_TIMESTAMP` on submission.
+   - `updated_at`: set to `CURRENT_TIMESTAMP` whenever resolution occurs.
+
+---
+
+## 5. Review with Lenie: Authorization, Role Contracts & Demo Accounts
+
+### 5.1 Shekinah’s Authorization Checklist for Lenie
+Lenie should verify that the backend RBAC implementation meets all security requirements:
+
+- [x] **FastAPI RBAC Dependency Enforced:** All instructor endpoints in [`pods_router.py`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/pods_router.py) enforce `auth.require_role(["instructor", "admin"], claims)`.
+- [x] **Multi-Source Role Extraction:** [`auth.extract_roles(claims)`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/auth.py) extracts roles from both Keycloak realm access (`claims["realm_access"]["roles"]`) and portal client access (`claims["resource_access"]["portal"]["roles"]`).
+- [x] **Tenant & Client Isolation:** Roles belonging to foreign or unrelated clients (e.g., `claims["resource_access"]["unrelated-client"]`) are strictly ignored and do not grant access (verified by `test_unrelated_client_role_does_not_grant_access`).
+- [x] **Fail-Closed Default:** If `AUTH_ENABLED=true` and an unauthenticated or invalid token is supplied, endpoints immediately return HTTP 401. If the token is valid but lacks `instructor` or `admin`, endpoints immediately return HTTP 403.
+- [x] **Student Data Isolation:** Student-facing endpoints continue to enforce `require_owner(pod, claims)`, ensuring students cannot access or destroy peer instances.
+- [x] **Payload Minimization:** `serialize_instructor_pod` strips infrastructure VM IDs (`vmid_*`), Guacamole `connection_id`, and `wazuh_agent_id` before returning active pod lists.
+
+### 5.2 Review of Lenie’s Role Contract (`AUTH-01` / `AUTH-02`)
+- **Token Decoding:** In [`portal/src/lib/auth.ts`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/lib/auth.ts), NextAuth extracts `realm_access.roles` on initial OIDC token generation and on session refreshes.
+- **Session Types:** In [`portal/src/types/next-auth.d.ts`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/types/next-auth.d.ts), `session.roles` and `session.user.roles` are typed as `string[]` to accommodate Keycloak default roles (`default-roles-cyber-range`, `offline_access`, `uma_authorization`) without type errors.
+- **Navigation Guard:** In [`portal/src/components/layout/Sidebar.tsx`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/components/layout/Sidebar.tsx), sidebar items for Instructor Portal (`/instructor/*`) render only if `roles.includes("instructor") || roles.includes("admin")`.
+
+### 5.3 Demo-Account Validation Matrix & Checklist
+
+| Test Account | Keycloak Username | Keycloak Roles | Expected UI Access | Expected API Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Student Demo** | `student` | `["student", "default-roles-cyber-range"]` | `/dashboard`, `/scenarios`, `/scenario/[id]` | Allowed: `/pods`, `/reviews/submit`<br>**Denied (403):** `/instructor/*`, `/admin/*` |
+| **Instructor Demo** | `instructor_demo` | `["instructor", "default-roles-cyber-range"]` | `/instructor/dashboard`, `/instructor/pods`, `/instructor/reviews`, `/instructor/students` | **Allowed:** `/instructor/*`<br>**Denied (403):** `/admin/system`, `/admin/users` |
+| **Admin Superuser** | `cradmin` | `["admin", "default-roles-cyber-range"]` | Full access across Student, Instructor, and Admin views | **Allowed:** `/instructor/*`, `/admin/*`, `/pods` |
+
+#### Step-by-Step Validation Procedure with Lenie:
+1. Log in to `http://10.115.77.1:3000` as `student`. Confirm Instructor and Admin navigation links are hidden in [`Sidebar.tsx`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/portal/src/components/layout/Sidebar.tsx). Attempt direct navigation to `http://10.115.77.1:3000/instructor/reviews` and confirm redirect or 403 error.
+2. Log in as `instructor_demo`. Confirm the "Instructor Portal" section appears in the sidebar. Verify access to `/instructor/dashboard`, `/instructor/pods`, `/instructor/reviews`, and `/instructor/students`.
+3. Verify that issuing a direct `curl` to `http://10.115.77.1:8000/instructor/reviews` with the `student` bearer token returns HTTP 403 `{"detail": "Forbidden: Insufficient privileges"}`.
+4. Verify that issuing the same `curl` with the `instructor_demo` bearer token returns HTTP 200 with the review list.
+
+---
+
+## 6. Gap List & Ownership Matrix (Queued for `INST-03`)
+
+The following items are remaining gaps between the completed backend APIs and Maricar's planned screens. These define the work scope for ticket **`INST-03`**:
+
+```mermaid
+flowchart TD
+    subgraph UI ["Frontend Portal (Maricar)"]
+        A["Review Detail Page UI"] --> B["Click 'Approve' / 'Reject' / 'Retry'"]
+        B --> C["Next.js Route Proxy: /api/instructor/reviews/[id]/resolve"]
+    end
+    subgraph Backend ["FastAPI Backend (Shekinah)"]
+        C --> D["POST /instructor/reviews/{id}/resolve"]
+        D --> E["Update review_cases (status, score, feedback, graded_by)"]
+        E --> F{"Is Status == APPROVED?"}
+        F -- Yes --> G["Insert/Update milestone_verification (status='PASS')"]
+        F -- No --> H["Retain / Log Conflict Record"]
+    end
+    subgraph Keycloak ["Authentication (Lenie)"]
+        I["Keycloak JWT Bearer Token"] --> C
+        I --> D
+    end
+```
+
+| # | Identified Gap | Impact / Risk | Planned Resolution (`INST-03`) | Owner |
+| :--- | :--- | :--- | :--- | :--- |
+| **GAP-01** | **Missing Backend Resolution Route:** `POST /instructor/reviews/{review_id}/resolve` does not exist in [`pods_router.py`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/pods_router.py). | Instructor clicks on "Approve" or "Reject" fail with HTTP 404/405. | Implement endpoint in [`pods_router.py`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/pods_router.py) accepting `{status, score, feedback}` and update `review_cases`. | **Shekinah** |
+| **GAP-02** | **Score Synchronization with `milestone_verification`:** When a review is marked `APPROVED`, the student progress bar doesn't advance. | Approved reviews do not increment student pass count or earned points. | When resolution status is `APPROVED`, write a corresponding `PASS` record into `milestone_verification`. | **Shekinah** |
+| **GAP-03** | **Next.js API Proxy Route Missing:** Portal lacks `/api/instructor/reviews/[id]/resolve` route handler in Next.js app router. | Browser cannot reach backend API with bearer auth. | Create Next.js API proxy route in `portal/src/app/api/instructor/reviews/[id]/route.ts` that attaches `session.accessToken`. | **Maricar** |
+| **GAP-04** | **Status Casing & Enum Normalization:** Backend database stores uppercase (`"PENDING"`, `"APPROVED"`), whereas mock UI typed lowercase (`"pending"`). | Badge colors and UI filter comparisons fail without normalization. | Add `.toUpperCase()` mapping in frontend review data services and API wrappers. | **Maricar** |
+| **GAP-05** | **Evidence Attachment Storage:** Evidence is currently stored as inline JSON/text strings in SQLite `evidence_data`. | Students cannot easily attach raw screenshot images (PNG/JPG). | Define client-side formatting (e.g. Base64 or log dump) or implement multipart upload in future sprint. | **Maricar & Shekinah** |
+| **GAP-06** | **Student Retry Resubmission Flow:** No explicit PUT/PATCH endpoint for students to revise a review that has status `RETRY`. | Students cannot update their report without submitting a duplicate case. | Allow `POST /reviews/submit` to accept optional `parent_review_id` or implement `PATCH /reviews/{id}`. | **Shekinah** |
+| **GAP-07** | **Demo Account Keycloak Seeding:** Staging environment needs confirmed credentials for `instructor_demo` in Keycloak. | Testing blocked if manual accounts lack correct realm roles. | Provide automated script or verify realm export JSON has `instructor` role assigned. | **Lenie** |
+
+---
+
+## 7. Integration & Verification Checklist
+
+Maricar and Lenie can use this checklist during frontend hookup:
+
+- [ ] **Step 1: Next.js API Routes:** Maricar creates route proxy `/api/instructor/reviews` forwarding to `http://10.115.77.1:8000/instructor/reviews` with header `Authorization: Bearer ${session.accessToken}`.
+- [ ] **Step 2: Review Queue Render:** Verify `/instructor/reviews` renders live cases from the backend SQLite database instead of `mockReviewQueue`.
+- [ ] **Step 3: Review Detail Render:** Verify `/instructor/reviews/[id]` renders `report_text`, `conflict_reason`, and parsed `evidence_data`.
+- [ ] **Step 4: Student Roster Render:** Verify `/instructor/students` displays active pods, completed milestone counts, and pending review counts.
+- [ ] **Step 5: RBAC Verification:** Confirm student login cannot see or access any instructor routes. Confirm `instructor_demo` can see all 4 instructor views.
+- [ ] **Step 6: INST-03 Kickoff:** Shekinah lands the `resolve` endpoint and connects manual review approvals to the student scoring engine.
+
+---
+
+## 8. Open Workflow Decisions (Pending Alignment for `INST-03`)
+
+The following two architectural and workflow decisions remain explicitly **OPEN** and pending consensus before `INST-03` implementation begins:
+
+### Decision 1 [OPEN]: Score Synchronization Contract
+- **Problem Statement:** When an instructor approves a review (`status = 'APPROVED'`) with score (e.g. 100 pts), should the backend API automatically insert or update a record in [`milestone_verification`](file:///C:/Users/Windows/OneDrive/Capstone2-deploy/Capstone2-deploy/cyberrange/src/provisioning/pods_router.py#L57-L67) with `status = 'PASS'`?
+- **Option A (Recommended):** Yes. Backend automatically writes to `milestone_verification` within the same database transaction. **Rationale:** This instantly propagates to the student dashboard progress bar, scenario milestones list, and `earned_points()` calculation without requiring extra polling or frontend coordination.
+- **Option B:** No. Reviews remain purely advisory in `review_cases`, requiring a separate scoring override API call. **Rationale:** Decouples manual qualitative grading from automated infrastructure verifications.
+- **Status:** **OPEN** (Awaiting agreement between Shekinah and Maricar).
+
+### Decision 2 [OPEN]: Student Retry Resubmission Flow
+- **Problem Statement:** When an instructor sets a case to `status = 'RETRY'`, what is the student's revision lifecycle?
+- **Option A (Recommended):** In-place update via `PATCH /reviews/{id}` (or `POST /reviews/{id}/resubmit`). The original `review_id` is updated back to `status = 'PENDING'` with the revised `report_text` and updated timestamp, preserving existing review notes and audit history.
+- **Option B:** Append-only new submission via `POST /reviews/submit` containing `parent_review_id = {id}`. The original case remains in `RETRY` status and a fresh case `#REV-{new_id}` is appended to the queue.
+- **Status:** **OPEN** (Awaiting agreement between Shekinah, Maricar, and Lenie).
