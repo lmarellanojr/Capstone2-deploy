@@ -66,7 +66,7 @@ Planned by Maricar in [portal/src/app/instructor/page.tsx](../portal/src/app/ins
 | UI Element / Mock Field | Backend API Source | API Field Name | Type / Format | Notes / Transformation |
 | :--- | :--- | :--- | :--- | :--- |
 | **Total Enrolled Students** (`stat.value`) | `GET /instructor/students` | `students.length` | `integer` | Count of unique students across verifications, active pods, and review cases. |
-| **Pending Reviews** (`pendingCount`) | `GET /instructor/reviews?status_filter=PENDING` or `GET /instructor/students` | `reviews.length` or `sum(pending_review_count)` | `integer` | High-priority count of reports requiring instructor grading. |
+| **Pending Reviews** (`pendingCount`) | `GET /instructor/reviews?status_filter=PENDING` or `GET /instructor/students` | `reviews.length` or `sum(pending_review_count)` | `integer` | High-priority count of reports requiring instructor grading. *Advisory:* Backend `pending_review_count` aggregates `status = 'PENDING'`. If Maricar wishes to include `RETRY` cases in dashboard pending totals, filter or aggregate accordingly on the client. |
 | **Active Pods** (`activePods`) | `GET /instructor/pods` | `pods.length` | `integer` | Active LXD slots currently occupied (`0` to `MAX_PODS = 6`). |
 | **Review Queue Preview Table** | `GET /instructor/reviews` | `reviews[0..4]` | `array[object]` | Top 4 most recent submissions. |
 | ↳ **Case ID** (`c.id`) | `GET /instructor/reviews` | `review_id` | `integer` | Format for UI display as `#REV-{review_id}` or `case-{review_id}`. |
@@ -462,7 +462,7 @@ Lenie should verify that the backend RBAC implementation meets all security requ
 ### 5.2 Review of Lenie’s Role Contract (`AUTH-01` / `AUTH-02`)
 - **Token Decoding:** In [portal/src/lib/auth.ts](../portal/src/lib/auth.ts), NextAuth extracts `realm_access.roles` on initial OIDC token generation and on session refreshes.
 - **Session Types:** In [portal/src/types/next-auth.d.ts](../portal/src/types/next-auth.d.ts), `session.roles` and `session.user.roles` are typed as `string[]` to accommodate Keycloak default roles (`default-roles-cyber-range`, `offline_access`, `uma_authorization`) without type errors.
-- **Navigation Guard:** In [portal/src/components/layout/Sidebar.tsx](../portal/src/components/layout/Sidebar.tsx), sidebar items for Instructor Portal (`/instructor/*`) render only if `roles.includes("instructor") || roles.includes("admin")`.
+- **Navigation Guard:** In [portal/src/components/layout/Sidebar.tsx](../portal/src/components/layout/Sidebar.tsx), sidebar items for Instructor Portal (`/instructor/*`) render only if `roles.includes("instructor") || roles.includes("admin")`. *Advisory for Maricar & Lenie:* Consider adding an explicit role check inside `portal/src/components/auth/AuthGate.tsx` or a dedicated route gate to redirect unauthorized students prior to rendering instructor page components.
 
 ### 5.3 Demo-Account Validation Matrix & Checklist
 
