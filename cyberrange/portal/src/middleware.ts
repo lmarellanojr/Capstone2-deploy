@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { getToken } from "next-auth/jwt"
+import { requiredRolesForPath, hasRequiredRole } from "@/lib/routeRoles"
 
 function isUnusableHost(host: string | undefined): boolean {
   if (!host) return true
@@ -31,6 +32,14 @@ export async function middleware(req: NextRequest) {
     const login = new URL("/login", origin)
     login.searchParams.set("callbackUrl", `${req.nextUrl.pathname}${req.nextUrl.search}`)
     return NextResponse.redirect(login)
+  }
+
+  // AUTH-04: authenticated but wrong role -- e.g. a student typing
+  // /instructor or /admin directly into the URL bar. Hiding the nav link is
+  // not a security boundary; this is the actual enforcement point.
+  const required = requiredRolesForPath(req.nextUrl.pathname)
+  if (required && !hasRequiredRole(token.roles as string[] | undefined, required)) {
+    return NextResponse.redirect(new URL("/dashboard", publicOrigin(req)))
   }
 
   return NextResponse.next()
