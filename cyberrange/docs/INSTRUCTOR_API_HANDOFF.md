@@ -401,15 +401,21 @@ Frontend developers should use the following null-safe helper to normalize SQLit
 
 ```typescript
 /**
- * Safely parses SQLite UTC space-formatted strings ('YYYY-MM-DD HH:MM:SS')
- * or standard ISO-8601 strings into a JavaScript Date object.
+ * Parses SQLite's space-formatted UTC timestamps ('YYYY-MM-DD HH:MM:SS')
+ * and ISO-8601 timestamps that already include `Z` or a numeric UTC offset.
+ * Returns null for missing, blank, or invalid input.
  */
 export function parseSqliteUtc(utcStr: string | null | undefined): Date | null {
-  if (!utcStr) return null;
-  if (utcStr.includes("T")) {
-    return new Date(utcStr.endsWith("Z") ? utcStr : `${utcStr}Z`);
-  }
-  return new Date(`${utcStr.replace(" ", "T")}Z`);
+  const value = utcStr?.trim();
+  if (!value) return null;
+
+  const sqliteUtcPattern = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
+  const normalized = sqliteUtcPattern.test(value)
+    ? `${value.replace(" ", "T")}Z`
+    : value;
+  const parsed = new Date(normalized);
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 ```
 
@@ -543,7 +549,7 @@ flowchart TD
 | **GAP-06** | **Keycloak Roles, Client Scopes & Demo Account Seeding:** Realm provisioning lacks definitions for realm roles (`student`, `instructor`, `admin`), portal client scopes/roles, and automated seeding of confirmed demo accounts (`student`, `instructor_demo`, `cradmin`). | Environments cannot validate multi-role RBAC without manual realm tweaking; deployment scripts lack complete role provisioning. | Update realm provisioning scripts / `realm-export.json` to seed all three roles, client scopes, and confirmed demo accounts. | **Lenie** |
 | **GAP-07** | **Missing Portal Role-Based Route Guards in Middleware:** `portal/src/middleware.ts` checks only for presence of session token (`if (!token)`), without verifying whether the user holds `instructor` or `admin` roles for `/instructor/*` or `/admin/*` routes. | Authenticated students can directly access instructor/admin UI route shells in the browser (even though backend API calls fail with 403). | Extend Next.js middleware or `AuthGate.tsx` to decode token roles and redirect unauthorized users to `/dashboard`. | **Maricar & Lenie** |
 | **GAP-08** | **Missing Review Submission Catalog & Role Validation:** `POST /reviews/submit` in `pods_router.py` does not validate that `scenario_id` exists in the curriculum catalog, does not validate `milestone_id` against valid scenario milestones, and does not enforce caller `student` role. | Callers with arbitrary roles can submit reviews with non-existent scenario/milestone IDs, corrupting review queue data. | Add scenario/milestone catalog boundary validation and enforce `auth.require_role(["student"], claims)` on `POST /reviews/submit`. | **Shekinah** |
-| **GAP-09** | **Unbounded Evidence Payloads & Missing Endpoint Pagination:** Backend request models lack length limits on `evidence_data` and `report_text`. Additionally, `GET /instructor/reviews` returns full evidence payloads for all rows rather than lightweight queue projections, and neither review nor student list endpoints support pagination (`limit`/`offset`). | Large evidence blobs risk memory exhaustion and slow queue load times as review cases accumulate. | Enforce string length validation in `ReviewSubmitRequest`, project lightweight summaries in `GET /instructor/reviews` (reserving full evidence for detail route), and implement query pagination. | **Shekinah** |
+| **GAP-09** | **Unbounded Evidence Payloads & Missing Endpoint Pagination:** Backend request models lack maximum length limits on `report_text`, `conflict_reason`, and `evidence_data`. Additionally, `GET /instructor/reviews` returns full evidence payloads for all rows rather than lightweight queue projections, and neither review nor student list endpoints support pagination (`limit`/`offset`). | Large report, conflict-reason, and evidence values risk memory exhaustion and slow queue load times as review cases accumulate. | Enforce explicit maximum string lengths for `report_text`, `conflict_reason`, and `evidence_data` in `ReviewSubmitRequest`, project lightweight summaries in `GET /instructor/reviews` (reserving full evidence for the detail route), and implement query pagination. | **Shekinah** |
 | **GAP-10** | **Status Filter Query Parameter Validation:** `GET /instructor/reviews?status_filter=...` binds the query parameter directly into SQL (`WHERE status = ?`) without validating against allowed enum values (`PENDING`, `APPROVED`, `REJECTED`, `RETRY`). | Invalid query parameters (e.g. `?status_filter=INVALID`) return HTTP 200 with an empty queue (`{"reviews": []}`) instead of returning HTTP 400 Bad Request. | Add Pydantic or FastAPI Query enum validation rejecting invalid statuses with HTTP 400. | **Shekinah** |
 | **GAP-11** | **Hardcoded Gateway IP Fallback in Portal Middleware:** In `portal/src/middleware.ts` (line 20), helper `publicOrigin` falls back to hardcoded `http://10.115.77.12` when `NEXTAUTH_URL` and `Host` headers are missing or evaluate to `0.0.0.0`. | Hardcoded lab subnet IP breaks portability and risks redirect failures in different deployment topologies. | Replace hardcoded fallback with mandatory environment configuration (`NEXTAUTH_URL`) or relative redirect handling. | **Lenie & Maricar** |
 
