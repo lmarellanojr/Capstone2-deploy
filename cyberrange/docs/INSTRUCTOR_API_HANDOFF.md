@@ -107,7 +107,7 @@ Planned in [portal/src/app/instructor/reviews/[id]/page.tsx](../portal/src/app/i
 | **Persisted Evaluator** | `graded_by` | `string | null` | Keycloak username of instructor who resolved or graded this case. |
 | **Score Points** | `score` | `integer | null` | Points awarded (`0` to `100`). Remains `null` while `status == 'PENDING'`. |
 | **Timestamps** | `created_at`, `updated_at` | `timestamp` | Submission date and last review update timestamp. |
-| **Decision Buttons** | Action via `POST /instructor/reviews/{id}/resolve` | Action Payload | `Approve` (`score=100`, `status='APPROVED'`), `Reject` (`score=0`, `status='REJECTED'`), `Request Retry` (`status='RETRY'`). |
+| **Decision Buttons** | Proposed action via `POST /instructor/reviews/{id}/resolve` (to be implemented in INST-03) | Action Payload | Proposed decisions: `Approve` (`score=100`, `status='APPROVED'`), `Reject` (`score=0`, `status='REJECTED'`), `Request Retry` (`status='RETRY'`). |
 
 ---
 
@@ -413,8 +413,8 @@ CREATE TABLE IF NOT EXISTS review_cases (
 );
 ```
 
-### 4.2 Resolution Endpoint Contract (`POST /instructor/reviews/{review_id}/resolve`)
-The resolution contract specification is fully defined and designed to update the persisted review case:
+### 4.2 Proposed Resolution Endpoint Specification (`POST /instructor/reviews/{review_id}/resolve`)
+The resolution endpoint does not exist in current `origin/main` and is a **proposed endpoint that `INST-03` must implement**. The proposed contract specification to update the persisted review case is as follows:
 
 - **Method / Path:** `POST /instructor/reviews/{review_id}/resolve`
 - **Guards:** Requires `instructor` or `admin` role.
@@ -492,7 +492,7 @@ flowchart TD
         B --> C["Next.js Route Proxy: /api/instructor/reviews/[id]/resolve"]
     end
     subgraph Backend ["FastAPI Backend (Shekinah - INST-03)"]
-        C --> D["POST /instructor/reviews/{id}/resolve"]
+        C --> D["POST /instructor/reviews/{id}/resolve (Proposed - INST-03)"]
         D --> E["Update review_cases (status, score, feedback, graded_by, updated_at)"]
     end
     subgraph Keycloak ["Authentication (Lenie)"]
@@ -503,7 +503,7 @@ flowchart TD
 
 | # | Identified Gap | Impact / Risk | Planned Resolution (`INST-03`) | Owner |
 | :--- | :--- | :--- | :--- | :--- |
-| **GAP-01** | **Backend Resolution Wiring:** Route handler `POST /instructor/reviews/{review_id}/resolve` deployment in [pods_router.py](../src/provisioning/pods_router.py). | Instructor clicks on "Approve" or "Reject" cannot complete without deployed route. | Enable the resolution endpoint handler in [pods_router.py](../src/provisioning/pods_router.py) matching the validated contract. | **Shekinah** |
+| **GAP-01** | **Proposed Resolution Endpoint Implementation:** Route handler `POST /instructor/reviews/{review_id}/resolve` does not exist in `origin/main`. | Instructor review decisions (Approve, Reject, Retry) cannot be submitted to backend until implemented. | Implement the proposed resolution endpoint in [pods_router.py](../src/provisioning/pods_router.py) according to the specification in Section 4.2. | **Shekinah** |
 | **GAP-02** | **Next.js API Proxy Route Missing:** Portal lacks `/api/instructor/reviews/[id]/resolve` route handler in Next.js app router. | Browser cannot reach backend API with bearer auth. | Create Next.js API proxy route in `portal/src/app/api/instructor/reviews/[id]/route.ts` that attaches `session.accessToken`. | **Maricar** |
 | **GAP-03** | **Status Casing & Enum Normalization:** Backend database stores uppercase (`"PENDING"`, `"APPROVED"`), whereas mock UI typed lowercase (`"pending"`). | Badge colors and UI filter comparisons fail without normalization. | Add `.toUpperCase()` mapping in frontend review data services and API wrappers. | **Maricar** |
 | **GAP-04** | **Evidence Attachment Formatting:** Evidence is currently stored as JSON/text strings in SQLite `evidence_data`. | Format mismatch between UI renderer and stored strings. | Standardize client-side JSON parsing and pre-formatted text fallback. | **Maricar & Shekinah** |
@@ -521,7 +521,7 @@ Maricar and Lenie can use this checklist during frontend hookup:
 - [ ] **Step 3: Review Detail Render:** Verify `/instructor/reviews/[id]` renders `report_text`, `conflict_reason`, and parsed `evidence_data`. Note scenario mapping (Scenario 2 → scenario 06).
 - [ ] **Step 4: Student Roster Render:** Verify `/instructor/students` displays active pods, completed automated milestone counts, and pending review counts.
 - [ ] **Step 5: RBAC Verification:** Confirm student login cannot see or access any instructor routes. Confirm `instructor_demo` can see all 4 instructor views.
-- [ ] **Step 6: Resolution Deployment (`INST-03`):** Shekinah enables backend resolution endpoint to complete Maricar's review evaluation button actions.
+- [ ] **Step 6: Resolution Implementation (`INST-03`):** Shekinah implements the proposed `POST /instructor/reviews/{review_id}/resolve` endpoint to complete Maricar's review evaluation button actions.
 
 ---
 
