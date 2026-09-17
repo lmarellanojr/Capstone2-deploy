@@ -72,7 +72,7 @@ Planned by Maricar in [portal/src/app/instructor/page.tsx](../portal/src/app/ins
 | ↳ **Case ID** (`c.id`) | `GET /instructor/reviews` | `review_id` | `integer` | Format for UI display as `#REV-{review_id}` or `case-{review_id}`. |
 | ↳ **Student** (`c.student`) | `GET /instructor/reviews` | `student_id` | `string` | Student Keycloak username (e.g. `student1`). |
 | ↳ **Scenario** (`c.scenario`) | `GET /instructor/reviews` | `scenario_id` | `integer` | Map integer `6` -> `"06 - SQL Injection"` (Scenario 2), `1` -> `"01 - Network Recon"`, etc. |
-| ↳ **Submitted At** (`c.submitted`) | `GET /instructor/reviews` | `created_at` | `string (ISO / UTC)` | Render with local time formatter (`YYYY-MM-DD HH:mm`). |
+| ↳ **Submitted At** (`c.submitted`) | `GET /instructor/reviews` | `created_at` | `string (SQLite UTC: YYYY-MM-DD HH:MM:SS)` | Space-separated UTC timestamp. See Section 3.6 for frontend conversion helper (`parseSqliteUtc`). |
 | ↳ **Status** (`c.status`) | `GET /instructor/reviews` | `status` | `string` | Backend returns `"PENDING"`, `"APPROVED"`, `"REJECTED"`, `"RETRY"`. Convert to lowercase for UI badge matching. |
 
 ---
@@ -82,12 +82,12 @@ Planned in [portal/src/app/instructor/reviews/page.tsx](../portal/src/app/instru
 
 | UI Element / Column | Backend API Source | API Field Name | Type / Format | Notes / Transformation |
 | :--- | :--- | :--- | :--- | :--- |
-| **Status Filter Tabs** (`PENDING`, `APPROVED`, etc.) | `GET /instructor/reviews?status_filter={STATUS}` | Query Parameter `status_filter` | `string` | Pass `PENDING`, `APPROVED`, `REJECTED`, `RETRY`. Omit parameter for `ALL`. |
+| **Status Filter Tabs** (`PENDING`, `APPROVED`, etc.) | `GET /instructor/reviews?status_filter={STATUS}` | Query Parameter `status_filter` | `string` | Pass `PENDING`, `APPROVED`, `REJECTED`, `RETRY`. Omit parameter for `ALL`. *Note:* Unrecognized/invalid status values currently return HTTP 200 with an empty queue (`{"reviews": []}`) rather than HTTP 400 (see GAP-10). |
 | **Case ID** | `GET /instructor/reviews` | `review_id` | `integer` | Primary key in `review_cases`. |
 | **Student** | `GET /instructor/reviews` | `student_id` | `string` | Student identity. |
 | **Scenario / Milestone** | `GET /instructor/reviews` | `scenario_id`, `milestone_id` | `integer`, `integer | null` | If `milestone_id` is null, display `Scenario #{scenario_id} · Overall Report`. Note: `scenario_id = 6` corresponds to Scenario 2. |
 | **Case Type** | `GET /instructor/reviews` | `case_type` | `string` | `"WRITTEN_REPORT"`, `"SCORING_CONFLICT"`, or `"MANUAL_REVIEW"`. |
-| **Submitted** | `GET /instructor/reviews` | `created_at` | `timestamp` | Submission timestamp. |
+| **Submitted** | `GET /instructor/reviews` | `created_at` | `string (SQLite UTC: YYYY-MM-DD HH:MM:SS)` | Submission timestamp. Parse with `parseSqliteUtc()` in Section 3.6. |
 | **Status Badge** | `GET /instructor/reviews` | `status` | `string` | Color code: `PENDING` (amber), `APPROVED` (green), `RETRY` (blue), `REJECTED` (red). |
 | **Score Assigned** | `GET /instructor/reviews` | `score` | `integer | null` | `null` indicates unreviewed/ungraded. Range `0..100`. |
 | **Action Link** | UI Navigation | — | — | Link destination: `/instructor/reviews/${review_id}`. |
@@ -106,7 +106,7 @@ Planned in [portal/src/app/instructor/reviews/[id]/page.tsx](../portal/src/app/i
 | **Instructor Notes** | `feedback` | `string | null` | Existing instructor evaluation remarks, retry instructions, or grading justification. |
 | **Persisted Evaluator** | `graded_by` | `string | null` | Keycloak username of instructor who resolved or graded this case. |
 | **Score Points** | `score` | `integer | null` | Points awarded (`0` to `100`). Remains `null` while `status == 'PENDING'`. |
-| **Timestamps** | `created_at`, `updated_at` | `timestamp` | Submission date and last review update timestamp. |
+| **Timestamps** | `created_at`, `updated_at` | `string (SQLite UTC: YYYY-MM-DD HH:MM:SS)` | Submission date and last review update timestamp. Note: Prior to resolution in Issue #35 (`INST-03`), `updated_at` remains identical to `created_at`. Parse with `parseSqliteUtc()`. |
 | **Decision Buttons** | Proposed action via `POST /instructor/reviews/{id}/resolve` (to be implemented in INST-03) | Action Payload | Proposed decisions: `Approve` (`score=100`, `status='APPROVED'`), `Reject` (`score=0`, `status='REJECTED'`), `Request Retry` (`status='RETRY'`). |
 
 ---
@@ -122,12 +122,12 @@ Planned in [portal/src/app/instructor/students/page.tsx](../portal/src/app/instr
 | **Completed Milestones** | `milestones` | `array[object]` | Array of `{scenario_id, milestone_id, status, detection_score, verified_at}` from automated verifications. |
 | **Progress % Calculation** | `milestones.filter(m => m.status === 'PASS').length` | `number` | Compute ratio of passed automated milestones against total scenario milestones. |
 | **Pending Reviews** | `pending_review_count` | `integer` | Number of reviews with PENDING status for this student. Alert badge if `> 0`. |
-| **Last Activity** | `milestones[0].verified_at` or `active_pod.created_at` | `string` | Most recent student event recorded in database. |
+| **Last Activity** | `milestones[0].verified_at` or `active_pod.created_at` | `string (SQLite UTC: YYYY-MM-DD HH:MM:SS)` | Most recent student event recorded in database. Parse with `parseSqliteUtc()`. |
 
 ---
 
 ### 2.6 Screen: Active Student Pods (`/instructor/pods`)
-Implemented in [portal/src/app/instructor/pods/page.tsx](../portal/src/app/instructor/pods/page.tsx).
+Planned by Maricar in [portal/src/app/instructor/pods/page.tsx](../portal/src/app/instructor/pods/page.tsx) (*Note:* Route shell and API proxy are currently missing on `origin/main`; see GAP-02).
 
 | Field | Source (`GET /instructor/pods`) | Type | Security & RBAC Guarantees |
 | :--- | :--- | :--- | :--- |
@@ -387,9 +387,35 @@ Or when LXD slot cap is reached:
 }
 ```
 
+### 3.6 SQLite Timestamp Serialization & Frontend Conversion Guidance
+
+All timestamps stored in the backend SQLite database (`created_at`, `updated_at`, `verified_at`) are generated via SQLite's `CURRENT_TIMESTAMP` in UTC format:
+```text
+YYYY-MM-DD HH:MM:SS (e.g. "2026-09-17 10:15:22")
+```
+
+> [!WARNING]
+> **JavaScript Parsing Hazard:** Standard browser `new Date("YYYY-MM-DD HH:MM:SS")` is non-standard across engines. In particular, some browsers parse space-separated strings as local time instead of UTC, or return `Invalid Date`.
+
+Frontend developers should use the following null-safe helper to normalize SQLite UTC space-separated strings into ISO-8601 UTC before instantiating `Date`:
+
+```typescript
+/**
+ * Safely parses SQLite UTC space-formatted strings ('YYYY-MM-DD HH:MM:SS')
+ * or standard ISO-8601 strings into a JavaScript Date object.
+ */
+export function parseSqliteUtc(utcStr: string | null | undefined): Date | null {
+  if (!utcStr) return null;
+  if (utcStr.includes("T")) {
+    return new Date(utcStr.endsWith("Z") ? utcStr : `${utcStr}Z`);
+  }
+  return new Date(`${utcStr.replace(" ", "T")}Z`);
+}
+```
+
 ---
 
-## 4. Existing Approve/Reject/Retry Behavior & Field Persistence
+## 4. Proposed Approve/Reject/Retry Behavior & Existing Field Persistence Model
 
 ### 4.1 Schema & Storage Design (Database Level - `DB-01`)
 The `review_cases` table is defined in [cyberrange/src/provisioning/schema/v4.sql](../src/provisioning/schema/v4.sql) and migrated via [migrate.py](../src/provisioning/migrate.py):
@@ -413,6 +439,9 @@ CREATE TABLE IF NOT EXISTS review_cases (
 );
 ```
 
+> [!IMPORTANT]
+> **Resolution Persistence State (Pre-Issue #35 / INST-03):** In current review case submissions, `score`, `feedback`, and `graded_by` are initialized to `NULL`, and `updated_at` defaults to `created_at`. These fields remain unpopulated until the instructor resolution endpoint (`POST /instructor/reviews/{id}/resolve`) is implemented in Issue #35 / task `INST-03`.
+
 ### 4.2 Proposed Resolution Endpoint Specification (`POST /instructor/reviews/{review_id}/resolve`)
 The resolution endpoint does not exist in current `origin/main` and is a **proposed endpoint that `INST-03` must implement**. The proposed contract specification to update the persisted review case is as follows:
 
@@ -428,7 +457,10 @@ The resolution endpoint does not exist in current `origin/main` and is a **propo
 ```
 - **Validation Rules:**
   - `status`: Must be one of `"APPROVED"`, `"REJECTED"`, `"RETRY"`.
-  - `score`: Must be integer between `0` and `100` inclusive.
+  - `score`: Integer between `0` and `100` inclusive, or `null`.
+    - For `status == "APPROVED"`, `score` is required (typically `0..100`, default `100`).
+    - For `status == "REJECTED"`, `score` is typically `0`.
+    - For `status == "RETRY"`, `score` is optional / nullable (or partial credit if awarded).
   - `feedback`: Optional text note providing feedback or retry instructions.
 - **Persisted Updates:**
   - `status` updated to evaluated decision (`APPROVED`, `REJECTED`, or `RETRY`).
@@ -473,7 +505,7 @@ Lenie should verify that the backend RBAC implementation meets all security requ
 | **Admin Superuser** | `cradmin` | `["admin", "default-roles-cyber-range"]` | Full access across Student, Instructor, and Admin views | **Allowed:** `/instructor/*`, `/admin/*`, `/pods` |
 
 #### Step-by-Step Validation Procedure with Lenie:
-1. Log in to `${PORTAL_URL}` as `student`. Confirm Instructor and Admin navigation links are hidden in [Sidebar.tsx](../portal/src/components/layout/Sidebar.tsx). Attempt direct navigation to `${PORTAL_URL}/instructor/reviews` and confirm redirect or 403 error.
+1. Log in to `${PORTAL_URL}` as `student`. Confirm Instructor and Admin navigation links are hidden in [Sidebar.tsx](../portal/src/components/layout/Sidebar.tsx). Attempt direct navigation to `${PORTAL_URL}/instructor/reviews` (note: until portal route guards in GAP-07 are implemented, client-side route shells may render, but all underlying API requests are blocked with HTTP 403).
 2. Log in as `instructor_demo`. Confirm the "Instructor Portal" section appears in the sidebar. Verify access to `/instructor/dashboard`, `/instructor/pods`, `/instructor/reviews`, and `/instructor/students`.
 3. Verify that issuing a direct `curl` to `${PROVISION_API_URL}/instructor/reviews` with the `student` bearer token returns HTTP 403 `{"detail": "Forbidden: Insufficient privileges"}`.
 4. Verify that issuing the same `curl` with the `instructor_demo` bearer token returns HTTP 200 with the review list.
@@ -504,11 +536,16 @@ flowchart TD
 | # | Identified Gap | Impact / Risk | Planned Resolution (`INST-03`) | Owner |
 | :--- | :--- | :--- | :--- | :--- |
 | **GAP-01** | **Proposed Resolution Endpoint Implementation:** Route handler `POST /instructor/reviews/{review_id}/resolve` does not exist in `origin/main`. | Instructor review decisions (Approve, Reject, Retry) cannot be submitted to backend until implemented. | Implement the proposed resolution endpoint in [pods_router.py](../src/provisioning/pods_router.py) according to the specification in Section 4.2. | **Shekinah** |
-| **GAP-02** | **Next.js API Proxy Route Missing:** Portal lacks `/api/instructor/reviews/[id]/resolve` route handler in Next.js app router. | Browser cannot reach backend API with bearer auth. | Create Next.js API proxy route in `portal/src/app/api/instructor/reviews/[id]/route.ts` that attaches `session.accessToken`. | **Maricar** |
+| **GAP-02** | **Missing Portal Next.js API Proxies & Pods Route Shell:** Portal lacks proxy route handlers under `portal/src/app/api/instructor/*` (`/reviews`, `/reviews/[id]`, `/reviews/[id]/resolve`, `/students`, `/pods`). In addition, the route shell `portal/src/app/instructor/pods/page.tsx` is missing on `origin/main`. | Browser cannot reach backend API with bearer auth and instructor cannot view active container pods. | Create Next.js API proxy routes under `portal/src/app/api/instructor/*` and implement `portal/src/app/instructor/pods/page.tsx`. | **Maricar** |
 | **GAP-03** | **Status Casing & Enum Normalization:** Backend database stores uppercase (`"PENDING"`, `"APPROVED"`), whereas mock UI typed lowercase (`"pending"`). | Badge colors and UI filter comparisons fail without normalization. | Add `.toUpperCase()` mapping in frontend review data services and API wrappers. | **Maricar** |
-| **GAP-04** | **Evidence Attachment Formatting:** Evidence is currently stored as JSON/text strings in SQLite `evidence_data`. | Format mismatch between UI renderer and stored strings. | Standardize client-side JSON parsing and pre-formatted text fallback. | **Maricar & Shekinah** |
+| **GAP-04** | **Evidence Attachment Formatting:** Evidence is currently stored as JSON/text strings in SQLite `evidence_data`. | Format mismatch between UI renderer and stored strings. | Standardize client-side JSON parsing and pre-formatted text fallback using `parseSqliteUtc()` and safe JSON parsing. | **Maricar & Shekinah** |
 | **GAP-05** | **Student Retry Resubmission Flow:** Revision path for reviews in `RETRY` status. | Need agreed client path when student revises work. | Implement in-place update or resubmission handling based on Decision 1 below. | **Shekinah & Maricar** |
-| **GAP-06** | **Demo Account Keycloak Seeding:** Staging environment needs confirmed credentials for `instructor_demo` in Keycloak. | Testing blocked if manual accounts lack correct realm roles. | Verify realm export JSON has `instructor` role assigned. | **Lenie** |
+| **GAP-06** | **Keycloak Roles, Client Scopes & Demo Account Seeding:** Realm provisioning lacks definitions for realm roles (`student`, `instructor`, `admin`), portal client scopes/roles, and automated seeding of confirmed demo accounts (`student`, `instructor_demo`, `cradmin`). | Environments cannot validate multi-role RBAC without manual realm tweaking; deployment scripts lack complete role provisioning. | Update realm provisioning scripts / `realm-export.json` to seed all three roles, client scopes, and confirmed demo accounts. | **Lenie** |
+| **GAP-07** | **Missing Portal Role-Based Route Guards in Middleware:** `portal/src/middleware.ts` checks only for presence of session token (`if (!token)`), without verifying whether the user holds `instructor` or `admin` roles for `/instructor/*` or `/admin/*` routes. | Authenticated students can directly access instructor/admin UI route shells in the browser (even though backend API calls fail with 403). | Extend Next.js middleware or `AuthGate.tsx` to decode token roles and redirect unauthorized users to `/dashboard`. | **Maricar & Lenie** |
+| **GAP-08** | **Missing Review Submission Catalog & Role Validation:** `POST /reviews/submit` in `pods_router.py` does not validate that `scenario_id` exists in the curriculum catalog, does not validate `milestone_id` against valid scenario milestones, and does not enforce caller `student` role. | Callers with arbitrary roles can submit reviews with non-existent scenario/milestone IDs, corrupting review queue data. | Add scenario/milestone catalog boundary validation and enforce `auth.require_role(["student"], claims)` on `POST /reviews/submit`. | **Shekinah** |
+| **GAP-09** | **Unbounded Evidence Payloads & Missing Endpoint Pagination:** Backend request models lack length limits on `evidence_data` and `report_text`. Additionally, `GET /instructor/reviews` returns full evidence payloads for all rows rather than lightweight queue projections, and neither review nor student list endpoints support pagination (`limit`/`offset`). | Large evidence blobs risk memory exhaustion and slow queue load times as review cases accumulate. | Enforce string length validation in `ReviewSubmitRequest`, project lightweight summaries in `GET /instructor/reviews` (reserving full evidence for detail route), and implement query pagination. | **Shekinah** |
+| **GAP-10** | **Status Filter Query Parameter Validation:** `GET /instructor/reviews?status_filter=...` binds the query parameter directly into SQL (`WHERE status = ?`) without validating against allowed enum values (`PENDING`, `APPROVED`, `REJECTED`, `RETRY`). | Invalid query parameters (e.g. `?status_filter=INVALID`) return HTTP 200 with an empty queue (`{"reviews": []}`) instead of returning HTTP 400 Bad Request. | Add Pydantic or FastAPI Query enum validation rejecting invalid statuses with HTTP 400. | **Shekinah** |
+| **GAP-11** | **Hardcoded Gateway IP Fallback in Portal Middleware:** In `portal/src/middleware.ts` (line 20), helper `publicOrigin` falls back to hardcoded `http://10.115.77.12` when `NEXTAUTH_URL` and `Host` headers are missing or evaluate to `0.0.0.0`. | Hardcoded lab subnet IP breaks portability and risks redirect failures in different deployment topologies. | Replace hardcoded fallback with mandatory environment configuration (`NEXTAUTH_URL`) or relative redirect handling. | **Lenie & Maricar** |
 
 ---
 
@@ -516,7 +553,7 @@ flowchart TD
 
 Maricar and Lenie can use this checklist during frontend hookup:
 
-- [ ] **Step 1: Next.js API Routes:** Maricar creates route proxy `/api/instructor/reviews` forwarding to `${PROVISION_API_URL}/instructor/reviews` with header `Authorization: Bearer ${session.accessToken}`.
+- [ ] **Step 1: Next.js API Routes:** Maricar creates route proxies under `portal/src/app/api/instructor/*` (`/reviews`, `/reviews/[id]`, `/reviews/[id]/resolve`, `/students`, `/pods`) forwarding to `${PROVISION_API_URL}/instructor/*` with header `Authorization: Bearer ${session.accessToken}`.
 - [ ] **Step 2: Review Queue Render:** Verify `/instructor/reviews` renders live cases from the backend SQLite database instead of `mockReviewQueue`.
 - [ ] **Step 3: Review Detail Render:** Verify `/instructor/reviews/[id]` renders `report_text`, `conflict_reason`, and parsed `evidence_data`. Note scenario mapping (Scenario 2 → scenario 06).
 - [ ] **Step 4: Student Roster Render:** Verify `/instructor/students` displays active pods, completed automated milestone counts, and pending review counts.
