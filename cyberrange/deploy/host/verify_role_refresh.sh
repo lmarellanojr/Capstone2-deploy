@@ -66,16 +66,24 @@ echo "before refresh: roles=$before_roles"
 
 kcadm.sh config credentials --server http://127.0.0.1:8083/auth --realm master --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
 
-# Guarantee the temporary grant is revoked even if something below fails
-# unexpectedly -- student_demo must never be left with more than one role.
-cleanup_done=0
-revert_role() {
-  if [ "$cleanup_done" -eq 0 ]; then
-    kcadm.sh remove-roles -r cyber-range --uusername student_demo --rolename instructor 2>/dev/null || true
-    cleanup_done=1
-  fi
+# Best-effort revocation attempt only -- NOT proof of success. The actual
+# proof is student_app_roles_are_exactly(), called explicitly below and in
+# the trap's failure path. This function must never be trusted on its own
+# (Shekinah review: `|| true` here previously let the script print "reverted"
+# even if the removal silently failed).
+attempt_revert() {
+  kcadm.sh remove-roles -r cyber-range --uusername student_demo --rolename instructor 2>/dev/null || true
 }
-trap revert_role EXIT
+
+# Direct final-state check via a fresh admin query -- not an assumption from
+# the removal command's own exit code.
+student_app_roles() {
+  kcadm.sh get-roles -r cyber-range --uusername student_demo --fields name --format csv --noquotes \
+    | grep -E '^(student|instructor|admin)$' | sort | tr '\n' '/' || true
+}
+
+confirmed_reverted=0
+trap 'if [ "$confirmed_reverted" -eq 0 ]; then attempt_revert; fi' EXIT
 
 kcadm.sh add-roles -r cyber-range --uusername student_demo --rolename instructor
 echo "granted: temporary extra role 'instructor' on student_demo"
@@ -85,8 +93,23 @@ resp2=$(curl -sS -X POST "$TOKEN_URL" \
   -d refresh_token="$refresh_token")
 new_access_token=$(echo "$resp2" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))')
 
-revert_role
-echo "reverted: student_demo back to role-'student'-only"
+# Revoke, then CONFIRM via a direct query before claiming success. Retry once
+# (Keycloak role-mapping writes are synchronous, but a transient API hiccup
+# is still possible) before treating this as a failed verification.
+attempt_revert
+if [ "$(student_app_roles)" != "student/" ]; then
+  echo "revert attempt 1 did not take effect, retrying..."
+  attempt_revert
+fi
+final_check="$(student_app_roles)"
+if [ "$final_check" = "student/" ]; then
+  confirmed_reverted=1
+  echo "reverted: confirmed student_demo app roles = $final_check"
+else
+  echo "CLEANUP_FAILED: student_demo app roles are [$final_check] after two revert attempts, expected exactly [student/]"
+  echo "RESULT: FAIL -- role-refresh test cannot be considered passed while cleanup is unconfirmed"
+  exit 1
+fi
 
 if [ -z "$new_access_token" ]; then
   echo "REFRESH_FAILED: $(echo "$resp2" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("error_description", d.get("error","unknown")))' 2>/dev/null || echo "unparseable response")"
@@ -102,7 +125,5 @@ else
   exit 1
 fi
 
-final_roles=$(kcadm.sh get-roles -r cyber-range --uusername student_demo --fields name --format csv --noquotes | tr '\n' ',' )
-echo "final state check: student_demo roles now = $final_roles"
 echo ROLE_REFRESH_VERIFY_DONE
 INNER
