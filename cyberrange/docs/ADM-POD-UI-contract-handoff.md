@@ -89,9 +89,11 @@ From `PodResponse` / `serialize_pod` (TTL via `ttl_payload`):
 
 ### 4.3 Status enum (backend)
 
-`PROVISIONING` | `ACTIVE` | `DESTROYING` | `DESTROYED` | `FAILED_ROLLBACK_COMPLETE` | (other rare: `ORPHANED_CLEANED`)
+`PROVISIONING` | `ACTIVE` | `DESTROYING` | `DESTROYED` | `FAILED_ROLLBACK_COMPLETE`
 
-**Not** backend statuses: mock `stopped`, lowercase `active` / `failed`.
+These are the statuses set/filtered by the provisioning backend on `main` (`pods_router.py` / destroy+reaper paths). `#33` does not need defensive UI for other labels.
+
+**Not** backend statuses: mock `stopped`, lowercase `active` / `failed`. Stale TS union member `ORPHANED_CLEANED` in `portal/src/lib/api.ts` is not produced by the API — drop it when touching that type in #33.
 
 ### 4.4 Capacity payload (`GET /capacity`)
 
