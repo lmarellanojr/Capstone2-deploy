@@ -103,6 +103,62 @@ export type SiemAlert = {
   rule_level: number
 }
 
+// Instructor API types
+// serialize_instructor_pod (pods_router.py) = serialize_pod row minus vmid_*/connection_id/wazuh_agent_id
+export interface InstructorPod {
+  id: number
+  student_id: string
+  pod_id: number
+  status: string
+  last_heartbeat: string | null
+  created_at: string | null
+  scenario_id: string | null
+  ttl_hours: number
+  remaining_seconds: number
+  expires_at: string | null
+  ttl_expired: boolean
+}
+
+export interface InstructorMilestone {
+  scenario_id: number
+  milestone_id: number
+  status: string
+  detection_score?: number
+  verified_at?: string
+}
+
+// Full review_cases row, as returned by GET /instructor/students/{id}
+export interface ReviewCase {
+  review_id: number
+  student_id: string
+  scenario_id: number
+  milestone_id: number | null
+  case_type: 'WRITTEN_REPORT' | 'SCORING_CONFLICT' | 'MANUAL_REVIEW'
+  report_text: string | null
+  conflict_reason: string | null
+  evidence_data: string | null
+  score: number | null
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'RETRY'
+  feedback: string | null
+  graded_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface InstructorStudentSummary {
+  student_id: string
+  active_pod: InstructorPod | null
+  milestones: InstructorMilestone[]
+  pending_review_count: number
+}
+
+export interface InstructorStudentDetail {
+  student_id: string
+  active_pod: InstructorPod | null
+  milestones: InstructorMilestone[]
+  reviews: ReviewCase[]
+}
+
 // Provisioning API
 export const provisioning = {
   health: async () => {
@@ -220,6 +276,20 @@ export const provisioning = {
     error?: string
   }> => {
     const response = await apiClient.get(`/pods/${podId}/alerts`, { params: query })
+    return response.data
+  },
+}
+
+// Instructor/Admin API — dashboard, students list, student progress detail.
+// Backed by GET /instructor/students[/{id}] (auth.require_role(["instructor","admin"])).
+export const instructor = {
+  listStudents: async (): Promise<{ students: InstructorStudentSummary[] }> => {
+    const response = await apiClient.get('/instructor/students')
+    return response.data
+  },
+
+  getStudentProgress: async (studentId: string): Promise<InstructorStudentDetail> => {
+    const response = await apiClient.get(`/instructor/students/${encodeURIComponent(studentId)}`)
     return response.data
   },
 }

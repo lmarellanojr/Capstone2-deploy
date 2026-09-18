@@ -1,21 +1,5 @@
-// Placeholder data for the UI-01 Instructor route shell. Not wired to any API.
-// Replace with real queries once the review-case backend (DB-01/AUTH-02) lands.
-
-export interface MockStudent {
-  id: string;
-  name: string;
-  email: string;
-  progress: number;
-  activePod: string | null;
-  lastActivity: string;
-}
-
-export const mockStudents: MockStudent[] = [
-  { id: "s1", name: "Juan Dela Cruz", email: "juan.delacruz@example.edu", progress: 72, activePod: "pod-a1f9", lastActivity: "2026-09-15 14:20" },
-  { id: "s2", name: "Maria Santos", email: "maria.santos@example.edu", progress: 45, activePod: null, lastActivity: "2026-09-14 09:05" },
-  { id: "s3", name: "Pedro Reyes", email: "pedro.reyes@example.edu", progress: 90, activePod: "pod-77c2", lastActivity: "2026-09-15 11:41" },
-  { id: "s4", name: "Ana Lopez", email: "ana.lopez@example.edu", progress: 18, activePod: null, lastActivity: "2026-09-10 16:33" },
-];
+// Placeholder data for the Instructor review queue shell. Not wired to any API.
+// Replace once #34 (review queue/detail integration) lands.
 
 export type ReviewStatus = "pending" | "approved" | "rejected" | "retry";
 
