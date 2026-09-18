@@ -18,6 +18,10 @@ export default function AdminUsersPage() {
         <div>
           <h1 className="text-3xl font-bold text-text-main">Users</h1>
           <p className="text-text-muted mt-1">Accounts and Keycloak role assignment</p>
+          <p className="text-xs text-text-muted mt-1">
+            Gap: no backend endpoint lists Keycloak users/roles yet (ADM-USER, not started) —
+            this page stays on fixture data with the agreed shape until that contract lands.
+          </p>
         </div>
         <MockDataNotice />
       </div>
