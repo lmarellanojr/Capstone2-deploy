@@ -510,12 +510,12 @@ Demo accounts and application realm roles are provisioned and verified via host 
 | Test Account | Keycloak Username | Keycloak Roles | Expected UI Access | Expected API Status |
 | :--- | :--- | :--- | :--- | :--- |
 | **Student Demo** | `student_demo` | `["student", "default-roles-cyber-range"]` | `/dashboard`, `/scenarios`, `/scenario/[id]` | Allowed: `/pods`, `/reviews/submit`<br>**Denied (403):** `/instructor/*`, `/admin/*` |
-| **Instructor Demo** | `instructor_demo` | `["instructor", "default-roles-cyber-range"]` | `/instructor`, `/instructor/reviews`, `/instructor/students` (pending GAP-02: `/instructor/pods`) | **Allowed:** `/instructor/*`<br>**Denied (403):** `/admin/system`, `/admin/users` |
+| **Instructor Demo** | `instructor_demo` | `["instructor", "default-roles-cyber-range"]` | `/instructor`, `/instructor/reviews`, `/instructor/students` (pending GAP-02: `/instructor/pods`); direct navigation to `/admin/*` redirects to `/dashboard` | **Allowed:** `/instructor/*`<br>**Denied (403):** `DELETE /admin/pods/{id}/force-destroy` |
 | **Admin Demo** | `admin_demo` | `["admin", "default-roles-cyber-range"]` | Full access across Student, Instructor, and Admin views | **Allowed:** `/instructor/*`, `/admin/*`, `/pods` |
 
 #### Step-by-Step Validation Procedure with Lenie:
 1. Log in to `${PORTAL_URL}` as `student_demo`. Confirm Instructor and Admin navigation links are hidden in [Sidebar.tsx](../portal/src/components/layout/Sidebar.tsx). Attempt direct navigation to `${PORTAL_URL}/instructor/reviews` (confirm that `middleware.ts` / `AuthGate.tsx` redirect the student to `/dashboard`; any direct underlying API requests remain blocked with HTTP 403).
-2. Log in as `instructor_demo`. Confirm the "Instructor Portal" section appears in the sidebar. Verify access to the 3 implemented routes: `/instructor`, `/instructor/reviews`, and `/instructor/students` (`/instructor/pods` is pending GAP-02).
+2. Log in as `instructor_demo`. Confirm the "Instructor Portal" section appears in the sidebar and Admin links remain hidden. Verify access to the 3 implemented routes: `/instructor`, `/instructor/reviews`, and `/instructor/students` (`/instructor/pods` is pending GAP-02). Confirm that attempting direct navigation to `${PORTAL_URL}/admin/system` or `/admin/users` redirects to `/dashboard`.
 3. Verify that issuing a direct `curl` to `${PROVISION_API_URL}/instructor/reviews` with the `student_demo` bearer token returns HTTP 403 `{"detail": "Forbidden: Insufficient privileges"}`.
 4. Verify that issuing the same `curl` with the `instructor_demo` bearer token returns HTTP 200 with the review list.
 
