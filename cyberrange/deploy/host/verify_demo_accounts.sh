@@ -10,11 +10,14 @@
 # Prints ONLY non-secret claims (username, realm roles). Never echoes the
 # demo account passwords or the portal client secret.
 #
-# Ends with a self-test that proves the exact-match check itself catches a
-# multi-role account: it temporarily grants student_demo a second role,
-# confirms check_login reports FAIL for it, then reverts. Without this, a
-# checker that always reports success regardless of extra roles would pass
-# silently (see git history of this file -- that was exactly the bug).
+# NOT read-only: the login checks themselves are, but the script ends with a
+# self-test that proves the exact-match check itself catches a multi-role
+# account. It does this by temporarily granting student_demo a second role
+# in Keycloak, confirming check_login reports ROLE_MISMATCH for it, then
+# reverting and confirming the revert via a direct query. Without this
+# self-test, a checker that always reports success regardless of extra roles
+# would pass silently (see git history of this file -- that was exactly the
+# bug this self-test exists to catch).
 set -euo pipefail
 export PATH="/snap/bin:/usr/sbin:/usr/bin:/bin"
 REPO=/home/llms_admin/cyberrange
@@ -105,37 +108,56 @@ check_login instructor_demo "$INSTRUCTOR_DEMO_PASSWORD" instructor || overall_st
 check_login admin_demo      "$ADMIN_DEMO_PASSWORD"      admin      || overall_status=1
 
 echo "=== regression: exact-match check must reject a multi-role account ==="
+echo "NOTE: this self-test temporarily mutates student_demo's Keycloak roles (grants"
+echo "'instructor', then reverts) to prove the exact-match check works. Not read-only."
 kcadm.sh config credentials --server http://127.0.0.1:8083/auth --realm master --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
-cleanup_done=0
-revert_regression_role() {
-  if [ "$cleanup_done" -eq 0 ]; then
-    kcadm.sh remove-roles -r cyber-range --uusername student_demo --rolename instructor 2>/dev/null || true
-    cleanup_done=1
-  fi
+
+attempt_revert_regression() {
+  kcadm.sh remove-roles -r cyber-range --uusername student_demo --rolename instructor 2>/dev/null || true
 }
-trap revert_regression_role EXIT
+student_app_roles_regression() {
+  kcadm.sh get-roles -r cyber-range --uusername student_demo --fields name --format csv --noquotes \
+    | grep -E '^(student|instructor|admin)$' | sort | tr '\n' '/' || true
+}
+# Same confirm-in-trap fix as verify_role_refresh.sh: an early abort must not
+# leave this only "attempted", it must confirm or explicitly log failure.
+regression_reverted=0
+finalize_regression_revert() {
+  [ "$regression_reverted" -eq 1 ] && return 0
+  attempt_revert_regression
+  if [ "$(student_app_roles_regression)" != "student/" ]; then
+    attempt_revert_regression
+  fi
+  local final_roles
+  final_roles="$(student_app_roles_regression)"
+  if [ "$final_roles" = "student/" ]; then
+    regression_reverted=1
+    echo "cleanup confirmed: student_demo app roles = $final_roles"
+    return 0
+  fi
+  echo "CLEANUP_FAILED: student_demo app roles are [$final_roles] after two revert attempts, expected exactly [student/]"
+  return 1
+}
+trap 'finalize_regression_revert || echo "EXIT_TRAP: cleanup could not be confirmed on exit -- MANUAL INTERVENTION REQUIRED for student_demo (expected app roles: student/)"' EXIT
 
 kcadm.sh add-roles -r cyber-range --uusername student_demo --rolename instructor
-if check_login student_demo "$STUDENT_DEMO_PASSWORD" student >/tmp/regression-out.txt 2>&1; then
-  echo "SELF_TEST_FAIL: checker reported LOGIN_OK for a multi-role account -- exact-match logic is broken"
-  cat /tmp/regression-out.txt
-  rm -f /tmp/regression-out.txt
-  overall_status=1
-else
+check_login student_demo "$STUDENT_DEMO_PASSWORD" student >/tmp/regression-out.txt 2>&1 || true
+# A non-zero exit from check_login is NOT proof the exact-match logic caught
+# the multi-role case -- it's equally what a network blip or bad credentials
+# would produce (LOGIN_FAILED), which proves nothing about the check under
+# test. Only an explicit ROLE_MISMATCH in the output counts as the self-test
+# actually exercising and confirming the exact-match rejection.
+if grep -q "ROLE_MISMATCH" /tmp/regression-out.txt; then
   echo "SELF_TEST_OK: checker correctly rejected the multi-role account:"
   cat /tmp/regression-out.txt
-  rm -f /tmp/regression-out.txt
-fi
-
-revert_regression_role
-# Direct final-state check -- don't just trust that remove-roles succeeded.
-final_roles=$(kcadm.sh get-roles -r cyber-range --uusername student_demo --fields name --format csv --noquotes | grep -E '^(student|instructor|admin)$' | sort | tr '\n' '/' || true)
-if [ "$final_roles" != "student/" ]; then
-  echo "CLEANUP_FAILED: student_demo now has app roles [$final_roles], expected exactly [student/]"
-  overall_status=1
 else
-  echo "cleanup confirmed: student_demo app roles = $final_roles"
+  echo "SELF_TEST_FAIL: expected ROLE_MISMATCH in output, got:"
+  cat /tmp/regression-out.txt
+  overall_status=1
 fi
+rm -f /tmp/regression-out.txt
+
+finalize_regression_revert || overall_status=1
 trap - EXIT
 
 if [ "$overall_status" -eq 0 ]; then

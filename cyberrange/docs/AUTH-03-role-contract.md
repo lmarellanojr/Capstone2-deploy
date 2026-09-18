@@ -69,7 +69,7 @@ instructor_demo  LOGIN_OK  expected_role=instructor  present=YES  app_roles=inst
 admin_demo       LOGIN_OK  expected_role=admin       present=YES  app_roles=admin
 ```
 
-Full reproduction: `cyberrange/deploy/host/verify_demo_accounts.sh` (read-only, re-runnable, never prints passwords).
+Full reproduction: `cyberrange/deploy/host/verify_demo_accounts.sh`, re-runnable, never prints passwords. The three login checks are read-only; the script also runs a self-test that temporarily grants `student_demo` a second role to prove the exact-match check catches it, then reverts (confirmed via a direct query) — so a full run does briefly mutate `student_demo`'s Keycloak roles, not zero-mutation end to end.
 
 ### Role refresh behavior — validated
 

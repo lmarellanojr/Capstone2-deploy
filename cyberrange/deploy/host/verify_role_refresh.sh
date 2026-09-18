@@ -66,11 +66,7 @@ echo "before refresh: roles=$before_roles"
 
 kcadm.sh config credentials --server http://127.0.0.1:8083/auth --realm master --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
 
-# Best-effort revocation attempt only -- NOT proof of success. The actual
-# proof is student_app_roles_are_exactly(), called explicitly below and in
-# the trap's failure path. This function must never be trusted on its own
-# (Shekinah review: `|| true` here previously let the script print "reverted"
-# even if the removal silently failed).
+# Best-effort revocation attempt only -- NOT proof of success on its own.
 attempt_revert() {
   kcadm.sh remove-roles -r cyber-range --uusername student_demo --rolename instructor 2>/dev/null || true
 }
@@ -82,8 +78,31 @@ student_app_roles() {
     | grep -E '^(student|instructor|admin)$' | sort | tr '\n' '/' || true
 }
 
+# Confirm-and-revert, callable from BOTH the normal flow and the EXIT trap.
+# (Shekinah re-review: the previous trap only called attempt_revert blindly on
+# an early abort -- e.g. curl failing under set -e while requesting the
+# refreshed token -- with no confirmation and no failure logged. This is now
+# the single path either one uses, so an early abort gets the same
+# retry-then-verify treatment as the normal path, and always ends by either
+# confirming success or explicitly logging CLEANUP_FAILED.)
 confirmed_reverted=0
-trap 'if [ "$confirmed_reverted" -eq 0 ]; then attempt_revert; fi' EXIT
+finalize_revert() {
+  [ "$confirmed_reverted" -eq 1 ] && return 0
+  attempt_revert
+  if [ "$(student_app_roles)" != "student/" ]; then
+    attempt_revert
+  fi
+  local final_check
+  final_check="$(student_app_roles)"
+  if [ "$final_check" = "student/" ]; then
+    confirmed_reverted=1
+    echo "reverted: confirmed student_demo app roles = $final_check"
+    return 0
+  fi
+  echo "CLEANUP_FAILED: student_demo app roles are [$final_check] after two revert attempts, expected exactly [student/]"
+  return 1
+}
+trap 'finalize_revert || echo "EXIT_TRAP: cleanup could not be confirmed on exit -- MANUAL INTERVENTION REQUIRED for student_demo (expected app roles: student/)"' EXIT
 
 kcadm.sh add-roles -r cyber-range --uusername student_demo --rolename instructor
 echo "granted: temporary extra role 'instructor' on student_demo"
@@ -93,20 +112,7 @@ resp2=$(curl -sS -X POST "$TOKEN_URL" \
   -d refresh_token="$refresh_token")
 new_access_token=$(echo "$resp2" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))')
 
-# Revoke, then CONFIRM via a direct query before claiming success. Retry once
-# (Keycloak role-mapping writes are synchronous, but a transient API hiccup
-# is still possible) before treating this as a failed verification.
-attempt_revert
-if [ "$(student_app_roles)" != "student/" ]; then
-  echo "revert attempt 1 did not take effect, retrying..."
-  attempt_revert
-fi
-final_check="$(student_app_roles)"
-if [ "$final_check" = "student/" ]; then
-  confirmed_reverted=1
-  echo "reverted: confirmed student_demo app roles = $final_check"
-else
-  echo "CLEANUP_FAILED: student_demo app roles are [$final_check] after two revert attempts, expected exactly [student/]"
+if ! finalize_revert; then
   echo "RESULT: FAIL -- role-refresh test cannot be considered passed while cleanup is unconfirmed"
   exit 1
 fi
