@@ -289,7 +289,7 @@ export const instructor = {
   },
 
   getStudentProgress: async (studentId: string): Promise<InstructorStudentDetail> => {
-    const response = await apiClient.get(`/instructor/students/${studentId}`)
+    const response = await apiClient.get(`/instructor/students/${encodeURIComponent(studentId)}`)
     return response.data
   },
 }

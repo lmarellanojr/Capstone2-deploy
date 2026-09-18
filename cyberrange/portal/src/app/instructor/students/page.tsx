@@ -5,11 +5,23 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, LoadingSpinner } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
 import { useInstructorStudents } from "@/hooks/useInstructorStudents";
+import type { InstructorMilestone } from "@/lib/api";
+import { podBadgeVariant } from "@/lib/instructorBadges";
 
-function podBadgeVariant(status: string): "success" | "warning" | "danger" | "info" {
-  if (status === "ACTIVE") return "success";
-  if (status === "PROVISIONING" || status === "DESTROYING") return "warning";
-  return "info";
+// Milestone rows are per-attempt, not per-milestone -- a retried milestone
+// can have more than one row (and more than one PASS row). Count distinct
+// (scenario_id, milestone_id) pairs, matching the backend's own
+// earned_points() dedup in pods_router.py, so "passed" can't exceed the
+// number of milestones actually attempted.
+function countDistinctMilestones(milestones: InstructorMilestone[]): { passed: number; attempted: number } {
+  const attempted = new Set<string>();
+  const passed = new Set<string>();
+  for (const m of milestones) {
+    const key = `${m.scenario_id}:${m.milestone_id}`;
+    attempted.add(key);
+    if (m.status === "PASS") passed.add(key);
+  }
+  return { passed: passed.size, attempted: attempted.size };
 }
 
 export default function InstructorStudentsPage() {
@@ -46,7 +58,7 @@ export default function InstructorStudentsPage() {
         <div className="flex justify-center py-12">
           <LoadingSpinner message="Loading students..." />
         </div>
-      ) : students.length === 0 ? (
+      ) : error ? null : students.length === 0 ? (
         <div className="card-surface p-10 text-center">
           <p className="text-text-muted text-sm">No students found yet.</p>
         </div>
@@ -57,7 +69,7 @@ export default function InstructorStudentsPage() {
               <thead>
                 <tr className="text-left text-text-muted border-b border-border bg-muted/30">
                   <th className="py-3 px-4 font-semibold">Student ID</th>
-                  <th className="py-3 px-4 font-semibold">Passed / Attempts</th>
+                  <th className="py-3 px-4 font-semibold">Milestones Passed</th>
                   <th className="py-3 px-4 font-semibold">Active Pod</th>
                   <th className="py-3 px-4 font-semibold">Pending Reviews</th>
                   <th className="py-3 px-4 font-semibold">Last Activity</th>
@@ -65,7 +77,7 @@ export default function InstructorStudentsPage() {
               </thead>
               <tbody>
                 {students.map((s) => {
-                  const passed = s.milestones.filter((m) => m.status === "PASS").length;
+                  const { passed, attempted } = countDistinctMilestones(s.milestones);
                   const lastActivity = s.milestones[0]?.verified_at ?? s.active_pod?.last_heartbeat ?? null;
                   return (
                     <tr
@@ -81,7 +93,7 @@ export default function InstructorStudentsPage() {
                         </Link>
                       </td>
                       <td className="py-3 px-4 text-text-muted">
-                        {passed} / {s.milestones.length}
+                        {passed} / {attempted}
                       </td>
                       <td className="py-3 px-4">
                         {s.active_pod ? (

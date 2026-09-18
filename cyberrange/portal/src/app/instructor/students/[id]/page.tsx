@@ -5,15 +5,10 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, LoadingSpinner } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
 import { useStudentProgress } from "@/hooks/useStudentProgress";
+import { podBadgeVariant } from "@/lib/instructorBadges";
 
 interface PageProps {
   params: { id: string };
-}
-
-function podBadgeVariant(status: string): "success" | "warning" | "danger" | "info" {
-  if (status === "ACTIVE") return "success";
-  if (status === "PROVISIONING" || status === "DESTROYING") return "warning";
-  return "info";
 }
 
 function milestoneBadgeVariant(status: string): "success" | "danger" | "warning" {

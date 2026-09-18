@@ -48,7 +48,7 @@ export default function InstructorDashboardPage() {
         <div className="flex justify-center py-12">
           <LoadingSpinner message="Loading dashboard..." />
         </div>
-      ) : (
+      ) : error ? null : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
           {[
             { label: "Students", value: String(studentCount) },
