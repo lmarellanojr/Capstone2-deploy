@@ -11,7 +11,11 @@ const ROUTE_ROLE_REQUIREMENTS: { prefix: string; roles: Role[] }[] = [
 ]
 
 export function requiredRolesForPath(pathname: string): Role[] | null {
-  const match = ROUTE_ROLE_REQUIREMENTS.find((r) => pathname.startsWith(r.prefix))
+  // Segment-aware match, not a bare string prefix: a future route like
+  // /instructor-notes must not silently inherit /instructor's requirement.
+  const match = ROUTE_ROLE_REQUIREMENTS.find(
+    (r) => pathname === r.prefix || pathname.startsWith(`${r.prefix}/`)
+  )
   return match ? match.roles : null
 }
 

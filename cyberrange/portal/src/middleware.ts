@@ -36,7 +36,15 @@ export async function middleware(req: NextRequest) {
 
   // AUTH-04: authenticated but wrong role -- e.g. a student typing
   // /instructor or /admin directly into the URL bar. Hiding the nav link is
-  // not a security boundary; this is the actual enforcement point.
+  // not a security boundary; this check (not client-side UI) is what enforces
+  // it. Known limitation: token.roles here is whatever the session cookie
+  // already holds -- getToken() only decrypts it, it never re-runs the
+  // jwt() callback in lib/auth.ts that re-decodes roles from a fresh Keycloak
+  // token. A role revoked in Keycloak mid-session is still honored here until
+  // that callback next fires (near access-token expiry, see lib/auth.ts's
+  // refreshAccessToken). Not a bypass introduced by this check -- it's the
+  // existing JWT-session tradeoff -- but real, so don't assume "enforced here"
+  // means "revoked instantly."
   const required = requiredRolesForPath(req.nextUrl.pathname)
   if (required && !hasRequiredRole(token.roles as string[] | undefined, required)) {
     return NextResponse.redirect(new URL("/dashboard", publicOrigin(req)))

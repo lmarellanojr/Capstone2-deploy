@@ -13,6 +13,16 @@ describe("requiredRolesForPath", () => {
     expect(requiredRolesForPath("/dashboard")).toBeNull()
     expect(requiredRolesForPath("/scenario/06")).toBeNull()
   })
+
+  it("matches the bare section root exactly", () => {
+    expect(requiredRolesForPath("/admin")).toEqual(["admin"])
+    expect(requiredRolesForPath("/instructor")).toEqual(["instructor", "admin"])
+  })
+
+  it("does not treat a same-prefix sibling route as protected", () => {
+    expect(requiredRolesForPath("/instructor-notes")).toBeNull()
+    expect(requiredRolesForPath("/administration")).toBeNull()
+  })
 })
 
 describe("hasRequiredRole", () => {
