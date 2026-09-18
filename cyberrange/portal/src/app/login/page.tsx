@@ -1,43 +1,55 @@
 "use client";
 
 import { signIn, useSession } from "next-auth/react";
-import type { Role } from "next-auth";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { Logo } from "@/components/layout/Logo";
 import { Button } from "@/components/ui";
 
+// AUTH-05: one role per account (confirmed by Lenie + Leonardo — no multi-role,
+// no self-signup), so this is a plain lookup, not a priority order. Returns
+// null when the account has none of the three app roles, which routes to
+// /no-role instead of any portal.
+function landingPathForRole(roles: string[] | undefined): string | null {
+  if (roles?.includes("admin")) return "/admin";
+  if (roles?.includes("instructor")) return "/instructor";
+  if (roles?.includes("student")) return "/dashboard";
+  return null;
+}
+
 function LoginContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { status } = useSession();
+  const { data: session, status } = useSession();
   const [isLoading, setIsLoading] = useState(false);
-  const [role, setRole] = useState<Role>("student");
-  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+  const explicitCallbackUrl = searchParams.get("callbackUrl");
   const error = searchParams.get("error");
 
   useEffect(() => {
-    if (status === "authenticated" && error !== "SessionExpired") {
-      router.push(callbackUrl);
+    if (status !== "authenticated" || error === "SessionExpired") return;
+    // No-role check always wins, even over an explicit callbackUrl -- a
+    // no-role account must never land in a portal (task's own "Done when").
+    const landingPath = landingPathForRole(session?.user?.roles);
+    if (landingPath === null) {
+      router.push("/no-role");
+      return;
     }
-  }, [status, router, callbackUrl, error]);
+    router.push(explicitCallbackUrl || landingPath);
+  }, [status, router, explicitCallbackUrl, error, session]);
 
   const handleSignIn = async () => {
     setIsLoading(true);
     // Must redirect:true so browser navigates to Keycloak after state/pkce cookies are set.
     // redirect:false returned a URL but never navigated — broken OAuth start.
-    await signIn("keycloak", { callbackUrl, redirect: true });
+    // No role is known before OAuth completes, so a fresh sign-in with no
+    // explicit target bounces back to /login itself; the effect above then
+    // routes by the now-authenticated session.user.roles.
+    await signIn("keycloak", { callbackUrl: explicitCallbackUrl || "/login", redirect: true });
   };
 
   if (status === "authenticated" && error !== "SessionExpired") {
     return null;
   }
-
-  const roles: { id: Role; label: string }[] = [
-    { id: "student", label: "Student" },
-    { id: "instructor", label: "Instructor" },
-    { id: "admin", label: "Admin" },
-  ];
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-primary p-6">
@@ -50,23 +62,6 @@ function LoginContent() {
         <p className="text-text-muted text-center text-sm mb-8">
           Access your cybersecurity training labs
         </p>
-
-        <div className="flex rounded-lg border border-border p-1 mb-6 bg-muted">
-          {roles.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => setRole(r.id)}
-              className={`flex-1 py-2 text-sm font-semibold rounded-md transition ${
-                role === r.id
-                  ? "bg-secondary text-text-main shadow-card"
-                  : "text-text-muted hover:text-text-main"
-              }`}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
 
         {error === "SessionExpired" && (
           <div className="mb-6 p-4 alert-error text-sm">
@@ -87,7 +82,7 @@ function LoginContent() {
         </Button>
 
         <p className="text-text-muted text-xs text-center mt-6">
-          Secure authentication via Keycloak · Role: {role}
+          Secure authentication via Keycloak
         </p>
       </div>
     </div>
