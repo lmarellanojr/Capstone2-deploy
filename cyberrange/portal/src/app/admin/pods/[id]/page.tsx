@@ -112,12 +112,13 @@ export default function AdminPodDetailPage({ params }: PageProps) {
                   {pod.last_heartbeat ? new Date(pod.last_heartbeat).toLocaleString() : "—"}
                 </p>
               </div>
-              {pod.status === "ACTIVE" && !pod.ttl_expired && (
-                <div>
-                  <p className="text-xs text-text-muted mb-0.5">Time Left</p>
-                  <p className="font-semibold text-text-main">
-                    <LabCountdown remainingSeconds={pod.remaining_seconds} fetchedAtMs={fetchedAtMs} />
-                  </p>
+              {liveStatus === "ACTIVE" && !pod.ttl_expired && (
+                // LabCountdown renders its own "Time left mm:ss" text -- no outer
+                // label here, that duplicated it (review finding). Gated on
+                // liveStatus, not pod.status, so this hides once Destroy is
+                // confirmed instead of continuing to tick during teardown.
+                <div className="flex items-end">
+                  <LabCountdown remainingSeconds={pod.remaining_seconds} fetchedAtMs={fetchedAtMs} />
                 </div>
               )}
               <div>

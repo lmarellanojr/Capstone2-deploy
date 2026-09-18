@@ -12,8 +12,11 @@ import { admin } from "@/lib/api";
 import { adminPodBadgeVariant, canForceDestroy } from "@/lib/adminBadges";
 import { useToastContext } from "@/context/ToastContext";
 
+// No Reset control anywhere on this page (review finding: don't surface
+// backlog/PR references as user-facing copy) -- PR #50 never added a
+// reset/recreate API, so Destroy is the only lifecycle action available.
 export default function AdminPodsPage() {
-  const { pods, capacity, loading, error, refresh } = useAdminPods();
+  const { pods, capacity, loading, error, capacityError, refresh } = useAdminPods();
   const { success, error: showError } = useToastContext();
   const [confirmingPodId, setConfirmingPodId] = useState<number | null>(null);
   const [destroyingPodId, setDestroyingPodId] = useState<number | null>(null);
@@ -47,12 +50,8 @@ export default function AdminPodsPage() {
         <div>
           <h1 className="text-3xl font-bold text-text-main">Pods</h1>
           <p className="text-text-muted mt-1">All provisioned pods across students</p>
-          <p className="text-xs text-text-muted mt-1">
-            Gap: no reset/recreate API exists yet (PR #50 added inspection and force-destroy
-            only) — Destroy is the only lifecycle action available here.
-          </p>
         </div>
-        {capacity && (
+        {capacity ? (
           <div className="text-sm text-text-muted">
             <span className="font-semibold text-text-main">{capacity.active_pods}</span> /{" "}
             {capacity.max_pods} active pods
@@ -60,7 +59,9 @@ export default function AdminPodsPage() {
               <span className="ml-2">· {Math.round(capacity.available_mb / 1024)} GB free</span>
             )}
           </div>
-        )}
+        ) : capacityError ? (
+          <div className="text-sm text-text-muted">Capacity unavailable</div>
+        ) : null}
       </div>
 
       {error && (
