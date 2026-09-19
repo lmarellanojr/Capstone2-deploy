@@ -4,7 +4,7 @@ import { useSession } from "next-auth/react";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { LoadingSpinner } from "@/components/ui";
-import { requiredRolesForPath, hasRequiredRole } from "@/lib/routeRoles";
+import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole } from "@/lib/routeRoles";
 
 interface AuthGateProps {
   children: React.ReactNode;
@@ -21,24 +21,36 @@ interface AuthGateProps {
  * backstop for the same check -- also subject to the mid-session-revocation window
  * documented in middleware.ts (the session cookie's roles only get re-decoded near
  * access-token expiry, not the instant a role changes in Keycloak).
+ *
+ * Review finding (Leo, PR #83): a role-less authenticated account isn't just
+ * "wrong role for this specific page" -- it has none of the three app roles
+ * at all, so it goes to /no-role, not /dashboard (which is exactly the
+ * portal such an account shouldn't see either).
  */
 export function AuthGate({ children }: AuthGateProps) {
   const { data: session, status } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+  const roles = session?.user?.roles;
+  const noRecognizedRole = status === "authenticated" && !hasAnyRecognizedRole(roles);
   const requiredRoles = requiredRolesForPath(pathname);
-  const forbidden =
-    status === "authenticated" && !!requiredRoles && !hasRequiredRole(session?.user?.roles, requiredRoles);
+  const wrongRoleForPath =
+    status === "authenticated" &&
+    !noRecognizedRole &&
+    !!requiredRoles &&
+    !hasRequiredRole(roles, requiredRoles);
 
   useEffect(() => {
     if (status === "unauthenticated") {
       const params = new URLSearchParams();
       params.set("callbackUrl", pathname);
       router.push(`/login?${params.toString()}`);
-    } else if (forbidden) {
+    } else if (noRecognizedRole) {
+      router.push("/no-role");
+    } else if (wrongRoleForPath) {
       router.push("/dashboard");
     }
-  }, [status, forbidden, router, pathname]);
+  }, [status, noRecognizedRole, wrongRoleForPath, router, pathname]);
 
   if (status === "loading") {
     return (
@@ -48,7 +60,7 @@ export function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  if (status === "unauthenticated" || forbidden) {
+  if (status === "unauthenticated" || noRecognizedRole || wrongRoleForPath) {
     return null;
   }
 
