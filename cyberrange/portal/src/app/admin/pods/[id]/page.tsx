@@ -96,6 +96,14 @@ export default function AdminPodDetailPage({ params }: PageProps) {
           </div>
 
           <div className="card-surface p-6">
+            {/* No "Last Heartbeat" field here on purpose (review finding):
+                GET /pods/{id}/status bumps last_heartbeat for ANY authorized
+                caller while ACTIVE (pods_router.py:268-272), owner or admin,
+                not just genuine student polling. Opening this page or a
+                destroy-poll tick would make the value reflect the admin's own
+                last visit, not student activity -- misleading rather than
+                useful. Backend fix (scope to the owner's own status call) is
+                a follow-up, not part of this PR. */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
               <div>
                 <p className="text-xs text-text-muted mb-0.5">Status</p>
@@ -109,12 +117,6 @@ export default function AdminPodDetailPage({ params }: PageProps) {
                 <p className="text-xs text-text-muted mb-0.5">Created</p>
                 <p className="font-semibold text-text-main">
                   {pod.created_at ? new Date(pod.created_at).toLocaleString() : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-text-muted mb-0.5">Last Heartbeat</p>
-                <p className="font-semibold text-text-main">
-                  {pod.last_heartbeat ? new Date(pod.last_heartbeat).toLocaleString() : "—"}
                 </p>
               </div>
               {liveStatus === "ACTIVE" && !pod.ttl_expired && (
