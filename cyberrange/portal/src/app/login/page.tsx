@@ -4,7 +4,7 @@ import { signIn, useSession } from "next-auth/react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { Logo } from "@/components/layout/Logo";
-import { Button } from "@/components/ui";
+import { Button, LoadingSpinner } from "@/components/ui";
 import { landingPathForRole, shouldHonorCallbackUrl, resolveSameOriginPath } from "@/lib/loginRouting";
 
 function LoginContent() {
@@ -57,6 +57,19 @@ function LoginContent() {
 
   if (status === "authenticated" && error !== "SessionExpired") {
     return null;
+  }
+
+  // Review finding (Leo, PR #83): every sign-in now returns to /login first
+  // (see handleSignIn above), so there's a real window right after OAuth
+  // completes where useSession() is still resolving the just-created
+  // session -- with no loading state here, the sign-in card was visible and
+  // clickable during it, and a click would start a second OAuth round trip.
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-primary">
+        <LoadingSpinner message="Loading..." />
+      </div>
+    );
   }
 
   return (
