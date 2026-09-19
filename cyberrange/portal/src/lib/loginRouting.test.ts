@@ -91,4 +91,26 @@ describe("shouldHonorCallbackUrl", () => {
     expect(shouldHonorCallbackUrl("/admin/pods", ["admin"])).toBe(true)
     expect(shouldHonorCallbackUrl("/admin/pods", ["instructor"])).toBe(false)
   })
+
+  // Leo's follow-up finding (PR #83): matching the full path+search+hash
+  // string let a query/hash/trailing-slash suffix slip past both checks.
+  // Reproduced live on 52ef857: instructor + "/admin?x=1" was read as
+  // unrestricted here (middleware caught it independently on the real
+  // request, but the reasoning here was wrong); admin + "/dashboard?x=1"
+  // was honored, reproducing the original sign-out bug via a different
+  // string.
+  it("still recognizes the generic default with a query string, hash, or trailing slash", () => {
+    expect(shouldHonorCallbackUrl("/dashboard?x=1", ["admin"])).toBe(false)
+    expect(shouldHonorCallbackUrl("/dashboard#section", ["instructor"])).toBe(false)
+    expect(shouldHonorCallbackUrl("/dashboard/", ["admin"])).toBe(false)
+    expect(shouldHonorCallbackUrl("/?x=1", ["admin"])).toBe(false)
+  })
+
+  it("still applies the role restriction with a query string, hash, or trailing slash", () => {
+    expect(shouldHonorCallbackUrl("/admin?x=1", ["instructor"])).toBe(false)
+    expect(shouldHonorCallbackUrl("/admin#section", ["instructor"])).toBe(false)
+    expect(shouldHonorCallbackUrl("/admin/", ["instructor"])).toBe(false)
+    expect(shouldHonorCallbackUrl("/instructor/students?x=1", ["student"])).toBe(false)
+    expect(shouldHonorCallbackUrl("/admin?x=1", ["admin"])).toBe(true)
+  })
 })

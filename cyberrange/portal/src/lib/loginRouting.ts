@@ -53,8 +53,25 @@ export function resolveSameOriginPath(value: string | null, origin: string): str
 // actually satisfies it there -- the same check middleware.ts uses, imported
 // from routeRoles.ts rather than re-implemented, so this can't send someone
 // to a page their role wouldn't be allowed to load anyway.
+//
+// Follow-up finding (Leo, PR #83): `path` here is path+search+hash from
+// resolveSameOriginPath, but the generic-default check and
+// requiredRolesForPath both need the bare pathname -- exact-matching the
+// full string let "/dashboard?x=1" and "/dashboard/" slip past the default
+// check (reproducing the original sign-out bug via a different string) and
+// let "/admin?x=1" read as "unrestricted" for an instructor (middleware
+// happens to catch that one independently on the real request, but the
+// reasoning here was still wrong). Reproduced live on 52ef847. Parsing out
+// just the pathname, with any trailing slash stripped, before either check
+// fixes both.
 export function shouldHonorCallbackUrl(path: string, roles: string[] | undefined): boolean {
-  if (path === "/" || path === "/dashboard") return false
-  const required = requiredRolesForPath(path)
+  let pathname: string
+  try {
+    pathname = new URL(path, "http://placeholder.invalid").pathname.replace(/\/+$/, "") || "/"
+  } catch {
+    return false
+  }
+  if (pathname === "/" || pathname === "/dashboard") return false
+  const required = requiredRolesForPath(pathname)
   return !required || hasRequiredRole(roles, required)
 }
