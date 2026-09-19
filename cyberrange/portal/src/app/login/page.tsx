@@ -5,17 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { Logo } from "@/components/layout/Logo";
 import { Button } from "@/components/ui";
-
-// AUTH-05: one role per account (confirmed by Lenie + Leonardo — no multi-role,
-// no self-signup), so this is a plain lookup, not a priority order. Returns
-// null when the account has none of the three app roles, which routes to
-// /no-role instead of any portal.
-function landingPathForRole(roles: string[] | undefined): string | null {
-  if (roles?.includes("admin")) return "/admin";
-  if (roles?.includes("instructor")) return "/instructor";
-  if (roles?.includes("student")) return "/dashboard";
-  return null;
-}
+import { landingPathForRole, shouldHonorCallbackUrl } from "@/lib/loginRouting";
 
 function LoginContent() {
   const searchParams = useSearchParams();
@@ -34,17 +24,28 @@ function LoginContent() {
       router.push("/no-role");
       return;
     }
-    router.push(explicitCallbackUrl || landingPath);
+    const target =
+      explicitCallbackUrl && shouldHonorCallbackUrl(explicitCallbackUrl, session?.user?.roles)
+        ? explicitCallbackUrl
+        : landingPath;
+    router.push(target);
   }, [status, router, explicitCallbackUrl, error, session]);
 
   const handleSignIn = async () => {
     setIsLoading(true);
     // Must redirect:true so browser navigates to Keycloak after state/pkce cookies are set.
     // redirect:false returned a URL but never navigated — broken OAuth start.
-    // No role is known before OAuth completes, so a fresh sign-in with no
-    // explicit target bounces back to /login itself; the effect above then
-    // routes by the now-authenticated session.user.roles.
-    await signIn("keycloak", { callbackUrl: explicitCallbackUrl || "/login", redirect: true });
+    //
+    // Always return to /login itself (carrying the original target, if any,
+    // as /login's own callbackUrl param) instead of handing NextAuth the raw
+    // target directly. Review finding: passing an explicit callbackUrl
+    // straight to signIn() let NextAuth redirect there after OAuth without
+    // ever loading this page again, so the effect above -- and its role /
+    // no-role routing -- never ran for that sign-in.
+    const returnTo = explicitCallbackUrl
+      ? `/login?callbackUrl=${encodeURIComponent(explicitCallbackUrl)}`
+      : "/login";
+    await signIn("keycloak", { callbackUrl: returnTo, redirect: true });
   };
 
   if (status === "authenticated" && error !== "SessionExpired") {
