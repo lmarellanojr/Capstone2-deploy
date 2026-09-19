@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { Logo } from "@/components/layout/Logo";
 import { Button } from "@/components/ui";
-import { landingPathForRole, shouldHonorCallbackUrl } from "@/lib/loginRouting";
+import { landingPathForRole, shouldHonorCallbackUrl, resolveSameOriginPath } from "@/lib/loginRouting";
 
 function LoginContent() {
   const searchParams = useSearchParams();
@@ -24,9 +24,13 @@ function LoginContent() {
       router.push("/no-role");
       return;
     }
+    // resolveSameOriginPath strips anything that isn't actually same-origin
+    // (open-redirect guard, review finding) before shouldHonorCallbackUrl
+    // ever sees it -- router.push only ever receives a validated path.
+    const safeCallbackUrl = resolveSameOriginPath(explicitCallbackUrl, window.location.origin);
     const target =
-      explicitCallbackUrl && shouldHonorCallbackUrl(explicitCallbackUrl, session?.user?.roles)
-        ? explicitCallbackUrl
+      safeCallbackUrl && shouldHonorCallbackUrl(safeCallbackUrl, session?.user?.roles)
+        ? safeCallbackUrl
         : landingPath;
     router.push(target);
   }, [status, router, explicitCallbackUrl, error, session]);
@@ -41,9 +45,12 @@ function LoginContent() {
     // target directly. Review finding: passing an explicit callbackUrl
     // straight to signIn() let NextAuth redirect there after OAuth without
     // ever loading this page again, so the effect above -- and its role /
-    // no-role routing -- never ran for that sign-in.
-    const returnTo = explicitCallbackUrl
-      ? `/login?callbackUrl=${encodeURIComponent(explicitCallbackUrl)}`
+    // no-role routing -- never ran for that sign-in. Validated through the
+    // same resolveSameOriginPath used above, so an off-site value can't even
+    // get embedded into the round-trip in the first place.
+    const safeCallbackUrl = resolveSameOriginPath(explicitCallbackUrl, window.location.origin);
+    const returnTo = safeCallbackUrl
+      ? `/login?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
       : "/login";
     await signIn("keycloak", { callbackUrl: returnTo, redirect: true });
   };

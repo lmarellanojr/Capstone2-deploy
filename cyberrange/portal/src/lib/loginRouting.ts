@@ -1,5 +1,26 @@
 import { requiredRolesForPath, hasRequiredRole } from "@/lib/routeRoles"
 
+// Review finding (Leo, PR #83): a raw callbackUrl string (e.g.
+// "https://evil.example", "//evil.example", "/\evil.example" -- the last two
+// are protocol-relative once the WHATWG URL parser normalizes backslashes to
+// slashes for http(s)) reaching router.push unvalidated is an open redirect:
+// Next 14's router.push does a full cross-origin navigation for an external
+// URL. NextAuth's own redirect validation only covers the signIn() call, not
+// a push made after landing back on this page. Resolving against `origin`
+// and comparing .origin catches all three forms; returns only the
+// path+search+hash, never the caller's raw string, so nothing external can
+// ever reach router.push even if a caller forgets to check the return value.
+export function resolveSameOriginPath(value: string | null, origin: string): string | null {
+  if (!value) return null
+  try {
+    const resolved = new URL(value, origin)
+    if (resolved.origin !== origin) return null
+    return `${resolved.pathname}${resolved.search}${resolved.hash}`
+  } catch {
+    return null
+  }
+}
+
 // AUTH-05: one role per account (confirmed by Lenie + Leonardo — no multi-role,
 // no self-signup), so this is a plain lookup, not a priority order. Returns
 // null when the account has none of the three app roles, which routes to

@@ -1,4 +1,33 @@
-import { landingPathForRole, shouldHonorCallbackUrl } from "./loginRouting"
+import { landingPathForRole, shouldHonorCallbackUrl, resolveSameOriginPath } from "./loginRouting"
+
+const ORIGIN = "https://cyberrange.example"
+
+describe("resolveSameOriginPath", () => {
+  // Leo's finding (PR #83): callbackUrl reached router.push unvalidated --
+  // an open redirect via Next's cross-origin full-page navigation. These are
+  // the exact three forms he listed.
+  it("rejects an absolute cross-origin URL", () => {
+    expect(resolveSameOriginPath("https://evil.example", ORIGIN)).toBeNull()
+  })
+
+  it("rejects a protocol-relative URL", () => {
+    expect(resolveSameOriginPath("//evil.example", ORIGIN)).toBeNull()
+  })
+
+  it("rejects a backslash variant that normalizes to protocol-relative", () => {
+    expect(resolveSameOriginPath("/\\evil.example", ORIGIN)).toBeNull()
+  })
+
+  it("accepts a genuine same-origin path and strips the origin from the result", () => {
+    expect(resolveSameOriginPath("/scenario/06", ORIGIN)).toBe("/scenario/06")
+    expect(resolveSameOriginPath("/instructor/students?x=1", ORIGIN)).toBe("/instructor/students?x=1")
+  })
+
+  it("returns null for missing or empty input", () => {
+    expect(resolveSameOriginPath(null, ORIGIN)).toBeNull()
+    expect(resolveSameOriginPath("", ORIGIN)).toBeNull()
+  })
+})
 
 describe("landingPathForRole", () => {
   it("maps each single role to its portal", () => {
