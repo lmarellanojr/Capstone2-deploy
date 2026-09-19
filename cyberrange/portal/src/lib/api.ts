@@ -51,13 +51,18 @@ scoringClient.interceptors.response.use(
 )
 
 // Type definitions
+// ADM-POD-UI handoff (docs/ADM-POD-UI-contract-handoff.md §4.3): the only
+// statuses the backend actually sets/filters on main. ORPHANED_CLEANED is not
+// produced by the API.
 export interface Pod {
   pod_id: number
   student_id: string
-  status: 'PROVISIONING' | 'ACTIVE' | 'DESTROYING' | 'DESTROYED' | 'FAILED_ROLLBACK_COMPLETE' | 'ORPHANED_CLEANED'
-  vmid_kali: number
-  vmid_meta: number
-  vmid_dvwa: number
+  status: 'PROVISIONING' | 'ACTIVE' | 'DESTROYING' | 'DESTROYED' | 'FAILED_ROLLBACK_COMPLETE'
+  // serialize_pod's vmid_* are container/instance name strings (e.g. "pod-student1-kali"),
+  // not numeric ids -- fixing a pre-existing TS/runtime mismatch (handoff doc §4.5).
+  vmid_kali: string | null
+  vmid_meta: string | null
+  vmid_dvwa: string | null
   connection_id: number | null
   wazuh_agent_id: string | null
   scenario_id: string | null
@@ -67,6 +72,18 @@ export interface Pod {
   remaining_seconds: number
   expires_at: string | null
   ttl_expired: boolean
+}
+
+// GET /capacity -- unauthenticated, same payload for every caller (handoff doc §4.4).
+export interface Capacity {
+  available_mb: number | null
+  active_pods: number
+  max_pods: number
+  pod_ram_mb: number
+  ram_buffer_mb: number
+  ram_required_mb: number
+  profile: string
+  can_provision: boolean
 }
 
 export interface ProvisionResponse {
@@ -179,7 +196,9 @@ export const provisioning = {
     return response.data
   },
 
-  listPods: async (): Promise<{ pods: Pod[]; count: number }> => {
+  // count is not part of the real GET /pods contract -- only the offline
+  // apiProxy fallback ({pods: [], count: 0}) includes it (handoff doc §3).
+  listPods: async (): Promise<{ pods: Pod[]; count?: number }> => {
     const response = await apiClient.get('/pods')
     return response.data
   },
@@ -290,6 +309,29 @@ export const instructor = {
 
   getStudentProgress: async (studentId: string): Promise<InstructorStudentDetail> => {
     const response = await apiClient.get(`/instructor/students/${encodeURIComponent(studentId)}`)
+    return response.data
+  },
+}
+
+// ADM-UI #31 — Admin pods list/detail/force-destroy + capacity.
+// GET /pods and GET /pods/{id}/status are the SAME backend routes Students poll;
+// the backend widens the result set by caller role, so listPods/getPod are
+// reused as-is (handoff doc §2). Only force-destroy and capacity are genuinely
+// admin-only routes needing their own proxy.
+export const admin = {
+  listPods: provisioning.listPods,
+  getPod: provisioning.getPod,
+
+  // 200 means accepted/scheduled, not torn down -- poll getPod(podId) until
+  // status === "DESTROYED". Never treat a 404 from that poll as completion
+  // (handoff doc §5) -- it just means the pod row/proxy lookup failed.
+  forceDestroyPod: async (podId: number): Promise<{ status: string; pod_id: number }> => {
+    const response = await apiClient.delete(`/admin/pods/${podId}/force-destroy`)
+    return response.data
+  },
+
+  getCapacity: async (): Promise<Capacity> => {
+    const response = await apiClient.get('/capacity')
     return response.data
   },
 }
