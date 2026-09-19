@@ -12,14 +12,45 @@ const POLL_INTERVAL_MS = 2500
 // claim about when the backend actually retries.
 const STUCK_DESTROY_WARNING_MS = 5 * 60 * 1000
 
+export type PollTickResult = { status: string } | { error: unknown }
+export type PollTickOutcome =
+  | { action: 'continue' }
+  | { action: 'destroyed' }
+  | { action: 'give-up'; message: string }
+
+/**
+ * Pure decision for one poll tick, exported for unit testing without
+ * rendering the hook. elapsedMs is checked first and unconditionally --
+ * Leo's follow-up finding was that a run of persistent transient errors
+ * never reached a timeout check that only lived on the success path, so a
+ * stuck poll (DESTROYING forever, or 5xx forever) never gave up.
+ */
+export function evaluateDestroyPollTick(elapsedMs: number, result: PollTickResult): PollTickOutcome {
+  if (elapsedMs > STUCK_DESTROY_WARNING_MS) {
+    return {
+      action: 'give-up',
+      message: 'Teardown is taking longer than expected; the backend reaper will retry automatically. Verify manually.',
+    }
+  }
+  if ('status' in result) {
+    return result.status === 'DESTROYED' ? { action: 'destroyed' } : { action: 'continue' }
+  }
+  if (isTransientPollError(result.error)) return { action: 'continue' }
+  return {
+    action: 'give-up',
+    message:
+      httpStatus(result.error) === 404
+        ? 'Pod not found while confirming teardown — not proof it completed. Verify manually.'
+        : 'Could not confirm teardown status. Verify manually.',
+  }
+}
+
 /**
  * Polls GET /pods/{id}/status after an admin force-destroy until the backend
  * reports DESTROYED. Deliberately does NOT treat a 404 as completion, unlike
  * the student destroy poller (useStatusPoller) -- for Admin, a 404 is
  * ambiguous (unknown pod id vs proxy miss), not proof of teardown (handoff
- * doc §5). On 404, a stuck-DESTROYING timeout, or any other non-transient
- * error, polling stops and the caller is told to verify manually instead of
- * assuming success.
+ * doc §5).
  *
  * Pass null to leave idle; pass a podId to start polling it.
  */
@@ -47,35 +78,27 @@ export function useAdminDestroyPoll(podId: number | null) {
     const interval = setInterval(async () => {
       if (requestInFlight) return // don't overlap a slow response with the next tick
       requestInFlight = true
+
+      let result: PollTickResult
+      let newStatus: string | undefined
       try {
         const pod = await admin.getPod(podId)
-        if (cancelled) return
-        setStatus(pod.status)
-        if (pod.status === 'DESTROYED') {
-          setIsPolling(false)
-          clearInterval(interval)
-          return
-        }
-        if (Date.now() - startedAt > STUCK_DESTROY_WARNING_MS) {
-          setError(
-            'Teardown is taking longer than expected; the backend reaper will retry automatically. Verify manually.'
-          )
-          setIsPolling(false)
-          clearInterval(interval)
-        }
+        newStatus = pod.status
+        result = { status: pod.status }
       } catch (err: unknown) {
-        if (cancelled) return
-        if (isTransientPollError(err)) return
-        setError(
-          httpStatus(err) === 404
-            ? 'Pod not found while confirming teardown — not proof it completed. Verify manually.'
-            : 'Could not confirm teardown status. Verify manually.'
-        )
-        setIsPolling(false)
-        clearInterval(interval)
+        result = { error: err }
       } finally {
         requestInFlight = false
       }
+
+      if (cancelled) return
+      if (newStatus !== undefined) setStatus(newStatus)
+
+      const outcome = evaluateDestroyPollTick(Date.now() - startedAt, result)
+      if (outcome.action === 'continue') return
+      if (outcome.action === 'give-up') setError(outcome.message)
+      setIsPolling(false)
+      clearInterval(interval)
     }, POLL_INTERVAL_MS)
 
     return () => {
