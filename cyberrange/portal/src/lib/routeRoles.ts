@@ -23,3 +23,18 @@ export function hasRequiredRole(userRoles: string[] | undefined, required: Role[
   if (!userRoles) return false
   return required.some((role) => userRoles.includes(role))
 }
+
+// AUTH-05 review (Leo, PR #83): requiredRolesForPath returning null means
+// "no SPECIFIC role required here", not "any authenticated caller is fine
+// regardless of role" -- most matched routes (/dashboard, /scenario/*,
+// /lab/*, /progress, /settings, /profile) have no entry above, so an
+// authenticated account with none of the three app roles could type one of
+// those paths directly and reach the Student portal, bypassing the login
+// page's own role-less -> /no-role routing entirely. Used by middleware.ts
+// and AuthGate.tsx to redirect that case to /no-role regardless of which
+// matched path was requested.
+const ALL_APP_ROLES: Role[] = ["student", "instructor", "admin"]
+
+export function hasAnyRecognizedRole(userRoles: string[] | undefined): boolean {
+  return hasRequiredRole(userRoles, ALL_APP_ROLES)
+}

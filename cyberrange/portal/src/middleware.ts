@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 import { getToken } from "next-auth/jwt"
-import { requiredRolesForPath, hasRequiredRole } from "@/lib/routeRoles"
+import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole } from "@/lib/routeRoles"
 
 function isUnusableHost(host: string | undefined): boolean {
   if (!host) return true
@@ -34,6 +34,20 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(login)
   }
 
+  const roles = token.roles as string[] | undefined
+
+  // AUTH-05 review (Leo, PR #83): most matched paths below (/dashboard,
+  // /scenario/*, /lab/*, /progress, /settings, /profile) have no entry in
+  // routeRoles.ts -- requiredRolesForPath returns null for them, meaning "no
+  // SPECIFIC role required", not "any authenticated caller is fine". An
+  // account with none of the three app roles could type one of those paths
+  // directly and reach the Student portal, bypassing /login's own
+  // role-less -> /no-role routing entirely. /no-role itself is deliberately
+  // not in the matcher below, so this can't loop.
+  if (!hasAnyRecognizedRole(roles)) {
+    return NextResponse.redirect(new URL("/no-role", publicOrigin(req)))
+  }
+
   // AUTH-04: authenticated but wrong role -- e.g. a student typing
   // /instructor or /admin directly into the URL bar. Hiding the nav link is
   // not a security boundary; this check (not client-side UI) is what enforces
@@ -46,7 +60,7 @@ export async function middleware(req: NextRequest) {
   // existing JWT-session tradeoff -- but real, so don't assume "enforced here"
   // means "revoked instantly."
   const required = requiredRolesForPath(req.nextUrl.pathname)
-  if (required && !hasRequiredRole(token.roles as string[] | undefined, required)) {
+  if (required && !hasRequiredRole(roles, required)) {
     return NextResponse.redirect(new URL("/dashboard", publicOrigin(req)))
   }
 

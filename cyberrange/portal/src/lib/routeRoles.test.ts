@@ -1,4 +1,4 @@
-import { requiredRolesForPath, hasRequiredRole } from "./routeRoles"
+import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole } from "./routeRoles"
 
 describe("requiredRolesForPath", () => {
   it("requires admin only for /admin routes", () => {
@@ -41,5 +41,24 @@ describe("hasRequiredRole", () => {
 
   it("tolerates extra Keycloak-internal roles alongside the app roles", () => {
     expect(hasRequiredRole(["offline_access", "default-roles-cyber-range", "admin"], ["admin"])).toBe(true)
+  })
+})
+
+describe("hasAnyRecognizedRole", () => {
+  // Review finding (Leo, PR #83): requiredRolesForPath's null for unrestricted
+  // paths must not be confused with "any authenticated caller is fine" --
+  // this is the separate check for "has at least one of the three app roles
+  // at all", used to catch a role-less account on paths with no specific
+  // role requirement.
+  it("accepts any one of the three recognized app roles", () => {
+    expect(hasAnyRecognizedRole(["student"])).toBe(true)
+    expect(hasAnyRecognizedRole(["instructor"])).toBe(true)
+    expect(hasAnyRecognizedRole(["admin"])).toBe(true)
+  })
+
+  it("rejects an authenticated account with none of the three roles", () => {
+    expect(hasAnyRecognizedRole([])).toBe(false)
+    expect(hasAnyRecognizedRole(["offline_access", "default-roles-cyber-range"])).toBe(false)
+    expect(hasAnyRecognizedRole(undefined)).toBe(false)
   })
 })
