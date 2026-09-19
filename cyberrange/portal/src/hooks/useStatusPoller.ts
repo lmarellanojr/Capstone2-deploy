@@ -5,7 +5,9 @@ import { mapErrorToMessage, isAuthError } from '@/lib/errorHandler';
 const POLL_INTERVAL_MS = 2500; // 2.5 seconds
 const STUCK_DESTROY_WARNING_MS = 5 * 60 * 1000; // 5 minutes
 
-function httpStatus(err: unknown): number | undefined {
+// Exported for useAdminDestroyPoll.ts (ADM-UI review, PR #82) -- same
+// retryable-error rule, shared instead of a third copy drifting from this one.
+export function httpStatus(err: unknown): number | undefined {
   if (axios.isAxiosError(err)) return err.response?.status;
   if (typeof err === 'object' && err !== null && 'response' in err) {
     const status = (err as { response?: { status?: number } }).response?.status;
@@ -15,7 +17,7 @@ function httpStatus(err: unknown): number | undefined {
 }
 
 /** 5xx, timeout, and connection failures are retryable during MVP polling. */
-function isTransientPollError(err: unknown): boolean {
+export function isTransientPollError(err: unknown): boolean {
   const status = httpStatus(err);
   if (status !== undefined && status >= 500 && status < 600) return true;
   if (axios.isAxiosError(err)) {

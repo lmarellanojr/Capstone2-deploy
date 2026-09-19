@@ -11,6 +11,10 @@ const ROLE_BADGE: Record<string, "brand" | "info" | "default"> = {
   student: "default",
 };
 
+// No backend endpoint lists Keycloak users/roles yet (ADM-USER, not started),
+// so this page stays on fixture data with the agreed shape until that
+// contract lands. MockDataNotice is the only user-facing signal of that
+// (review finding: don't surface backlog IDs as user-facing copy).
 export default function AdminUsersPage() {
   return (
     <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
