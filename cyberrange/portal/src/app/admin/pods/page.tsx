@@ -76,7 +76,17 @@ export default function AdminPodsPage() {
         <div className="flex justify-center py-12">
           <LoadingSpinner message="Loading pods..." />
         </div>
-      ) : error ? null : pods.length === 0 ? (
+      ) : error ? null : pods.length === 0 && capacityError ? (
+        // apiProxy's offline fallback answers GET /pods with a 200 empty
+        // list when the provisioning API is unreachable (apiProxy.ts:53-55),
+        // so an outage looks identical to a genuinely empty range unless
+        // capacityError (which has no such fallback) is checked too (review
+        // finding).
+        <div className="card-surface p-10 text-center">
+          <p className="text-danger text-sm font-semibold">Pod list may be unavailable</p>
+          <p className="text-text-muted text-sm mt-1">The provisioning API could not be reached.</p>
+        </div>
+      ) : pods.length === 0 ? (
         <div className="card-surface p-10 text-center">
           <p className="text-text-muted text-sm">No live pods right now.</p>
         </div>
