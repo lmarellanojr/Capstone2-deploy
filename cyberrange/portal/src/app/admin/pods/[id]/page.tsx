@@ -33,19 +33,24 @@ export default function AdminPodDetailPage({ params }: PageProps) {
 
   useEffect(() => {
     if (!destroying) return;
+    // Don't clear destroying until refresh() has actually replaced the
+    // stale pod -- otherwise there's a window where pod.status is still the
+    // pre-destroy value, canForceDestroy(pod.status) re-enables Destroy, and
+    // a second force-destroy call would return 409 (review finding).
     if (destroyPoll.status === "DESTROYED") {
       success(`Pod ${podId} destroyed successfully`);
-      setDestroying(false);
-      void refresh();
+      void refresh().finally(() => setDestroying(false));
     } else if (destroyPoll.error) {
       showError(destroyPoll.error);
-      setDestroying(false);
-      void refresh();
+      void refresh().finally(() => setDestroying(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [destroyPoll.status, destroyPoll.error, destroying]);
 
-  const liveStatus = destroying && destroyPoll.status ? destroyPoll.status : pod?.status;
+  // Assume DESTROYING the instant it's confirmed (the backend sets it
+  // synchronously on accept) rather than waiting up to one poll interval for
+  // the first tick to confirm it (review finding).
+  const liveStatus = destroying ? destroyPoll.status ?? "DESTROYING" : pod?.status;
 
   return (
     <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>

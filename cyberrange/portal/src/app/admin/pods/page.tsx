@@ -32,14 +32,16 @@ export default function AdminPodsPage() {
 
   useEffect(() => {
     if (destroyingPodId === null) return;
+    // Don't clear destroyingPodId until refresh() has actually replaced the
+    // stale pod row -- otherwise there's a window where p.status is still
+    // the pre-destroy value, canForceDestroy(p.status) re-enables Destroy,
+    // and a second force-destroy call would return 409 (review finding).
     if (destroyPoll.status === "DESTROYED") {
       success(`Pod ${destroyingPodId} destroyed successfully`);
-      setDestroyingPodId(null);
-      void refresh();
+      void refresh().finally(() => setDestroyingPodId(null));
     } else if (destroyPoll.error) {
       showError(destroyPoll.error);
-      setDestroyingPodId(null);
-      void refresh();
+      void refresh().finally(() => setDestroyingPodId(null));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [destroyPoll.status, destroyPoll.error, destroyingPodId]);
@@ -95,7 +97,11 @@ export default function AdminPodsPage() {
               <tbody>
                 {pods.map((p) => {
                   const isBeingDestroyed = destroyingPodId === p.pod_id;
-                  const liveStatus = isBeingDestroyed && destroyPoll.status ? destroyPoll.status : p.status;
+                  // Assume DESTROYING the instant it's confirmed (the backend
+                  // sets it synchronously on accept) rather than waiting up to
+                  // one poll interval for the first tick to confirm it
+                  // (review finding).
+                  const liveStatus = isBeingDestroyed ? destroyPoll.status ?? "DESTROYING" : p.status;
                   return (
                     <tr key={p.pod_id} className="border-b border-border last:border-0 hover:bg-muted/20">
                       <td className="py-3 px-4 font-mono text-text-main">
