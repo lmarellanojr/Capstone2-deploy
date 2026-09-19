@@ -12,12 +12,31 @@ export { landingPathForRole } from "@/lib/routeRoles"
 // and comparing .origin catches all three forms; returns only the
 // path+search+hash, never the caller's raw string, so nothing external can
 // ever reach router.push even if a caller forgets to check the return value.
+//
+// Follow-up finding (Leo, PR #83): the FIRST resolve alone isn't enough.
+// Dot-segment normalization inside new URL() can itself produce a pathname
+// that starts with "//" even though the resolve was genuinely same-origin --
+// e.g. "/.//evil.example", "/x/..//evil.example", "/%2e//evil.example", and
+// a backslash-as-separator variant all normalize to pathname "//evil.example"
+// here. That string is safe as *part of* the already-parsed URL object, but
+// once handed to router.push (or re-embedded in the signIn callbackUrl) it
+// gets re-parsed on its own, and a bare "//host" is a protocol-relative
+// reference -- an origin bypass, verified against a real login page: an
+// authenticated instructor at /login?callbackUrl=/.//evil.example got
+// router.push("//evil.example") and left the site. Re-resolving the
+// candidate output against `origin` a second time and checking .origin
+// again catches this: a genuinely safe path resolves to the same origin
+// every time, but a string that's only safe as a sub-part of a larger URL
+// reveals its true (different) origin once parsed standalone.
 export function resolveSameOriginPath(value: string | null, origin: string): string | null {
   if (!value) return null
   try {
     const resolved = new URL(value, origin)
     if (resolved.origin !== origin) return null
-    return `${resolved.pathname}${resolved.search}${resolved.hash}`
+    const path = `${resolved.pathname}${resolved.search}${resolved.hash}`
+    const reResolved = new URL(path, origin)
+    if (reResolved.origin !== origin) return null
+    return path
   } catch {
     return null
   }
