@@ -182,6 +182,16 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error is a forbidden error (403) — authenticated but insufficient role.
+ */
+export function isForbiddenError(error: unknown): boolean {
+  if (axios.isAxiosError(error)) {
+    return error.response?.status === 403
+  }
+  return false
+}
+
+/**
  * Checks if an error is a server error (5xx).
  */
 export function isServerError(error: unknown): boolean {

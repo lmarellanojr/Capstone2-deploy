@@ -1,0 +1,245 @@
+{
+  "_meta": {
+    "purpose": "Sanitized ADM-POD-UI fixtures for Maricar (#33). Keys match FastAPI on main @ 9503917 / PR #50.",
+    "not_contract": [
+      "top-level count on GET /pods (offline proxyToApi fallback only)",
+      "mockCapacity.podsInUse / storageUsedGb",
+      "lowercase mock statuses",
+      "DELETE /pods/{id}/destroy as Admin path"
+    ]
+  },
+  "GET /pods": {
+    "admin_all_live_200": {
+      "request": { "method": "GET", "path": "/pods", "auth": "admin Bearer" },
+      "response": {
+        "status": 200,
+        "body": {
+          "pods": [
+            {
+              "id": 1,
+              "pod_id": 1,
+              "student_id": "student1",
+              "status": "ACTIVE",
+              "scenario_id": "01",
+              "vmid_kali": "pod-student1-kali",
+              "vmid_meta": "pod-student1-meta",
+              "vmid_dvwa": "pod-student1-dvwa",
+              "connection_id": null,
+              "wazuh_agent_id": null,
+              "created_at": "2026-09-16 12:00:00",
+              "last_heartbeat": null,
+              "ttl_hours": 4,
+              "remaining_seconds": 14000,
+              "expires_at": "2026-09-16T16:00:00+00:00",
+              "ttl_expired": false
+            },
+            {
+              "id": 2,
+              "pod_id": 2,
+              "student_id": "student2",
+              "status": "ACTIVE",
+              "scenario_id": "06",
+              "vmid_kali": "pod-student2-kali",
+              "vmid_meta": "pod-student2-meta",
+              "vmid_dvwa": "pod-student2-dvwa",
+              "connection_id": null,
+              "wazuh_agent_id": null,
+              "created_at": "2026-09-16 13:00:00",
+              "last_heartbeat": null,
+              "ttl_hours": 4,
+              "remaining_seconds": 14400,
+              "expires_at": "2026-09-16T17:00:00+00:00",
+              "ttl_expired": false
+            }
+          ]
+        }
+      },
+      "notes": "UI identity is pod_id. List may include SQLite PK id; status endpoint does not. No top-level count."
+    },
+    "admin_filter_student_id_200": {
+      "request": {
+        "method": "GET",
+        "path": "/pods",
+        "query": { "student_id": "student2" },
+        "auth": "admin Bearer"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "pods": [
+            {
+              "pod_id": 2,
+              "student_id": "student2",
+              "status": "ACTIVE",
+              "scenario_id": "06",
+              "vmid_kali": "pod-student2-kali"
+            }
+          ]
+        }
+      },
+      "notes": "Backend supports filter. Portal GET /api/pods does not forward query today."
+    },
+    "unauthenticated_401": {
+      "request": { "method": "GET", "path": "/pods", "auth": null },
+      "response": { "status": 401, "body": { "detail": "Not authenticated" } }
+    }
+  },
+  "GET /pods/{pod_id}/status": {
+    "admin_inspect_other_200": {
+      "request": { "method": "GET", "path": "/pods/1/status", "auth": "admin Bearer" },
+      "response": {
+        "status": 200,
+        "body": {
+          "pod_id": 1,
+          "student_id": "student1",
+          "status": "ACTIVE",
+          "scenario_id": "01",
+          "vmid_kali": "pod-student1-kali",
+          "vmid_meta": "pod-student1-meta",
+          "vmid_dvwa": "pod-student1-dvwa",
+          "connection_id": null,
+          "wazuh_agent_id": null,
+          "last_heartbeat": "2026-09-16 12:05:00",
+          "created_at": "2026-09-16 12:00:00",
+          "ttl_hours": 4,
+          "remaining_seconds": 14000,
+          "expires_at": "2026-09-16T16:00:00+00:00",
+          "ttl_expired": false
+        }
+      },
+      "notes": "PodResponse shape — no SQLite id field."
+    },
+    "non_owner_404": {
+      "request": { "method": "GET", "path": "/pods/1/status", "auth": "student Bearer (other)" },
+      "response": { "status": 404, "body": { "detail": "Pod not found" } }
+    },
+    "missing_404": {
+      "request": { "method": "GET", "path": "/pods/99/status", "auth": "admin Bearer" },
+      "response": { "status": 404, "body": { "detail": "Pod not found" } }
+    }
+  },
+  "GET /capacity": {
+    "anyone_200": {
+      "request": { "method": "GET", "path": "/capacity", "auth": null },
+      "response": {
+        "status": 200,
+        "body": {
+          "available_mb": 8192,
+          "active_pods": 2,
+          "max_pods": 8,
+          "pod_ram_mb": 3072,
+          "ram_buffer_mb": 1024,
+          "profile": "example",
+          "ram_required_mb": 4096,
+          "can_provision": true
+        }
+      },
+      "notes": "available_mb may be null if host meminfo unavailable. can_provision is a snapshot, not a guarantee."
+    }
+  },
+  "DELETE /admin/pods/{pod_id}/force-destroy": {
+    "admin_active_200": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/1/force-destroy",
+        "auth": "admin Bearer"
+      },
+      "response": {
+        "status": 200,
+        "body": { "status": "destroying", "pod_id": 1 }
+      },
+      "notes": "Accepted/scheduled only. Poll GET /pods/1/status until status === DESTROYED. Do not treat 404 as success."
+    },
+    "admin_failed_rollback_complete_200": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/3/force-destroy",
+        "auth": "admin Bearer"
+      },
+      "response": {
+        "status": 200,
+        "body": { "status": "destroying", "pod_id": 3 }
+      },
+      "notes": "CAS allows FAILED_ROLLBACK_COMPLETE; row is hidden from GET /pods live list."
+    },
+    "admin_provisioning_409": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/1/force-destroy",
+        "auth": "admin Bearer"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "detail": "Pod is PROVISIONING, cannot force-destroy from this state"
+        }
+      }
+    },
+    "admin_destroying_409": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/1/force-destroy",
+        "auth": "admin Bearer"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "detail": "Pod is DESTROYING, cannot force-destroy from this state"
+        }
+      },
+      "notes": "Reaper owns stuck DESTROYING retry after STUCK_POD_GRACE_MINUTES."
+    },
+    "admin_destroyed_409": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/1/force-destroy",
+        "auth": "admin Bearer"
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "detail": "Pod is DESTROYED, cannot force-destroy from this state"
+        }
+      }
+    },
+    "student_403": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/1/force-destroy",
+        "auth": "student Bearer"
+      },
+      "response": { "status": 403, "body": { "detail": "Insufficient privileges" } }
+    },
+    "instructor_403": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/1/force-destroy",
+        "auth": "instructor Bearer"
+      },
+      "response": { "status": 403, "body": { "detail": "Insufficient privileges" } }
+    },
+    "unauthenticated_401": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/1/force-destroy",
+        "auth": null
+      },
+      "response": { "status": 401, "body": { "detail": "Not authenticated" } }
+    },
+    "missing_404": {
+      "request": {
+        "method": "DELETE",
+        "path": "/admin/pods/99/force-destroy",
+        "auth": "admin Bearer"
+      },
+      "response": { "status": 404, "body": { "detail": "Pod not found" } }
+    }
+  },
+  "polling": {
+    "completion_signal": {
+      "path": "GET /pods/{pod_id}/status",
+      "complete_when": { "status": "DESTROYED" },
+      "not_completion": ["HTTP 404", "HTTP 5xx", "missing status field", "status DESTROYING"]
+    }
+  }
+}
