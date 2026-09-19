@@ -14,12 +14,18 @@ function LoginContent() {
   const [isLoading, setIsLoading] = useState(false);
   const explicitCallbackUrl = searchParams.get("callbackUrl");
   const error = searchParams.get("error");
+  // Computed every render (cheap, pure) so the effect below can depend on
+  // this primitive string instead of the whole session object -- next-auth
+  // gives session a new object identity on every refetch (e.g. window
+  // focus) even when the roles are unchanged, which would otherwise re-run
+  // the effect and call router.push again while /login is still mounted
+  // (review finding, traced not observed).
+  const landingPath = landingPathForRole(session?.user?.roles);
 
   useEffect(() => {
     if (status !== "authenticated" || error === "SessionExpired") return;
     // No-role check always wins, even over an explicit callbackUrl -- a
     // no-role account must never land in a portal (task's own "Done when").
-    const landingPath = landingPathForRole(session?.user?.roles);
     if (landingPath === null) {
       router.push("/no-role");
       return;
@@ -33,7 +39,12 @@ function LoginContent() {
         ? safeCallbackUrl
         : landingPath;
     router.push(target);
-  }, [status, router, explicitCallbackUrl, error, session]);
+    // session is intentionally not a dependency (see landingPath comment
+    // above); landingPath is derived from the same session?.user?.roles in
+    // this same render, so the session read inside this effect for
+    // shouldHonorCallbackUrl is always consistent with it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, router, explicitCallbackUrl, error, landingPath]);
 
   const handleSignIn = async () => {
     setIsLoading(true);
