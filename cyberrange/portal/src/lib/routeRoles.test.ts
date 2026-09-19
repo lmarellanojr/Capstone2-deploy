@@ -1,4 +1,4 @@
-import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole } from "./routeRoles"
+import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole, landingPathForRole } from "./routeRoles"
 
 describe("requiredRolesForPath", () => {
   it("requires admin only for /admin routes", () => {
@@ -60,5 +60,29 @@ describe("hasAnyRecognizedRole", () => {
     expect(hasAnyRecognizedRole([])).toBe(false)
     expect(hasAnyRecognizedRole(["offline_access", "default-roles-cyber-range"])).toBe(false)
     expect(hasAnyRecognizedRole(undefined)).toBe(false)
+  })
+})
+
+describe("landingPathForRole", () => {
+  it("maps each single role to its portal", () => {
+    expect(landingPathForRole(["admin"])).toBe("/admin")
+    expect(landingPathForRole(["instructor"])).toBe("/instructor")
+    expect(landingPathForRole(["student"])).toBe("/dashboard")
+  })
+
+  it("returns null for no recognized role", () => {
+    expect(landingPathForRole([])).toBeNull()
+    expect(landingPathForRole(["offline_access", "default-roles-cyber-range"])).toBeNull()
+    expect(landingPathForRole(undefined)).toBeNull()
+  })
+
+  // Review finding (Leo, PR #83): the earlier comment on this function
+  // claimed "not a priority order", which was wrong -- this documents the
+  // actual admin > instructor > student priority for the (currently
+  // team-enforced-only, not type-enforced) case of a multi-role account.
+  it("resolves a hypothetical multi-role account by admin > instructor > student priority", () => {
+    expect(landingPathForRole(["student", "admin"])).toBe("/admin")
+    expect(landingPathForRole(["student", "instructor"])).toBe("/instructor")
+    expect(landingPathForRole(["instructor", "admin"])).toBe("/admin")
   })
 })

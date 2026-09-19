@@ -1,5 +1,7 @@
 import { requiredRolesForPath, hasRequiredRole } from "@/lib/routeRoles"
 
+export { landingPathForRole } from "@/lib/routeRoles"
+
 // Review finding (Leo, PR #83): a raw callbackUrl string (e.g.
 // "https://evil.example", "//evil.example", "/\evil.example" -- the last two
 // are protocol-relative once the WHATWG URL parser normalizes backslashes to
@@ -19,17 +21,6 @@ export function resolveSameOriginPath(value: string | null, origin: string): str
   } catch {
     return null
   }
-}
-
-// AUTH-05: one role per account (confirmed by Lenie + Leonardo — no multi-role,
-// no self-signup), so this is a plain lookup, not a priority order. Returns
-// null when the account has none of the three app roles, which routes to
-// /no-role instead of any portal.
-export function landingPathForRole(roles: string[] | undefined): string | null {
-  if (roles?.includes("admin")) return "/admin"
-  if (roles?.includes("instructor")) return "/instructor"
-  if (roles?.includes("student")) return "/dashboard"
-  return null
 }
 
 // Review finding (Leo, PR #83): "/" and "/dashboard" are the generic default

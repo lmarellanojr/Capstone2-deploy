@@ -1,4 +1,4 @@
-import { landingPathForRole, shouldHonorCallbackUrl, resolveSameOriginPath } from "./loginRouting"
+import { shouldHonorCallbackUrl, resolveSameOriginPath } from "./loginRouting"
 
 const ORIGIN = "https://cyberrange.example"
 
@@ -26,20 +26,6 @@ describe("resolveSameOriginPath", () => {
   it("returns null for missing or empty input", () => {
     expect(resolveSameOriginPath(null, ORIGIN)).toBeNull()
     expect(resolveSameOriginPath("", ORIGIN)).toBeNull()
-  })
-})
-
-describe("landingPathForRole", () => {
-  it("maps each single role to its portal", () => {
-    expect(landingPathForRole(["admin"])).toBe("/admin")
-    expect(landingPathForRole(["instructor"])).toBe("/instructor")
-    expect(landingPathForRole(["student"])).toBe("/dashboard")
-  })
-
-  it("returns null for no recognized role", () => {
-    expect(landingPathForRole([])).toBeNull()
-    expect(landingPathForRole(["offline_access", "default-roles-cyber-range"])).toBeNull()
-    expect(landingPathForRole(undefined)).toBeNull()
   })
 })
 
