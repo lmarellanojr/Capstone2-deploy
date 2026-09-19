@@ -41,7 +41,11 @@ export default function AdminPodDetailPage({ params }: PageProps) {
       success(`Pod ${podId} destroyed successfully`);
       void refresh().finally(() => setDestroying(false));
     } else if (destroyPoll.error) {
-      showError(destroyPoll.error);
+      // 10s, not the 3s default -- "Verify manually" needs to actually be
+      // read, not vanish while the row is still settling back to normal
+      // (review finding; DestroyPodConfirmation already uses 4000 for its
+      // own errors).
+      showError(destroyPoll.error, 10000);
       void refresh().finally(() => setDestroying(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
