@@ -1,5 +1,9 @@
-import { evaluateReviewsResult, ReviewsResultInput } from "./useInstructorReviews"
-import { ReviewCase } from "@/lib/api"
+/**
+ * @jest-environment jsdom
+ */
+import { renderHook, act } from "@testing-library/react"
+import { evaluateReviewsResult, isLatestRequest, useInstructorReviews, ReviewsResultInput } from "./useInstructorReviews"
+import { instructor, ReviewCase } from "@/lib/api"
 
 const mockReviews: ReviewCase[] = [
   {
@@ -197,8 +201,97 @@ describe("useInstructorReviews race condition mitigation", () => {
     expect(currentState.reviews[0].review_id).toBe(2)
   })
 
+  it("exercises the real hook with deferred promises resolving out-of-order", async () => {
+    let resolveFirst: (value: { reviews: ReviewCase[] }) => void = () => {}
+    let resolveSecond: (value: { reviews: ReviewCase[] }) => void = () => {}
+
+    const firstPromise = new Promise<{ reviews: ReviewCase[] }>((res) => {
+      resolveFirst = res
+    })
+    const secondPromise = new Promise<{ reviews: ReviewCase[] }>((res) => {
+      resolveSecond = res
+    })
+
+    const listReviewsMock = jest.spyOn(instructor, "listReviews").mockImplementation((filter?: string) => {
+      if (!filter) {
+        return firstPromise
+      }
+      return secondPromise
+    })
+
+    const { result, rerender } = renderHook(
+      ({ filter }: { filter?: string }) => useInstructorReviews({ statusFilter: filter }),
+      { initialProps: { filter: undefined } }
+    )
+
+    expect(result.current.loading).toBe(true)
+
+    // Switch tab to PENDING
+    rerender({ filter: "PENDING" })
+    expect(result.current.loading).toBe(true)
+
+    const pendingReviews: ReviewCase[] = [
+      {
+        review_id: 202,
+        student_id: "student_pending",
+        scenario_id: 6,
+        milestone_id: 1,
+        case_type: "WRITTEN_REPORT",
+        report_text: "Pending report",
+        conflict_reason: null,
+        evidence_data: null,
+        score: null,
+        status: "PENDING",
+        feedback: null,
+        graded_by: null,
+        created_at: "2026-09-20T10:00:00Z",
+        updated_at: "2026-09-20T10:00:00Z",
+      },
+    ]
+
+    const allReviews: ReviewCase[] = [
+      ...pendingReviews,
+      {
+        review_id: 201,
+        student_id: "student_approved",
+        scenario_id: 6,
+        milestone_id: 1,
+        case_type: "WRITTEN_REPORT",
+        report_text: "Approved report",
+        conflict_reason: null,
+        evidence_data: null,
+        score: 100,
+        status: "APPROVED",
+        feedback: "Good",
+        graded_by: "inst1",
+        created_at: "2026-09-20T09:00:00Z",
+        updated_at: "2026-09-20T09:30:00Z",
+      },
+    ]
+
+    // Resolve request 2 (PENDING) first
+    await act(async () => {
+      resolveSecond({ reviews: pendingReviews })
+    })
+
+    expect(result.current.loading).toBe(false)
+    expect(result.current.reviews).toHaveLength(1)
+    expect(result.current.reviews[0].review_id).toBe(202)
+
+    // Resolve request 1 (ALL) AFTER request 2
+    await act(async () => {
+      resolveFirst({ reviews: allReviews })
+    })
+
+    // Hook state MUST NOT be overwritten by the stale first request
+    expect(result.current.loading).toBe(false)
+    expect(result.current.reviews).toHaveLength(1)
+    expect(result.current.reviews[0].review_id).toBe(202)
+
+    listReviewsMock.mockRestore()
+  })
+
   it("ensures error state is distinguishable from empty state to prevent dual rendering", () => {
-    const { evaluateReviewsResult } = require("./useInstructorReviews")
     const errorState = evaluateReviewsResult({
       success: false,
       error: { isAxiosError: true, response: { status: 500, data: { detail: "Internal Error" } } },
