@@ -11,35 +11,35 @@
 set -euo pipefail
 export PATH="/snap/bin:/usr/sbin:/usr/bin:/bin:/opt/keycloak/bin"
 
-REPO="${REPO:-$HOME/cyberrange}"
-ADMIN_ENV="${ADMIN_ENV:-$REPO/deploy/keycloak/admin.env}"
 TUNNEL_HOST="${1:-${TUNNEL_HOST:-}}"
 
 if [[ -z "$TUNNEL_HOST" ]]; then
   echo "Usage: $0 <TUNNEL_HOST>" >&2
   echo "  Example: $0 cyberrange.hanzi-super.pw" >&2
+  echo "  TUNNEL_HOST must be a hostname only (no scheme, path, port, or wildcards)." >&2
   exit 2
 fi
 
-# Strip scheme if someone pasted a full URL
+# Strip scheme/path if someone pasted a URL, then validate hostname-only.
 TUNNEL_HOST="${TUNNEL_HOST#https://}"
 TUNNEL_HOST="${TUNNEL_HOST#http://}"
 TUNNEL_HOST="${TUNNEL_HOST%%/*}"
+TUNNEL_HOST="${TUNNEL_HOST%%:*}"
 
-if [[ ! -f "$ADMIN_ENV" ]]; then
-  echo "missing $ADMIN_ENV" >&2
-  exit 1
+# Hostname labels: alnum/hyphen, dots between labels; no spaces or wildcards.
+if [[ ! "$TUNNEL_HOST" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]]; then
+  echo "invalid TUNNEL_HOST='$TUNNEL_HOST' (hostname only, e.g. cyberrange.hanzi-super.pw)" >&2
+  exit 2
 fi
 
-lxc file push "$ADMIN_ENV" guacamole/tmp/admin.env </dev/null
-lxc exec guacamole -- chmod 600 /tmp/admin.env
+# Use the guest admin.env that keycloak.service already loads (not a host copy that may drift).
+lxc exec guacamole -- test -f /etc/keycloak/admin.env
 
 lxc exec guacamole -- env TUNNEL_HOST="$TUNNEL_HOST" bash -s <<'INNER'
 set -euo pipefail
 set -a
-. /tmp/admin.env
+. /etc/keycloak/admin.env
 set +a
-rm -f /tmp/admin.env
 export PATH=/opt/keycloak/bin:$PATH
 
 kcadm.sh config credentials \
@@ -55,11 +55,12 @@ if [[ -z "$CID" || "$CID" == "id" ]]; then
   exit 1
 fi
 
-# Relative + absolute forms cover authAdminUrl with/without /auth in the path.
+# Absolute https URIs only (no relative /admin/... — Host can be anything via server_name _).
+# Keep both /auth/admin/... (browser URL) and /admin/... (SPA authServerUrl without /auth).
 kcadm.sh update "clients/$CID" -r master \
-  -s "redirectUris=[\"/admin/master/console/*\",\"https://${TUNNEL_HOST}/admin/master/console/*\",\"https://${TUNNEL_HOST}/auth/admin/master/console/*\"]" \
-  -s 'webOrigins=["+"]'
+  -s "redirectUris=[\"https://${TUNNEL_HOST}/auth/admin/master/console/*\",\"https://${TUNNEL_HOST}/admin/master/console/*\"]" \
+  -s "webOrigins=[\"https://${TUNNEL_HOST}\"]"
 
-echo "security-admin-console redirectUris updated for host: ${TUNNEL_HOST}"
+echo "security-admin-console redirectUris/webOrigins updated for host: ${TUNNEL_HOST}"
 kcadm.sh get "clients/$CID" -r master --fields clientId,redirectUris,webOrigins
 INNER

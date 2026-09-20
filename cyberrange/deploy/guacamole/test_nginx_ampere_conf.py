@@ -66,8 +66,19 @@ def test_keycloak_admin_api_without_auth_prefix():
     assert not re.search(r"location\s+/admin/\s*\{", CONF)
 
 
-def test_realms_without_auth_prefix():
-    assert re.search(r"location\s+/realms/\s*\{", CONF)
-    m = re.search(r"location\s+/realms/\s*\{(.*?)\n\s*\}", CONF, re.S)
-    assert m
-    assert "proxy_pass http://keycloak/auth/realms/;" in m.group(1)
+def test_realms_master_only_without_auth_prefix():
+    assert re.search(
+        r"location\s+~\s+\^/realms/master\(/\|\$\)\s*\{",
+        CONF,
+    ), "missing /realms/master-only location"
+    # Must not blanket-proxy all /realms/ (would expose cyber-range on a second prefix).
+    assert not re.search(r"location\s+/realms/\s*\{", CONF)
+    m = re.search(
+        r"location\s+~\s+\^/realms/master\(/\|\$\)\s*\{(.*?)\n\s*\}",
+        CONF,
+        re.S,
+    )
+    assert m, "could not parse /realms/master location"
+    body = m.group(1)
+    assert "rewrite ^/realms/(.*)$ /auth/realms/$1 break;" in body
+    assert "proxy_pass http://keycloak;" in body

@@ -132,20 +132,20 @@ lxc exec guacamole -- ss -ltn | grep ':80'
 
 ---
 
-## Issue 6: Keycloak Admin Console Loading / redirect_uri (OPS-01 / #84)
+## Issue 12: Keycloak Admin Console Loading / redirect_uri (OPS-01 / #84)
 
 **Symptom:** Admin UI stuck on “Loading…”, then `somethingWentWrong`, or
 `Invalid parameter: redirect_uri` at
 `https://<TUNNEL_HOST>/auth/admin/master/console/`.
 
 **Root cause:** Admin SPA emits `/resources/`, `/admin/serverinfo`, and
-`/realms/...` without the `/auth` prefix; nginx sent those to the portal. Login
-also used `redirect_uri=.../auth/admin/...` while `security-admin-console` only
-allowed `/admin/master/console/*`.
+`/realms/master/...` without the `/auth` prefix; nginx sent those to the portal.
+Login also used `redirect_uri=.../auth/admin/...` while `security-admin-console`
+only allowed `/admin/master/console/*`.
 
 **Fix (in kit):** `deploy/guacamole/nginx-ampere.conf` locations for
 `/resources/`, Keycloak-only `/admin/(serverinfo|realms|master)`, and
-`/realms/`. After pull:
+`/realms/master` only (not all `/realms/`). After pull:
 
 ```bash
 lxc file push ~/cyberrange/deploy/guacamole/nginx-ampere.conf \
