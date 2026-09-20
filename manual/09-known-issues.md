@@ -115,20 +115,46 @@ lxc exec guacamole -- ss -ltn | grep ':80'
 # Bad: 0.0.0.0:80  (inherited apt default site)
 ```
 
-The live vhost is **`sites-available/cyberrange`**, not `default`. Chapter 02
-already removes `sites-enabled/default`. Recopy the kit file and **restart**
-nginx (reload is not enough if :80 is already taken):
+The live vhost filename may be **`sites-available/guacamole`** or
+**`sites-available/cyberrange`** (Chapter 02 uses `cyberrange`; Ampere-1 proof
+host uses `guacamole`). Push to whichever file `sites-enabled` points at. Recopy
+the kit file and **restart** nginx if :80 is wrong (reload is enough when listen
+is already `10.115.77.12:80` only):
+
+```bash
+# Ampere-1 example (enabled link → sites-available/guacamole):
+lxc file push ~/cyberrange/deploy/guacamole/nginx-ampere.conf \
+  guacamole/etc/nginx/sites-available/guacamole
+lxc exec guacamole -- nginx -t
+lxc exec guacamole -- systemctl reload nginx
+lxc exec guacamole -- ss -ltn | grep ':80'
+```
+
+---
+
+## Issue 12: Keycloak Admin Console Loading / redirect_uri (OPS-01 / #84)
+
+**Symptom:** Admin UI stuck on “Loading…”, then `somethingWentWrong`, or
+`Invalid parameter: redirect_uri` at
+`https://<TUNNEL_HOST>/auth/admin/master/console/`.
+
+**Root cause:** Admin SPA emits `/resources/`, `/admin/serverinfo`, and
+`/realms/master/...` without the `/auth` prefix; nginx sent those to the portal.
+Login also used `redirect_uri=.../auth/admin/...` while `security-admin-console`
+only allowed `/admin/master/console/*`.
+
+**Fix (in kit):** `deploy/guacamole/nginx-ampere.conf` locations for
+`/resources/`, Keycloak-only `/admin/(serverinfo|realms|master)`, and
+`/realms/master` only (not all `/realms/`). After pull:
 
 ```bash
 lxc file push ~/cyberrange/deploy/guacamole/nginx-ampere.conf \
-  guacamole/etc/nginx/sites-available/cyberrange
-lxc exec guacamole -- ln -sf /etc/nginx/sites-available/cyberrange \
-  /etc/nginx/sites-enabled/cyberrange
-lxc exec guacamole -- rm -f /etc/nginx/sites-enabled/default
-lxc exec guacamole -- nginx -t
-lxc exec guacamole -- systemctl restart nginx
-lxc exec guacamole -- ss -ltn | grep ':80'
+  guacamole/etc/nginx/sites-available/guacamole   # or cyberrange — see Issue 5
+lxc exec guacamole -- nginx -t && lxc exec guacamole -- systemctl reload nginx
+bash ~/cyberrange/deploy/host/fix_keycloak_admin_console_redirects.sh <TUNNEL_HOST>
 ```
+
+Do **not** re-run `create_keycloak_realm.sh` for this.
 
 ---
 
