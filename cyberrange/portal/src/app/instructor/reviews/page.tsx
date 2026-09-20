@@ -6,6 +6,7 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, Button, LoadingSpinner } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
 import { useInstructorReviews } from "@/hooks/useInstructorReviews";
+import { formatScenarioName } from "@/lib/scenarioLabels";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   PENDING: "warning",
@@ -27,13 +28,6 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
-
-function formatScenarioName(scenarioId: number | string | null): string {
-  if (scenarioId === 6 || scenarioId === "6") {
-    return "Scenario 2: SSH Brute Force";
-  }
-  return `Scenario ${scenarioId ?? "-"}`;
-}
 
 function formatDate(dateStr?: string | null): string {
   if (!dateStr) return "-";

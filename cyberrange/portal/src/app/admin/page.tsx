@@ -5,7 +5,7 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { Badge, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
 import { useAdminPods } from "@/hooks/useAdminPods";
-import { mockServiceStatus, mockUsers } from "@/lib/mock/adminMock";
+import { mockServiceStatus } from "@/lib/mock/adminMock";
 
 const SERVICE_BADGE: Record<string, "success" | "warning" | "danger"> = {
   healthy: "success",
@@ -52,12 +52,11 @@ export default function AdminDashboardPage() {
           <LoadingSpinner message="Loading admin overview..." />
         </div>
       ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
           {[
             { label: "Active Pods", value: String(activePodsCount) },
             { label: "Pod Capacity", value: podCapacityStr },
             { label: "Host RAM", value: availableRamStr },
-            { label: "Users", value: String(mockUsers.length) },
           ].map((stat) => (
             <div key={stat.label} className="card-surface p-6 text-center">
               <p className="text-2xl sm:text-3xl font-bold text-text-main whitespace-nowrap">{stat.value}</p>
@@ -70,7 +69,12 @@ export default function AdminDashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 card-surface p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-text-main">Service Status</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-text-main">Service Status</h2>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-muted text-text-muted border border-border">
+                Fixture data
+              </span>
+            </div>
             <Link href="/admin/system" className="text-sm text-brand font-semibold hover:underline">
               View system health →
             </Link>

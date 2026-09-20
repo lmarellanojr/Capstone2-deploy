@@ -19,6 +19,7 @@ import { instructor, ReviewCase } from "@/lib/api";
 import { parseEvidenceData } from "@/lib/evidenceParser";
 import { mapErrorToMessage, isForbiddenError } from "@/lib/errorHandler";
 import { useToastContext } from "@/context/ToastContext";
+import { formatScenarioName } from "@/lib/scenarioLabels";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   PENDING: "warning",
@@ -30,13 +31,6 @@ const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = 
   rejected: "danger",
   retry: "info",
 };
-
-function formatScenarioName(scenarioId: number | string | null): string {
-  if (scenarioId === 6 || scenarioId === "6") {
-    return "Scenario 2: SSH Brute Force";
-  }
-  return `Scenario ${scenarioId ?? "-"}`;
-}
 
 function formatDate(dateStr?: string | null): string {
   if (!dateStr) return "-";
@@ -66,7 +60,7 @@ export default function ReviewDetailPage() {
 
   // Evaluation Form State
   const [feedback, setFeedback] = useState("");
-  const [score, setScore] = useState<number | string>(100);
+  const [score, setScore] = useState<number | string>("");
 
   // Confirmation Modal State
   const [confirmDecision, setConfirmDecision] = useState<"APPROVED" | "REJECTED" | "RETRY" | null>(null);
@@ -111,9 +105,16 @@ export default function ReviewDetailPage() {
     if (!reviewCase || !confirmDecision) return;
     setIsSubmitting(true);
     try {
-      const numericScore = confirmDecision === "APPROVED"
-        ? Number(score)
-        : score !== "" ? Number(score) : null;
+      let numericScore: number | null;
+      if (confirmDecision === "APPROVED") {
+        numericScore = Number(score);
+      } else if (confirmDecision === "REJECTED") {
+        // Send explicit score if instructor entered one, otherwise default to 0
+        numericScore = score !== "" ? Number(score) : 0;
+      } else {
+        // RETRY — backend clears score; null signals no grade assigned
+        numericScore = null;
+      }
 
       const res = await instructor.resolveReview(reviewCase.review_id, {
         status: confirmDecision,
