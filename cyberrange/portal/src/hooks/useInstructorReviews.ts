@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { instructor, ReviewCase } from '@/lib/api'
 import { mapErrorToMessage, isForbiddenError } from '@/lib/errorHandler'
 
@@ -46,6 +46,14 @@ export function evaluateReviewsResult(input: ReviewsResultInput): ReviewsState {
   }
 }
 
+/**
+ * Evaluates whether an async response matches the active request sequence counter.
+ * Out-of-order responses from stale tab filters return false.
+ */
+export function isLatestRequest(requestId: number, latestRequestId: number): boolean {
+  return requestId === latestRequestId
+}
+
 export function useInstructorReviews(options?: UseInstructorReviewsOptions) {
   const [reviews, setReviews] = useState<ReviewCase[]>([])
   const [loading, setLoading] = useState(true)
@@ -53,11 +61,14 @@ export function useInstructorReviews(options?: UseInstructorReviewsOptions) {
   const [forbidden, setForbidden] = useState(false)
 
   const statusFilter = options?.statusFilter
+  const requestIdRef = useRef(0)
 
   const fetchReviews = useCallback(async () => {
+    const currentRequestId = ++requestIdRef.current
     setLoading(true)
     try {
       const result = await instructor.listReviews(statusFilter)
+      if (!isLatestRequest(currentRequestId, requestIdRef.current)) return
       const evaluated = evaluateReviewsResult({
         success: true,
         reviews: result.reviews || [],
@@ -66,6 +77,7 @@ export function useInstructorReviews(options?: UseInstructorReviewsOptions) {
       setError(evaluated.error)
       setForbidden(evaluated.forbidden)
     } catch (err: unknown) {
+      if (!isLatestRequest(currentRequestId, requestIdRef.current)) return
       const evaluated = evaluateReviewsResult({
         success: false,
         error: err,
@@ -74,7 +86,9 @@ export function useInstructorReviews(options?: UseInstructorReviewsOptions) {
       setError(evaluated.error)
       setForbidden(evaluated.forbidden)
     } finally {
-      setLoading(false)
+      if (isLatestRequest(currentRequestId, requestIdRef.current)) {
+        setLoading(false)
+      }
     }
   }, [statusFilter])
 

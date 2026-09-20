@@ -20,6 +20,7 @@ import { parseEvidenceData } from "@/lib/evidenceParser";
 import { mapErrorToMessage, isForbiddenError } from "@/lib/errorHandler";
 import { useToastContext } from "@/context/ToastContext";
 import { formatScenarioName } from "@/lib/scenarioLabels";
+import { validateScore, resolveScorePayload } from "@/lib/scoreEvaluation";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   PENDING: "warning",
@@ -77,9 +78,14 @@ export default function ReviewDetailPage() {
       setError(null);
       setForbidden(false);
     } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
       if (isForbiddenError(err)) {
         setForbidden(true);
         setError(null);
+      } else if (status === 404) {
+        setReviewCase(null);
+        setError(null);
+        setForbidden(false);
       } else {
         setForbidden(false);
         setError(mapErrorToMessage(err).message);
@@ -94,8 +100,9 @@ export default function ReviewDetailPage() {
   }, [fetchReview]);
 
   const handleOpenConfirm = (decision: "APPROVED" | "REJECTED" | "RETRY") => {
-    if (decision === "APPROVED" && (score === "" || Number(score) < 0 || Number(score) > 100)) {
-      showToastError("Please provide a valid score between 0 and 100 for approval.");
+    const validation = validateScore(decision, score);
+    if (!validation.valid) {
+      showToastError(validation.error || "Invalid score entered.");
       return;
     }
     setConfirmDecision(decision);
@@ -105,16 +112,7 @@ export default function ReviewDetailPage() {
     if (!reviewCase || !confirmDecision) return;
     setIsSubmitting(true);
     try {
-      let numericScore: number | null;
-      if (confirmDecision === "APPROVED") {
-        numericScore = Number(score);
-      } else if (confirmDecision === "REJECTED") {
-        // Send explicit score if instructor entered one, otherwise default to 0
-        numericScore = score !== "" ? Number(score) : 0;
-      } else {
-        // RETRY — backend clears score; null signals no grade assigned
-        numericScore = null;
-      }
+      const { score: numericScore } = resolveScorePayload(confirmDecision, score);
 
       const res = await instructor.resolveReview(reviewCase.review_id, {
         status: confirmDecision,
@@ -126,7 +124,12 @@ export default function ReviewDetailPage() {
       setConfirmDecision(null);
       await fetchReview();
     } catch (err: unknown) {
-      showToastError(mapErrorToMessage(err).message);
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 404) {
+        showToastError("Review case or resolve endpoint not found.");
+      } else {
+        showToastError(mapErrorToMessage(err).message);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -281,6 +284,7 @@ export default function ReviewDetailPage() {
                     </label>
                     <input
                       type="number"
+                      step={1}
                       min={0}
                       max={100}
                       value={score}
@@ -373,6 +377,14 @@ export default function ReviewDetailPage() {
                   <span className="font-semibold">{reviewCase.student_id}</span> as:
                 </p>
 
+                {reviewCase.status.toUpperCase() !== "PENDING" && (
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
+                    <strong>Notice:</strong> This case is currently{" "}
+                    <span className="font-semibold">{reviewCase.status}</span>
+                    {reviewCase.graded_by ? ` (evaluated by ${reviewCase.graded_by})` : ""}. Saving will replace the previous evaluation.
+                  </div>
+                )}
+
                 <div className="p-4 rounded-lg bg-muted/40 border border-border space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-text-muted">Decision:</span>
@@ -383,7 +395,7 @@ export default function ReviewDetailPage() {
                   <div className="flex items-center justify-between">
                     <span className="text-text-muted">Assigned Score:</span>
                     <span className="font-semibold font-mono">
-                      {confirmDecision === "APPROVED" ? `${score} / 100` : score !== "" ? `${score} / 100` : "None"}
+                      {confirmDecision ? resolveScorePayload(confirmDecision, score).display : "None"}
                     </span>
                   </div>
                   {feedback.trim() && (

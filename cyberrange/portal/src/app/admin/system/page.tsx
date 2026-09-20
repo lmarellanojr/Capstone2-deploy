@@ -102,7 +102,12 @@ export default function AdminSystemPage() {
       )}
 
       <div className="card-surface p-6">
-        <h2 className="text-lg font-bold text-text-main mb-4">Service Status</h2>
+        <div className="flex items-center gap-2 mb-4">
+          <h2 className="text-lg font-bold text-text-main">Service Status</h2>
+          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-muted text-text-muted border border-border">
+            Fixture data
+          </span>
+        </div>
         <div className="space-y-3">
           {mockServiceStatus.map((svc) => (
             <div key={svc.name} className="flex items-center justify-between p-3 rounded-lg border border-border">
@@ -119,7 +124,7 @@ export default function AdminSystemPage() {
       <div className="card-surface p-6 mt-6">
         <h2 className="text-lg font-bold text-text-main mb-2">Audit & Telemetry Information</h2>
         <p className="text-sm text-text-muted">
-          Range host memory and pod allocations are updated dynamically from the provisioning capacity engine. Real service daemon health checks are tracked in P0-01.
+          Range host memory and pod allocations are updated dynamically from the provisioning capacity engine. Service status entries are fixture data; live daemon health checks are not wired yet (tracked in P0-01).
         </p>
       </div>
     </LayoutWrapper>

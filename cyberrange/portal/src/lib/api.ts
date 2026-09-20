@@ -319,7 +319,7 @@ export const instructor = {
   },
 
   getReview: async (reviewId: number | string): Promise<ReviewCase> => {
-    const response = await apiClient.get(`/instructor/reviews/${reviewId}`)
+    const response = await apiClient.get(`/instructor/reviews/${encodeURIComponent(String(reviewId))}`)
     return response.data
   },
 
@@ -331,12 +331,10 @@ export const instructor = {
       feedback?: string | null
     }
   ): Promise<{ status: string; review_id: number; decision: string }> => {
-    const response = await apiClient.post(`/instructor/reviews/${reviewId}/resolve`, data)
-    return response.data
-  },
-
-  listPods: async (): Promise<{ pods: InstructorPod[] }> => {
-    const response = await apiClient.get('/instructor/pods')
+    const response = await apiClient.post(
+      `/instructor/reviews/${encodeURIComponent(String(reviewId))}/resolve`,
+      data
+    )
     return response.data
   },
 }
