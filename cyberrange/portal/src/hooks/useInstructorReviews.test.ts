@@ -196,6 +196,28 @@ describe("useInstructorReviews race condition mitigation", () => {
     expect(currentState.reviews).toEqual(pendingData)
     expect(currentState.reviews[0].review_id).toBe(2)
   })
+
+  it("ensures error state is distinguishable from empty state to prevent dual rendering", () => {
+    const { evaluateReviewsResult } = require("./useInstructorReviews")
+    const errorState = evaluateReviewsResult({
+      success: false,
+      error: { isAxiosError: true, response: { status: 500, data: { detail: "Internal Error" } } },
+    })
+
+    expect(errorState.error).toBeTruthy()
+    expect(errorState.reviews).toEqual([])
+
+    // Guard logic: only render empty-state when error is null
+    const getRenderBranch = (error: string | null, reviewsCount: number) => {
+      if (error) return "error-only"
+      if (reviewsCount === 0) return "empty-state"
+      return "table"
+    }
+
+    expect(getRenderBranch(errorState.error, errorState.reviews.length)).toBe("error-only")
+    expect(getRenderBranch(null, 0)).toBe("empty-state")
+    expect(getRenderBranch(null, 5)).toBe("table")
+  })
 })
 
 

@@ -104,7 +104,7 @@ export default function InstructorReviewsPage() {
         <div className="flex justify-center py-16">
           <LoadingSpinner message="Loading review cases..." />
         </div>
-      ) : reviews.length === 0 ? (
+      ) : error ? null : reviews.length === 0 ? (
         <div className="card-surface p-12 text-center">
           <p className="text-text-main font-semibold mb-1">No review cases found</p>
           <p className="text-text-muted text-sm">

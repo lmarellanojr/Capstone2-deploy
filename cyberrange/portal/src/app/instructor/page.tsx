@@ -117,7 +117,7 @@ export default function InstructorDashboardPage() {
           <div className="flex justify-center py-8">
             <LoadingSpinner size="sm" message="Loading reviews..." />
           </div>
-        ) : reviews.length === 0 ? (
+        ) : reviewsError ? null : reviews.length === 0 ? (
           <div className="p-8 text-center text-text-muted text-sm">
             No reviews in queue.
           </div>
