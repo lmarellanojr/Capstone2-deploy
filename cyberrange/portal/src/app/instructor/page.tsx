@@ -49,7 +49,7 @@ export default function InstructorDashboardPage() {
     loading: reviewsLoading,
     error: reviewsError,
     forbidden: reviewsForbidden,
-  } = useInstructorReviews();
+  } = useInstructorReviews({ statusFilter: "PENDING" });
 
   if (studentsForbidden || reviewsForbidden) {
     return (
@@ -61,9 +61,11 @@ export default function InstructorDashboardPage() {
 
   const studentCount = students.length;
   const activePods = students.filter((s) => s.active_pod).length;
-  const pendingReviewsCount = reviews.length > 0
-    ? reviews.filter((r) => r.status.toUpperCase() === "PENDING").length
-    : students.reduce((sum, s) => sum + s.pending_review_count, 0);
+  const pendingReviewsStr = reviewsError
+    ? "-"
+    : reviewsLoading
+    ? "-"
+    : String(reviews.length);
 
   return (
     <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor" hideSearch>
@@ -88,7 +90,7 @@ export default function InstructorDashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
           {[
             { label: "Students", value: String(studentCount) },
-            { label: "Pending Reviews", value: String(pendingReviewsCount) },
+            { label: "Pending Reviews", value: pendingReviewsStr },
             { label: "Active Pods", value: String(activePods) },
           ].map((stat) => (
             <div key={stat.label} className="card-surface p-6 text-center">
