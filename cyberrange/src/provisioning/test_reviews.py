@@ -874,3 +874,781 @@ def test_instructor_rbac_forbidden_for_student():
 
     res_detail = client.get("/instructor/reviews/1", headers=headers)
     assert res_detail.status_code == 403
+
+
+def admin_claims(username="admin1"):
+    return {
+        "preferred_username": username,
+        "realm_access": {"roles": ["admin"]}
+    }
+
+
+# ============================================================================
+# INST-03: Approve / Reject / Retry Workflow Tests
+# ============================================================================
+
+def test_resolve_review_approve_default_score():
+    client = TestClient(app)
+    # Student submits review
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_appr1")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "milestone_id": 1, "report_text": "Initial report"},
+    )
+    assert res_sub.status_code == 200
+    rev_id = res_sub.json()["review_id"]
+
+    # Instructor resolves with APPROVED without score (defaults to 100)
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "feedback": "Well written exploit analysis."},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+    data = res_res.json()
+    assert data["status"] == "resolved"
+    assert data["review_id"] == rev_id
+    assert data["decision"] == "APPROVED"
+
+    # Verify persisted details
+    res_detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers)
+    assert res_detail.status_code == 200
+    detail = res_detail.json()
+    assert detail["status"] == "APPROVED"
+    assert detail["score"] == 100
+    assert detail["feedback"] == "Well written exploit analysis."
+    assert detail["graded_by"] == "instructor_prof"
+    assert detail["updated_at"] is not None
+
+
+def test_resolve_review_approve_custom_score():
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_appr2")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 6, "milestone_id": 2, "report_text": "DVWA report"},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    # Instructor resolves with APPROVED and explicit score 85
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "score": 85, "feedback": "Minor omission in step 2"},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+    assert res_res.json()["decision"] == "APPROVED"
+
+    res_detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers)
+    detail = res_detail.json()
+    assert detail["status"] == "APPROVED"
+    assert detail["score"] == 85
+    assert detail["feedback"] == "Minor omission in step 2"
+
+
+def test_resolve_review_reject_default_score():
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_rej1")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "report_text": "Failed attempt report"},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    # Instructor resolves with REJECTED without score (defaults to 0)
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "REJECTED", "feedback": "Payload did not bypass defense."},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+    assert res_res.json()["decision"] == "REJECTED"
+
+    res_detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers)
+    detail = res_detail.json()
+    assert detail["status"] == "REJECTED"
+    assert detail["score"] == 0
+    assert detail["feedback"] == "Payload did not bypass defense."
+
+
+def test_resolve_review_reject_custom_score():
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_rej2")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "report_text": "Incomplete report"},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    # Instructor resolves with REJECTED with explicit score (e.g. 15 for effort)
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "REJECTED", "score": 15, "feedback": "Effort recognized, but criteria missed."},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+    detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers).json()
+    assert detail["status"] == "REJECTED"
+    assert detail["score"] == 15
+
+
+def test_resolve_review_retry_nullable_score():
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_retry1")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 6, "report_text": "Draft report"},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    # Instructor marks for RETRY without score (score stays None)
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "RETRY", "feedback": "Please attach raw terminal output and retry."},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+    assert res_res.json()["decision"] == "RETRY"
+
+    detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers).json()
+    assert detail["status"] == "RETRY"
+    assert detail["score"] is None
+    assert detail["feedback"] == "Please attach raw terminal output and retry."
+
+
+def test_resolve_review_retry_partial_score():
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_retry2")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "report_text": "Draft report"},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    # Instructor marks for RETRY with partial score (50)
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "RETRY", "score": 50, "feedback": "Milestone 1 good, please redo Milestone 2."},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+    detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers).json()
+    assert detail["status"] == "RETRY"
+    assert detail["score"] == 50
+
+
+def test_admin_can_resolve_review():
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_admin_test")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "report_text": "Test report for admin resolution"},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    # Admin resolves
+    app.dependency_overrides[verify_token] = lambda: admin_claims("admin_super")
+    headers = {"Authorization": "Bearer mock_token"}
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "score": 95, "feedback": "Approved by superadmin"},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+    assert res_res.json()["decision"] == "APPROVED"
+    detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers).json()
+    assert detail["graded_by"] == "admin_super"
+    assert detail["score"] == 95
+
+
+def test_re_resolve_review():
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_reresolve")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "report_text": "Initial submission"},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # First resolution: RETRY
+    client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "RETRY", "feedback": "Need revision"},
+        headers=headers,
+    )
+    # Second resolution: APPROVED
+    res2 = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "score": 100, "feedback": "Oral defense passed, approving directly."},
+        headers=headers,
+    )
+    assert res2.status_code == 200
+    detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers).json()
+    assert detail["status"] == "APPROVED"
+    assert detail["score"] == 100
+
+
+def test_full_approve_reject_retry_workflow_cycle():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # 1. Student submits review case
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_cycle")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 6, "milestone_id": 1, "report_text": "First attempt at SQLi report"},
+    )
+    assert res_sub.status_code == 200
+    rev_id = res_sub.json()["review_id"]
+
+    # 2. Instructor inspects and returns for RETRY
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_lead")
+    res_retry = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "RETRY", "feedback": "Clarify which SQL comment token was used."},
+        headers=headers,
+    )
+    assert res_retry.status_code == 200
+
+    # 3. Student views their review and reads feedback
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_cycle")
+    res_std_view = client.get(f"/reviews/{rev_id}", headers=headers)
+    assert res_std_view.status_code == 200
+    view_data = res_std_view.json()
+    assert view_data["status"] == "RETRY"
+    assert view_data["feedback"] == "Clarify which SQL comment token was used."
+
+    # 4. Student resubmits revised report
+    res_resub = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={
+            "report_text": "Updated SQLi report: Used '#' character to comment out the rest of the query.",
+            "evidence_data": {"token": "#", "payload": "' OR 1=1 #"},
+        },
+        headers=headers,
+    )
+    assert res_resub.status_code == 200
+    assert res_resub.json()["status"] == "resubmitted"
+
+    # 5. Review is back in PENDING with NULL score
+    res_post_resub = client.get(f"/reviews/{rev_id}", headers=headers)
+    post_data = res_post_resub.json()
+    assert post_data["status"] == "PENDING"
+    assert post_data["score"] is None
+    assert "Updated SQLi report" in post_data["report_text"]
+
+    # 6. Instructor sees it in pending queue
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_lead")
+    queue_res = client.get("/instructor/reviews?status_filter=PENDING", headers=headers)
+    assert queue_res.status_code == 200
+    pending_ids = [r["review_id"] for r in queue_res.json()["reviews"]]
+    assert rev_id in pending_ids
+
+    # 7. Instructor evaluates revised report and resolves with APPROVED 100
+    res_final = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "score": 100, "feedback": "Excellent explanation and payload."},
+        headers=headers,
+    )
+    assert res_final.status_code == 200
+    assert res_final.json()["decision"] == "APPROVED"
+
+    final_detail = client.get(f"/instructor/reviews/{rev_id}", headers=headers).json()
+    assert final_detail["status"] == "APPROVED"
+    assert final_detail["score"] == 100
+
+
+def test_student_resubmit_with_json_evidence():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_json_test")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "report_text": "Draft with text"},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    # Mark RETRY
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    client.post(f"/instructor/reviews/{rev_id}/resolve", json={"status": "RETRY"}, headers=headers)
+
+    # Resubmit with nested dictionary and list in evidence_data
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_json_test")
+    res_resub = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={
+            "report_text": "Updated report with JSON evidence",
+            "evidence_data": {
+                "scan": {"target": "10.0.0.1", "ports": [80, 443, 8080]},
+                "banner": "Apache/2.4.41",
+            },
+        },
+        headers=headers,
+    )
+    assert res_resub.status_code == 200
+
+    detail = client.get(f"/reviews/{rev_id}", headers=headers).json()
+    assert "ports" in detail["evidence_data"]
+    assert "8080" in detail["evidence_data"]
+
+
+def test_resolve_review_forbidden_for_student():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+    # Student cannot resolve reviews
+    app.dependency_overrides[verify_token] = lambda: student_claims("student1")
+    res = client.post(
+        "/instructor/reviews/1/resolve",
+        json={"status": "APPROVED"},
+        headers=headers,
+    )
+    assert res.status_code == 403
+    assert "Forbidden" in res.json()["detail"]
+
+
+def test_resolve_review_unauthenticated():
+    client = TestClient(app)
+    app.dependency_overrides.pop(verify_token, None)
+    res = client.post("/instructor/reviews/1/resolve", json={"status": "APPROVED"})
+    assert res.status_code == 401
+
+
+def test_resolve_review_unrelated_client_role_forbidden():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+    app.dependency_overrides[verify_token] = lambda: {
+        "preferred_username": "other_client_user",
+        "realm_access": {"roles": ["student"]},
+        "resource_access": {"unrelated-client": {"roles": ["instructor"]}},
+    }
+    res = client.post("/instructor/reviews/1/resolve", json={"status": "APPROVED"}, headers=headers)
+    assert res.status_code == 403
+
+
+def test_resolve_review_missing_identity_fails():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+    # Token has instructor role but preferred_username is missing
+    app.dependency_overrides[verify_token] = lambda: {
+        "realm_access": {"roles": ["instructor"]}
+    }
+    res = client.post("/instructor/reviews/1/resolve", json={"status": "APPROVED"}, headers=headers)
+    assert res.status_code == 401
+    assert "Identity required" in res.json()["detail"]
+
+
+def test_student_resubmit_unauthenticated():
+    client = TestClient(app)
+    app.dependency_overrides.pop(verify_token, None)
+    res = client.post("/reviews/1/resubmit", json={"report_text": "New text"})
+    assert res.status_code == 401
+
+
+def test_student_get_review_unauthenticated():
+    client = TestClient(app)
+    app.dependency_overrides.pop(verify_token, None)
+    res = client.get("/reviews/1")
+    assert res.status_code == 401
+
+
+def test_student_resubmit_ownership_precedes_status_check():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # Student A creates a review that is still PENDING
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_alice")
+    res = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Alice report"})
+    rev_id = res.json()["review_id"]
+
+    # Student B attempts to resubmit Alice's review (which is PENDING)
+    # Ownership check MUST precede status check so Student B gets 404, not 400
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_bob")
+    res_b = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "Bob intrusion attempt"},
+        headers=headers,
+    )
+    assert res_b.status_code == 404
+    assert "Review case not found" in res_b.json()["detail"]
+
+
+def test_student_resubmit_forbidden_for_different_student():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # Student A has a review in RETRY status
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_alice")
+    res = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Alice report"})
+    rev_id = res.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    client.post(f"/instructor/reviews/{rev_id}/resolve", json={"status": "RETRY"}, headers=headers)
+
+    # Student B tries to resubmit Alice's RETRY case
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_bob")
+    res_b = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "Bob hijack"},
+        headers=headers,
+    )
+    assert res_b.status_code == 404
+    assert "Review case not found" in res_b.json()["detail"]
+
+
+def test_student_get_review_isolation():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # Student A creates review
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_alice")
+    res = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Alice report"})
+    rev_id = res.json()["review_id"]
+
+    # Student B attempts to view Alice's review -> 404
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_bob")
+    res_bob = client.get(f"/reviews/{rev_id}", headers=headers)
+    assert res_bob.status_code == 404
+
+    # Student A can view
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_alice")
+    res_alice = client.get(f"/reviews/{rev_id}", headers=headers)
+    assert res_alice.status_code == 200
+    assert res_alice.json()["student_id"] == "student_alice"
+
+    # Staff (Instructor and Admin) can view
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    res_inst = client.get(f"/reviews/{rev_id}", headers=headers)
+    assert res_inst.status_code == 200
+
+    app.dependency_overrides[verify_token] = lambda: admin_claims("admin_super")
+    res_adm = client.get(f"/reviews/{rev_id}", headers=headers)
+    assert res_adm.status_code == 200
+
+
+def test_resolve_review_not_found():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    res = client.post(
+        "/instructor/reviews/999999/resolve",
+        json={"status": "APPROVED"},
+        headers=headers,
+    )
+    assert res.status_code == 404
+    assert "Review case not found" in res.json()["detail"]
+
+
+def test_resolve_review_invalid_status():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_val")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Val text"})
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    # PENDING is not an allowed resolution decision
+    res_pending = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "PENDING"},
+        headers=headers,
+    )
+    assert res_pending.status_code == 400
+    assert "Invalid status" in res_pending.json()["detail"]
+
+    # Arbitrary bogus status
+    res_bogus = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "BOGUS_STATUS"},
+        headers=headers,
+    )
+    assert res_bogus.status_code == 400
+    assert "Invalid status" in res_bogus.json()["detail"]
+
+
+def test_resolve_review_score_out_of_bounds():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_val2")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Val text"})
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+
+    # Score < 0
+    res_neg = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "score": -5},
+        headers=headers,
+    )
+    assert res_neg.status_code == 400
+    assert "score must be between 0 and 100" in res_neg.json()["detail"]
+
+    # Score > 100
+    res_over = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "score": 105},
+        headers=headers,
+    )
+    assert res_over.status_code == 400
+    assert "score must be between 0 and 100" in res_over.json()["detail"]
+
+
+def test_resolve_review_feedback_too_long():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_val3")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Val text"})
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    huge_feedback = "X" * 5001
+    res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "feedback": huge_feedback},
+        headers=headers,
+    )
+    assert res.status_code == 400
+    assert "feedback exceeds maximum length" in res.json()["detail"]
+
+
+def test_student_resubmit_non_retry_case_fails():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # Resubmitting case that is currently PENDING
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_pending_resub")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Initial"})
+    rev_id = res_sub.json()["review_id"]
+
+    res = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "Premature resubmit"},
+        headers=headers,
+    )
+    assert res.status_code == 400
+    assert "Only reviews in RETRY status can be resubmitted" in res.json()["detail"]
+
+    # Resubmitting case that is currently APPROVED
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    client.post(f"/instructor/reviews/{rev_id}/resolve", json={"status": "APPROVED"}, headers=headers)
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_pending_resub")
+    res_appr = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "Post-approval resubmit"},
+        headers=headers,
+    )
+    assert res_appr.status_code == 400
+    assert "Only reviews in RETRY status can be resubmitted" in res_appr.json()["detail"]
+
+
+def test_student_resubmit_empty_payload_fails():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_empty_resub")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Initial"})
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    client.post(f"/instructor/reviews/{rev_id}/resolve", json={"status": "RETRY"}, headers=headers)
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_empty_resub")
+    # Empty JSON object
+    res_empty = client.post(f"/reviews/{rev_id}/resubmit", json={}, headers=headers)
+    assert res_empty.status_code == 400
+    assert "At least one updated field" in res_empty.json()["detail"]
+
+    # Whitespace only
+    res_ws = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "   ", "conflict_reason": "  "},
+        headers=headers,
+    )
+    assert res_ws.status_code == 400
+    assert "At least one updated field" in res_ws.json()["detail"]
+
+
+def test_student_resubmit_oversized_evidence_fails():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_huge_ev")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Initial"})
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    client.post(f"/instructor/reviews/{rev_id}/resolve", json={"status": "RETRY"}, headers=headers)
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_huge_ev")
+    huge_evidence = "A" * 70000
+    res = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"evidence_data": huge_evidence},
+        headers=headers,
+    )
+    assert res.status_code == 400
+    assert "evidence_data exceeds maximum length" in res.json()["detail"]
+
+
+def test_instructor_reviews_status_filter_invalid():
+    # Resolves GAP-10: invalid status filter returns 400
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+
+    res = client.get("/instructor/reviews?status_filter=INVALID_ENUM_XYZ", headers=headers)
+    assert res.status_code == 400
+    assert "Invalid status_filter" in res.json()["detail"]
+
+
+def test_instructor_reviews_status_filter_valid():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+    conn = db.get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO review_cases (student_id, scenario_id, status) "
+            "VALUES ('std_p', 1, 'PENDING'), ('std_a', 1, 'APPROVED'), ('std_r', 1, 'RETRY')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+
+    # Filter PENDING
+    res_p = client.get("/instructor/reviews?status_filter=PENDING", headers=headers)
+    assert res_p.status_code == 200
+    assert all(r["status"] == "PENDING" for r in res_p.json()["reviews"])
+
+    # Filter APPROVED
+    res_a = client.get("/instructor/reviews?status_filter=approved", headers=headers)
+    assert res_a.status_code == 200
+    assert all(r["status"] == "APPROVED" for r in res_a.json()["reviews"])
+
+    # Filter RETRY
+    res_r = client.get("/instructor/reviews?status_filter=RETRY", headers=headers)
+    assert res_r.status_code == 200
+    assert all(r["status"] == "RETRY" for r in res_r.json()["reviews"])
+
+    # Filter ALL
+    res_all = client.get("/instructor/reviews?status_filter=ALL", headers=headers)
+    assert res_all.status_code == 200
+    statuses = {r["status"] for r in res_all.json()["reviews"]}
+    assert "PENDING" in statuses
+    assert "APPROVED" in statuses
+
+
+def test_resolve_review_transaction_rollback():
+    # Verify atomicity on unhandled DB error during resolution
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_rollback")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Before error"})
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+
+    # Simulate database lock or constraint error by temporarily creating a trigger that fails on UPDATE
+    conn = db.get_db_connection()
+    try:
+        conn.execute("""
+            CREATE TRIGGER fail_update BEFORE UPDATE ON review_cases
+            BEGIN
+                SELECT RAISE(FAIL, 'simulated constraint failure');
+            END;
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+    try:
+        # Call resolve; should encounter SQLite error and raise 500 / rollback
+        with pytest.raises(Exception):
+            client.post(
+                f"/instructor/reviews/{rev_id}/resolve",
+                json={"status": "APPROVED", "score": 100},
+                headers=headers,
+            )
+
+        # Confirm review remained PENDING and score remained NULL
+        conn = db.get_db_connection()
+        try:
+            row = conn.execute("SELECT status, score FROM review_cases WHERE review_id=?", (rev_id,)).fetchone()
+            assert row["status"] == "PENDING"
+            assert row["score"] is None
+        finally:
+            conn.close()
+    finally:
+        # Clean up trigger
+        conn = db.get_db_connection()
+        conn.execute("DROP TRIGGER IF EXISTS fail_update")
+        conn.commit()
+        conn.close()
+
+
+def test_resolve_and_resubmit_audit_logging():
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # 1. Student submits
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_audit")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Audit test report"})
+    rev_id = res_sub.json()["review_id"]
+
+    # 2. Instructor marks RETRY
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_auditor")
+    client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "RETRY", "feedback": "Audit feedback"},
+        headers=headers,
+    )
+
+    # 3. Student resubmits
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_audit")
+    client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "Resubmitted text for audit"},
+        headers=headers,
+    )
+
+    # Verify audit_log table
+    conn = db.get_db_connection()
+    try:
+        events = conn.execute(
+            "SELECT event_type, student_id, detail FROM audit_log WHERE student_id='student_audit' ORDER BY id"
+        ).fetchall()
+        event_names = [e["event_type"] for e in events]
+        assert "REVIEW_CASE_RESOLVED" in event_names
+        assert "REVIEW_CASE_RESUBMITTED" in event_names
+
+        resolve_event = next(e for e in events if e["event_type"] == "REVIEW_CASE_RESOLVED")
+        assert f"review_id={rev_id}" in resolve_event["detail"]
+        assert "instructor_auditor" in resolve_event["detail"]
+
+        resubmit_event = next(e for e in events if e["event_type"] == "REVIEW_CASE_RESUBMITTED")
+        assert f"review_id={rev_id}" in resubmit_event["detail"]
+    finally:
+        conn.close()
+
