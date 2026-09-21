@@ -125,6 +125,17 @@ def validate_capacity_config(max_pods: int, meminfo: Optional[str] = None) -> No
         )
 
 
+ACTIVE_PODS_SQL = (
+    "SELECT COUNT(*) FROM pods WHERE status NOT IN "
+    "('DESTROYED', 'FAILED_ROLLBACK_COMPLETE')"
+)
+
+
+def count_active_pods(conn) -> int:
+    """Host-wide live pod count used by /capacity and /admin/infra-health."""
+    return int(conn.execute(ACTIVE_PODS_SQL).fetchone()[0])
+
+
 def build_capacity_payload(
     active_pods: int,
     avail_mb: Optional[int],

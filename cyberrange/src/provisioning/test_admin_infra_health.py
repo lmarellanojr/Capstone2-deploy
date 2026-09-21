@@ -208,13 +208,54 @@ def test_health_liveness_unchanged_and_does_not_call_lxd(monkeypatch):
         called["n"] += 1
         raise AssertionError("GET /health must not probe LXD")
 
-    monkeypatch.setattr(ih, "probe_lxd_free_mb", _nope)
+    # Patch the real I/O entrypoint — /health never imports infra_health.
+    monkeypatch.setattr("provision.get_lxd_free_mb", _nope)
     app.dependency_overrides.clear()
     client = TestClient(app)
     res = client.get("/health")
     assert res.status_code == 200
     assert res.json() == {"status": "ok"}
     assert called["n"] == 0
+
+
+def test_probe_lxd_caps_in_flight_at_one(monkeypatch):
+    """A hung LXD probe must not stack a second worker on the next request."""
+    import threading
+    import time
+
+    started = threading.Event()
+    release = threading.Event()
+    calls = {"n": 0}
+
+    def _blocking():
+        calls["n"] += 1
+        started.set()
+        release.wait(timeout=5)
+        return 20000.0
+
+    monkeypatch.setattr("provision.get_lxd_free_mb", _blocking)
+    with ih._lxd_lock:
+        ih._lxd_inflight = None
+
+    free1, timed1 = ih.probe_lxd_free_mb(timeout_s=0.15)
+    assert timed1 is True
+    assert free1 is None
+    assert started.wait(1.0)
+
+    free2, timed2 = ih.probe_lxd_free_mb(timeout_s=0.15)
+    assert timed2 is True
+    assert free2 is None
+    assert calls["n"] == 1
+
+    release.set()
+    # Let the hung worker finish so later tests start clean.
+    deadline = time.time() + 2.0
+    while ih._lxd_inflight is not None and not ih._lxd_inflight.done():
+        if time.time() > deadline:
+            break
+        time.sleep(0.05)
+    with ih._lxd_lock:
+        ih._lxd_inflight = None
 
 
 def test_capacity_still_unauthenticated_after_infra_health():

@@ -13,6 +13,7 @@ import alerts_endpoint as ae
 from capacity import (
     available_ram_mb,
     build_capacity_payload,
+    count_active_pods,
     validate_capacity_config,
 )
 from config import API_BIND_HOST, API_BIND_PORT, MAX_PODS, POD_TTL_HOURS, REAP_INTERVAL_SECONDS, SCORE_POLL_INTERVAL_SECONDS, PROFILE_NAME
@@ -112,9 +113,7 @@ def health():
 @app.get("/capacity")
 def capacity_status():
     conn = get_db_connection()
-    active = conn.execute(
-        "SELECT COUNT(*) FROM pods WHERE status NOT IN ('DESTROYED', 'FAILED_ROLLBACK_COMPLETE')"
-    ).fetchone()[0]
+    active = count_active_pods(conn)
     conn.close()
     avail = available_ram_mb()
     return build_capacity_payload(active, avail, MAX_PODS, PROFILE_NAME)

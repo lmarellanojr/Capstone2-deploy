@@ -1,19 +1,19 @@
 "use client";
 
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, LoadingSpinner } from "@/components/ui";
+import { Badge, Button, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
-import { useAdminPods } from "@/hooks/useAdminPods";
 import { useAdminInfraHealth } from "@/hooks/useAdminInfraHealth";
-import { badgeVariantForStatus } from "@/lib/infraHealth";
+import { badgeVariantForStatus, formatCheckedAt } from "@/lib/infraHealth";
 
 export default function AdminSystemPage() {
-  const { capacity, loading, capacityError } = useAdminPods();
-  const { data: infra, loading: infraLoading, error: infraError } = useAdminInfraHealth();
+  const { data: infra, loading, error, refresh, checkedAt } = useAdminInfraHealth();
+  const capacity = infra?.capacity ?? null;
 
-  const podPct = capacity && capacity.max_pods > 0
-    ? Math.min(100, Math.round((capacity.active_pods / capacity.max_pods) * 100))
-    : 0;
+  const podPct =
+    capacity && capacity.max_pods > 0
+      ? Math.min(100, Math.round((capacity.active_pods / capacity.max_pods) * 100))
+      : 0;
 
   return (
     <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
@@ -24,27 +24,19 @@ export default function AdminSystemPage() {
         </div>
       </div>
 
-      {capacityError && (
-        <div className="mb-6 p-4 alert-error rounded-lg">
-          <p className="text-sm font-semibold">Capacity Telemetry Unavailable</p>
-          <p className="text-xs mt-0.5">{capacityError}</p>
-        </div>
-      )}
-
-      {infraError && (
+      {error && (
         <div className="mb-6 p-4 alert-error rounded-lg">
           <p className="text-sm font-semibold">Service Health Unavailable</p>
-          <p className="text-xs mt-0.5">{infraError}</p>
+          <p className="text-xs mt-0.5">{error}</p>
         </div>
       )}
 
-      {loading ? (
+      {loading && !infra ? (
         <div className="flex justify-center py-12">
           <LoadingSpinner message="Loading system telemetry..." />
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* Real Pod Capacity */}
           <div className="card-surface p-6">
             <h2 className="text-lg font-bold text-text-main mb-4">Pod Capacity</h2>
             {capacity ? (
@@ -73,7 +65,6 @@ export default function AdminSystemPage() {
             )}
           </div>
 
-          {/* Real Host Memory (RAM) */}
           <div className="card-surface p-6">
             <h2 className="text-lg font-bold text-text-main mb-4">Host Memory (RAM)</h2>
             {capacity && capacity.available_mb !== null ? (
@@ -105,8 +96,20 @@ export default function AdminSystemPage() {
       )}
 
       <div className="card-surface p-6">
-        <h2 className="text-lg font-bold text-text-main mb-4">Service Status</h2>
-        {infraLoading && !infra ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h2 className="text-lg font-bold text-text-main">Service Status</h2>
+            {checkedAt && (
+              <span className="text-xs text-text-muted">
+                checked {formatCheckedAt(checkedAt)}
+              </span>
+            )}
+          </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+            Refresh
+          </Button>
+        </div>
+        {loading && !infra ? (
           <LoadingSpinner message="Loading service health..." />
         ) : (
           <div className="space-y-3">
@@ -119,6 +122,9 @@ export default function AdminSystemPage() {
                 <Badge variant={badgeVariantForStatus(svc.status)}>{svc.status}</Badge>
               </div>
             ))}
+            {!loading && (infra?.services?.length ?? 0) === 0 && !error && (
+              <p className="text-sm text-text-muted">No service rows to display.</p>
+            )}
           </div>
         )}
       </div>
@@ -126,9 +132,9 @@ export default function AdminSystemPage() {
       <div className="card-surface p-6 mt-6">
         <h2 className="text-lg font-bold text-text-main mb-2">Audit & Telemetry Information</h2>
         <p className="text-sm text-text-muted">
-          Range host memory and pod allocations come from the provisioning capacity engine.
-          API and LXD service status come from <code className="text-xs">/admin/infra-health</code>.
-          Identity and SIEM health probes remain deferred (#55).
+          Capacity and API/LXD status come from one snapshot via{" "}
+          <code className="text-xs">/admin/infra-health</code>. Identity and SIEM health probes
+          remain deferred (#55).
         </p>
       </div>
     </LayoutWrapper>

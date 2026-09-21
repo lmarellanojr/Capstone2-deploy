@@ -2,31 +2,27 @@
 
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, LoadingSpinner } from "@/components/ui";
+import { Badge, Button, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
-import { useAdminPods } from "@/hooks/useAdminPods";
 import { useAdminInfraHealth } from "@/hooks/useAdminInfraHealth";
-import { badgeVariantForStatus } from "@/lib/infraHealth";
+import { badgeVariantForStatus, formatCheckedAt } from "@/lib/infraHealth";
 
 export default function AdminDashboardPage() {
-  const { pods, capacity, loading, error, capacityError } = useAdminPods();
-  const { data: infra, loading: infraLoading, error: infraError } = useAdminInfraHealth();
+  const { data: infra, loading, error, refresh, checkedAt } = useAdminInfraHealth();
+  const capacity = infra?.capacity ?? null;
 
-  const activePodsCount = capacity?.active_pods !== undefined
-    ? capacity.active_pods
-    : pods.filter((p) => p.status === "ACTIVE" || p.status === "PROVISIONING").length;
-
+  const activePodsCount = capacity?.active_pods ?? "-";
   const podCapacityStr = capacity
     ? `${capacity.active_pods} / ${capacity.max_pods}`
-    : capacityError
+    : error
     ? "Unavailable"
     : "-";
-
-  const availableRamStr = capacity?.available_mb !== null && capacity?.available_mb !== undefined
-    ? `${Math.round(capacity.available_mb / 1024)} GB free`
-    : capacityError
-    ? "Unavailable"
-    : "-";
+  const availableRamStr =
+    capacity?.available_mb !== null && capacity?.available_mb !== undefined
+      ? `${Math.round(capacity.available_mb / 1024)} GB free`
+      : error
+      ? "Unavailable"
+      : "-";
 
   return (
     <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
@@ -43,13 +39,7 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {infraError && (
-        <div className="mb-4 p-3 alert-error text-sm">
-          <p>{infraError}</p>
-        </div>
-      )}
-
-      {loading ? (
+      {loading && !infra ? (
         <div className="flex justify-center py-12">
           <LoadingSpinner message="Loading admin overview..." />
         </div>
@@ -70,13 +60,25 @@ export default function AdminDashboardPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 card-surface p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-text-main">Service Status</h2>
-            <Link href="/admin/system" className="text-sm text-brand font-semibold hover:underline">
-              View system health →
-            </Link>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex flex-wrap items-baseline gap-3">
+              <h2 className="text-lg font-bold text-text-main">Service Status</h2>
+              {checkedAt && (
+                <span className="text-xs text-text-muted">
+                  checked {formatCheckedAt(checkedAt)}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <Button type="button" variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+                Refresh
+              </Button>
+              <Link href="/admin/system" className="text-sm text-brand font-semibold hover:underline">
+                View system health →
+              </Link>
+            </div>
           </div>
-          {infraLoading && !infra ? (
+          {loading && !infra ? (
             <LoadingSpinner message="Loading service health..." />
           ) : (
             <div className="space-y-3">
@@ -89,6 +91,9 @@ export default function AdminDashboardPage() {
                   <Badge variant={badgeVariantForStatus(svc.status)}>{svc.status}</Badge>
                 </div>
               ))}
+              {!loading && (infra?.services?.length ?? 0) === 0 && !error && (
+                <p className="text-sm text-text-muted">No service rows to display.</p>
+              )}
             </div>
           )}
         </div>

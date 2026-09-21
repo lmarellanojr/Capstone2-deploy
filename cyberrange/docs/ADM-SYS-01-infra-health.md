@@ -39,7 +39,7 @@ Portal: `GET /api/capacity` (already), `GET /api/admin/infra-health` (this issue
 
 `capacity` is `null` if the pods COUNT fails. Do not add Keycloak or Wazuh rows.
 
-HTTP 200 with an Unavailable row is success for the UI. Proxy/network failure is portal 503 — show API Unavailable, do not keep a previous Healthy badge.
+HTTP 200 with an Unavailable row is success for the UI. Proxy/network failure is portal 503 — show API Unavailable with the error detail, and LXD as Unavailable with `not checked (API unreachable)` (do not claim LXD was probed). For 401/403, show the banner only and do not fabricate service rows. Never keep a previous Healthy badge. Admin pages render capacity from `infra.capacity` (same snapshot as the service rows), not a second `GET /capacity` call.
 
 ## Do not
 
