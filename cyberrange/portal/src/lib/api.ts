@@ -1,4 +1,5 @@
 import axios from "axios"
+import type { InfraHealth } from "./infraHealth"
 
 // Same-origin App Router proxies live at /api/pods/*. NEXT_PUBLIC_* is inlined
 // at `npm run build`; default so a PC build without .env.local still hits /api.
@@ -358,6 +359,11 @@ export const admin = {
 
   getCapacity: async (): Promise<Capacity> => {
     const response = await apiClient.get('/capacity')
+    return response.data
+  },
+
+  getInfraHealth: async (): Promise<InfraHealth> => {
+    const response = await apiClient.get('/admin/infra-health')
     return response.data
   },
 }
