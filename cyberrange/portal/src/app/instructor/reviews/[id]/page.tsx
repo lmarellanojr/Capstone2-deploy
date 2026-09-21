@@ -22,6 +22,7 @@ import { useToastContext } from "@/context/ToastContext";
 import { formatScenarioName, formatMilestoneLabel } from "@/lib/scenarioLabels";
 import { validateScore, resolveScorePayload } from "@/lib/scoreEvaluation";
 import { selectVerifierAttempts } from "@/lib/verifierEvidence";
+import { formatSqliteDate } from "@/lib/sqliteTime";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   PENDING: "warning",
@@ -39,23 +40,6 @@ function verifierBadgeVariant(status: string): "success" | "danger" | "warning" 
   if (s === "PASS") return "success";
   if (s === "FAIL") return "danger";
   return "warning";
-}
-
-function formatDate(dateStr?: string | null): string {
-  if (!dateStr) return "-";
-  try {
-    const d = new Date(dateStr);
-    return isNaN(d.getTime())
-      ? dateStr
-      : d.toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-  } catch {
-    return dateStr;
-  }
 }
 
 export default function ReviewDetailPage() {
@@ -139,6 +123,9 @@ export default function ReviewDetailPage() {
     };
   }, [studentId, verifierAttempt]);
 
+  // Before the effect's first run the case is loaded but nothing has been
+  // fetched yet; treat that as loading so the empty message never flashes.
+  const verifierPending = verifierMilestones === null && !verifierError;
   const verifierAttempts =
     reviewCase && verifierMilestones
       ? selectVerifierAttempts(verifierMilestones, reviewCase.scenario_id, reviewCase.milestone_id)
@@ -293,7 +280,7 @@ export default function ReviewDetailPage() {
                   </span>
                 </div>
 
-                {verifierLoading ? (
+                {verifierLoading || verifierPending ? (
                   <LoadingSpinner message="Loading verifier results..." />
                 ) : verifierError ? (
                   <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
@@ -318,7 +305,7 @@ export default function ReviewDetailPage() {
                         <tr className="text-left text-text-muted border-b border-border">
                           <th className="py-2 px-3 font-semibold">Milestone</th>
                           <th className="py-2 px-3 font-semibold">Result</th>
-                          <th className="py-2 px-3 font-semibold">Detection Score</th>
+                          <th className="py-2 px-3 font-semibold">Wazuh Detection</th>
                           <th className="py-2 px-3 font-semibold">Verified</th>
                         </tr>
                       </thead>
@@ -332,14 +319,18 @@ export default function ReviewDetailPage() {
                             <td className="py-2 px-3">
                               <Badge variant={verifierBadgeVariant(m.status)}>{m.status}</Badge>
                             </td>
-                            <td className="py-2 px-3 font-mono text-text-main">
-                              {m.detection_score ?? "-"}
+                            <td className="py-2 px-3 text-text-main">
+                              {m.detection_score ? "Detected" : "None recorded"}
                             </td>
-                            <td className="py-2 px-3 text-text-muted">{formatDate(m.verified_at)}</td>
+                            <td className="py-2 px-3 text-text-muted">{formatSqliteDate(m.verified_at)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                    <p className="text-xs text-text-muted mt-3">
+                      Pass/fail comes from the automated verifier. Wazuh detection is only
+                      recorded for milestones with a mapped detection rule.
+                    </p>
                   </div>
                 )}
               </div>
@@ -364,7 +355,7 @@ export default function ReviewDetailPage() {
                     )}
                     <p>
                       <strong className="text-text-main">Evaluated At:</strong>{" "}
-                      {formatDate(reviewCase.updated_at)}
+                      {formatSqliteDate(reviewCase.updated_at)}
                     </p>
                     {reviewCase.feedback && (
                       <p className="mt-2 bg-muted/30 p-3 rounded text-text-main">
@@ -443,11 +434,11 @@ export default function ReviewDetailPage() {
                 <h3 className="font-semibold text-text-main uppercase text-xs mb-3">Case Metadata</h3>
                 <div className="flex justify-between">
                   <span>Created:</span>
-                  <span className="font-mono text-text-main">{formatDate(reviewCase.created_at)}</span>
+                  <span className="font-mono text-text-main">{formatSqliteDate(reviewCase.created_at)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Last Updated:</span>
-                  <span className="font-mono text-text-main">{formatDate(reviewCase.updated_at)}</span>
+                  <span className="font-mono text-text-main">{formatSqliteDate(reviewCase.updated_at)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Scenario ID:</span>
