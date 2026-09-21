@@ -38,6 +38,7 @@ The callers are: unauthenticated, **authenticated with no application role**, St
 | Low (latent) | `portal/src/app/api/guac-websocket/route.ts` verifies JWTs using the Keycloak **public key PEM as an HMAC secret** (`jwtVerify(token, TextEncoder(pem))`). That is the classic algorithm-confusion pattern: anyone can sign an HS256 token with the public key. It is **not exploitable today**: its ownership check calls a backend route that doesn't exist (`GET /pods/{id}`) with a dummy token, so it always ends in 404 or 501, and the frontend calls a different path (`/api/guac-websocket/{podId}`) that doesn't match it. | Unused, non-functional code in Maricar's portal area. Recommend **deleting the route**, not fixing it; flagged for the team. |
 | Low | Proxy routes interpolate `[id]` params into the backend path without `encodeURIComponent`, so a crafted id can steer the proxy to a different backend path. | **No privilege gain**: the proxy always sends the caller's own token, so the backend applies the caller's role wherever the request lands (backend path-trick tests pass). Hardening only. |
 | Info | `/admin/users*` checks the Admin role inside the handler, after request-body validation, so a non-admin sending an *invalid* body gets 422 instead of 403. | No action is performed and the schema is already public (`/openapi.json`). |
+| Env | The test host's `pod_mgmt.db` had `schema_version` 4 recorded without `review_cases` (collision with an uncommitted earlier "v4"; stray `scenario_settings` table). `migrate.py` versions by number only and `_upgrade_review_cases_schema` returns early when the table is missing, so it can't self-heal. | Repaired on the test host (§5). Worth checking the **production** DB for the same state before INST-03 ships there; DB-01/INST-03 owners. |
 | Info | Page middleware reads roles from the session cookie; a role revoked in Keycloak is honored there until the next token refresh (documented AUTH-04 limitation). | The backend rejects the revoked user's API calls immediately (ADM-USER #32 evicts the token cache), so data stays protected. |
 
 ---
@@ -97,8 +98,53 @@ bash ~/cyberrange/deploy/host/verify_sec01_rbac.sh | tee ~/sec01-backend-evidenc
 
 The script signs in as `student_demo`, `instructor_demo` and `admin_demo`, and also tries every route unauthenticated. It uses a nonexistent pod id, and invalid bodies for allowed writes, so no pod, user, review or progress changes. It also runs header, query, traversal and tampered-token bypass attempts, plus an IDOR check against a real pod if one exists. Output is status codes only.
 
-<!-- paste ~/sec01-backend-evidence.txt here -->
-_Pending live run._
+**Run 2026-09-21 on the test host** (`cyberrange.cyberlaboratory.online`), branch at `34bdf79` (`main` + SEC-01), API and portal redeployed, ADM-USER Keycloak setup applied:
+
+```
+=== SEC-01 backend RBAC evidence  2026-09-21T15:35:50Z  api=http://10.115.77.1:5000
+
+METHOD  ROUTE                                    POLICY      unauthenticated   student           instructor        admin            
+GET     /health                                  public      200/ok PASS       200/ok PASS       200/ok PASS       200/ok PASS      
+GET     /capacity                                public      200/ok PASS       200/ok PASS       200/ok PASS       200/ok PASS      
+POST    /pods/provision                          app_role    401/401 PASS      422/ok PASS       422/ok PASS       422/ok PASS      
+GET     /pods                                    app_role    401/401 PASS      200/ok PASS       200/ok PASS       200/ok PASS      
+GET     /pods/999999/status                      app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+GET     /pods/999999/guac-token                  app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+GET     /pods/999999/lab-urls                    app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+DELETE  /pods/999999/destroy                     app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+POST    /pods/999999/verify/1/1                  app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+GET     /pods/999999/milestones                  app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+GET     /pods/999999/alerts                      app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+GET     /progress                                app_role    401/401 PASS      200/ok PASS       200/ok PASS       200/ok PASS      
+DELETE  /progress/999999                         app_role    401/401 PASS      200/ok PASS       200/ok PASS       200/ok PASS      
+POST    /reviews/submit                          app_role    401/401 PASS      422/ok PASS       422/ok PASS       422/ok PASS      
+GET     /reviews/999999                          app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+POST    /reviews/999999/resubmit                 app_role    401/401 PASS      404/ok PASS       404/ok PASS       404/ok PASS      
+GET     /instructor/pods                         instructor  401/401 PASS      403/403 PASS      200/ok PASS       200/ok PASS      
+GET     /instructor/students                     instructor  401/401 PASS      403/403 PASS      200/ok PASS       200/ok PASS      
+GET     /instructor/students/student_demo        instructor  401/401 PASS      403/403 PASS      404/ok PASS       404/ok PASS      
+GET     /instructor/reviews                      instructor  401/401 PASS      403/403 PASS      200/ok PASS       200/ok PASS      
+GET     /instructor/reviews/999999               instructor  401/401 PASS      403/403 PASS      404/ok PASS       404/ok PASS      
+POST    /instructor/reviews/999999/resolve       instructor  401/401 PASS      403/403 PASS      404/ok PASS       404/ok PASS      
+DELETE  /admin/pods/999999/force-destroy         admin       401/401 PASS      403/403 PASS      403/403 PASS      404/ok PASS      
+GET     /admin/users                             admin       401/401 PASS      403/403 PASS      403/403 PASS      200/ok PASS      
+POST    /admin/users                             admin       401/401 PASS      403/403 PASS      403/403 PASS      422/ok PASS      
+PATCH   /admin/users/00000000-0000-0000-0000-000000000000/enabled admin       401/401 PASS      403/403 PASS      403/403 PASS      404/ok PASS      
+PUT     /admin/users/00000000-0000-0000-0000-000000000000/role admin       401/401 PASS      403/403 PASS      403/403 PASS      404/ok PASS      
+
+=== Manual URL/API bypass attempts (student_demo)
+PASS  forged X-Roles/X-Forwarded-User headers on GET /admin/users -> 403
+PASS  ?role=admin on GET /instructor/students -> 403
+PASS  path traversal /instructor/../admin/users -> 404
+PASS  garbage bearer token on GET /pods -> 401
+PASS  token with its signature stripped on GET /pods -> 401
+
+=== IDOR: skipped (no live pod owned by a non-demo user); covered by the unit matrix
+
+=== RESULT: 0 failure(s)
+```
+
+The first run on this host returned 16 × HTTP 500 on the review and `/instructor/students*` routes, all for *allowed* callers (every denial already passed). Cause: the host's `pod_mgmt.db` recorded `schema_version` 4 from an earlier, uncommitted deploy that never created `review_cases`, so `migrate.py` skipped `main`'s `v4.sql`. The database was backed up, then `v4.sql` was applied (it contains only `CREATE TABLE/INDEX IF NOT EXISTS`; nothing else changed, `integrity_check` = ok), and the run above followed. This is a host database issue outside SEC-01; flagged to the team (see §3).
 
 ---
 
@@ -137,8 +183,24 @@ console.table(rows); console.log(`${ROLE}: ${rows.filter((x) => x.result === "FA
 
 Then open a private window with no sign-in and visit `/admin/users` and `/instructor` directly. Both should redirect to `/login?callbackUrl=...`.
 
-<!-- paste the three console.table outputs (student / instructor / admin) here -->
-_Pending live run._
+**Run 2026-09-21 on the test host**, same deployment as §5. Manual browser check by the owner (Lenie), signed in through the real portal login as each demo account, typing each URL directly:
+
+| URL | student_demo | instructor_demo | admin_demo |
+|---|---|---|---|
+| `/instructor` | → `/dashboard` ✅ | opens ✅ | opens ✅ |
+| `/admin/users` | → `/dashboard` ✅ | → `/dashboard` ✅ | opens ✅ |
+| `/api/instructor/students` | `403 Forbidden: Insufficient privileges` ✅ | JSON list ✅ | JSON list ✅ |
+| `/api/pods` | JSON ✅ | JSON ✅ | JSON ✅ |
+
+Result: every cell matched the expected outcome.
+
+Not signed in (curl against the public URL, same day):
+
+```
+GET /admin/users               -> 307 /login?callbackUrl=%2Fadmin%2Fusers
+GET /instructor                -> 307 /login?callbackUrl=%2Finstructor
+GET /api/instructor/students   -> 401
+```
 
 ---
 
