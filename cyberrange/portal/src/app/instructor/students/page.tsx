@@ -7,6 +7,7 @@ import { instructorNavItems } from "@/lib/navigation";
 import { useInstructorStudents } from "@/hooks/useInstructorStudents";
 import type { InstructorMilestone } from "@/lib/api";
 import { podBadgeVariant } from "@/lib/instructorBadges";
+import { parseSqliteUtc } from "@/lib/sqliteTime";
 
 // Milestone rows are per-attempt, not per-milestone -- a retried milestone
 // can have more than one row (and more than one PASS row). Count distinct
@@ -112,7 +113,7 @@ export default function InstructorStudentsPage() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-text-muted">
-                        {lastActivity ? new Date(lastActivity).toLocaleString() : "—"}
+                        {parseSqliteUtc(lastActivity)?.toLocaleString() ?? "—"}
                       </td>
                     </tr>
                   );

@@ -6,6 +6,7 @@ import { AccessDenied, Badge, LoadingSpinner } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
 import { useStudentProgress } from "@/hooks/useStudentProgress";
 import { podBadgeVariant } from "@/lib/instructorBadges";
+import { parseSqliteUtc } from "@/lib/sqliteTime";
 
 interface PageProps {
   params: { id: string };
@@ -90,9 +91,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                 <div>
                   <p className="text-xs text-text-muted mb-0.5">Expires</p>
                   <p className="font-semibold text-text-main">
-                    {student.active_pod.expires_at
-                      ? new Date(student.active_pod.expires_at).toLocaleString()
-                      : "—"}
+                    {parseSqliteUtc(student.active_pod.expires_at)?.toLocaleString() ?? "—"}
                   </p>
                 </div>
               </div>
@@ -127,7 +126,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                         </td>
                         <td className="py-3 px-4 text-text-muted">{m.detection_score ?? "—"}</td>
                         <td className="py-3 px-4 text-text-muted">
-                          {m.verified_at ? new Date(m.verified_at).toLocaleString() : "—"}
+                          {parseSqliteUtc(m.verified_at)?.toLocaleString() ?? "—"}
                         </td>
                       </tr>
                     ))}
@@ -163,7 +162,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                         </td>
                         <td className="py-3 px-4 text-text-muted">{r.score ?? "—"}</td>
                         <td className="py-3 px-4 text-text-muted">
-                          {r.created_at ? new Date(r.created_at).toLocaleString() : "—"}
+                          {parseSqliteUtc(r.created_at)?.toLocaleString() ?? "—"}
                         </td>
                       </tr>
                     ))}
