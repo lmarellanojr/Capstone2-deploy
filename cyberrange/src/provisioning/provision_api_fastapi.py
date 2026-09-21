@@ -11,11 +11,8 @@ from auth import validate_auth_config
 from auth import verify_token as real_verify_token
 import alerts_endpoint as ae
 from capacity import (
-    POD_RAM_MB,
-    RAM_BUFFER_MB,
     available_ram_mb,
-    can_provision_ram,
-    ram_required_mb,
+    build_capacity_payload,
     validate_capacity_config,
 )
 from config import API_BIND_HOST, API_BIND_PORT, MAX_PODS, POD_TTL_HOURS, REAP_INTERVAL_SECONDS, SCORE_POLL_INTERVAL_SECONDS, PROFILE_NAME
@@ -118,17 +115,7 @@ def capacity_status():
     ).fetchone()[0]
     conn.close()
     avail = available_ram_mb()
-    return {
-        "available_mb": avail,
-        "active_pods": active,
-        "max_pods": MAX_PODS,
-        "pod_ram_mb": POD_RAM_MB,
-        "ram_buffer_mb": RAM_BUFFER_MB,
-        "profile": PROFILE_NAME,
-        # Free headroom needed to admit ONE more pod -- not a fleet total.
-        "ram_required_mb": ram_required_mb(),
-        "can_provision": active < MAX_PODS and can_provision_ram(avail),
-    }
+    return build_capacity_payload(active, avail, MAX_PODS, PROFILE_NAME)
 
 
 if __name__ == "__main__":

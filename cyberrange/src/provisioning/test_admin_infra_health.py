@@ -75,3 +75,34 @@ def test_timeout_wins_over_a_numeric_reading():
     """A timed-out probe must not be Healthy even if a stale number is present."""
     row = ih.classify_lxd(free_mb=99999.0, timed_out=True, pod_storage_mb=7168)
     assert row["status"] != "Healthy"
+
+
+from capacity import build_capacity_payload, can_provision_ram, ram_required_mb
+
+
+def test_build_capacity_payload_keys_match_public_capacity():
+    body = build_capacity_payload(
+        active_pods=0, avail_mb=8192, max_pods=1, profile_name="oci_12gib"
+    )
+    assert set(body) == {
+        "available_mb",
+        "active_pods",
+        "max_pods",
+        "pod_ram_mb",
+        "ram_buffer_mb",
+        "profile",
+        "ram_required_mb",
+        "can_provision",
+    }
+    assert body["can_provision"] is True
+    assert body["ram_required_mb"] == ram_required_mb()
+
+
+def test_build_capacity_payload_fail_closed_null_meminfo():
+    body = build_capacity_payload(
+        active_pods=0, avail_mb=None, max_pods=1, profile_name="oci_12gib"
+    )
+    assert body["available_mb"] is None
+    assert body["can_provision"] is False
+    assert can_provision_ram(None) is False
+
