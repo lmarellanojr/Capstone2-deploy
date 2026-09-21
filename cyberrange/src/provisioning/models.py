@@ -1,5 +1,5 @@
 """Pydantic request/response models."""
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -59,3 +59,26 @@ class MilestoneResult(BaseModel):
     status: Literal["PASS", "FAIL", "ERROR", "UNKNOWN"]
     verified_at: str
     detection_score: Optional[int] = 0
+
+
+class ReviewResolveRequest(BaseModel):
+    status: str
+    score: Optional[int] = None
+    feedback: Optional[str] = None
+
+
+class ReviewResolveResponse(BaseModel):
+    status: str
+    review_id: int
+    decision: str
+
+
+class ReviewResubmitRequest(BaseModel):
+    report_text: Optional[str] = None
+    conflict_reason: Optional[str] = None
+    evidence_data: Optional[Union[str, dict, list]] = None
+
+
+class ReviewResubmitResponse(BaseModel):
+    status: str
+    review_id: int

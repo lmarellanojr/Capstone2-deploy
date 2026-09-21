@@ -311,6 +311,32 @@ export const instructor = {
     const response = await apiClient.get(`/instructor/students/${encodeURIComponent(studentId)}`)
     return response.data
   },
+
+  listReviews: async (statusFilter?: string): Promise<{ reviews: ReviewCase[] }> => {
+    const params = statusFilter ? { status_filter: statusFilter } : undefined
+    const response = await apiClient.get('/instructor/reviews', { params })
+    return response.data
+  },
+
+  getReview: async (reviewId: number | string): Promise<ReviewCase> => {
+    const response = await apiClient.get(`/instructor/reviews/${encodeURIComponent(String(reviewId))}`)
+    return response.data
+  },
+
+  resolveReview: async (
+    reviewId: number | string,
+    data: {
+      status: 'APPROVED' | 'REJECTED' | 'RETRY'
+      score?: number | null
+      feedback?: string | null
+    }
+  ): Promise<{ status: string; review_id: number; decision: string }> => {
+    const response = await apiClient.post(
+      `/instructor/reviews/${encodeURIComponent(String(reviewId))}/resolve`,
+      data
+    )
+    return response.data
+  },
 }
 
 // ADM-UI #31 — Admin pods list/detail/force-destroy + capacity.

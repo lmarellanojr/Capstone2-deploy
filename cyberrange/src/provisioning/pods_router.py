@@ -1,8 +1,11 @@
 """Pod provisioning and lifecycle API routes."""
 import json
+import logging
 import sqlite3
 from typing import Optional, Union
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
@@ -11,7 +14,15 @@ from auth import caller_identity, require_owner, verify_token
 from capacity import available_ram_mb, can_provision_ram, ram_required_mb
 from config import MAX_PODS, POD_STORAGE_MB, STORAGE_LIMIT_MB
 from db import get_db_connection, log_event
-from models import PodResponse, ProvisionRequest, VerificationResponse
+from models import (
+    PodResponse,
+    ProvisionRequest,
+    ReviewResolveRequest,
+    ReviewResolveResponse,
+    ReviewResubmitRequest,
+    ReviewResubmitResponse,
+    VerificationResponse,
+)
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
 from scoring import verify_milestone
 from ttl import ttl_payload
@@ -707,10 +718,22 @@ def list_student_reviews(
     auth.require_role(["instructor", "admin"], claims)
     conn = get_db_connection()
     if status_filter:
-        rows = conn.execute(
-            "SELECT * FROM review_cases WHERE status=? ORDER BY created_at DESC",
-            (status_filter.upper(),),
-        ).fetchall()
+        clean_filter = status_filter.strip().upper()
+        if clean_filter not in {"PENDING", "APPROVED", "REJECTED", "RETRY", "ALL"}:
+            conn.close()
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid status_filter: must be one of ('PENDING', 'APPROVED', 'REJECTED', 'RETRY', 'ALL')",
+            )
+        if clean_filter != "ALL":
+            rows = conn.execute(
+                "SELECT * FROM review_cases WHERE status=? ORDER BY created_at DESC",
+                (clean_filter,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM review_cases ORDER BY created_at DESC"
+            ).fetchall()
     else:
         rows = conn.execute(
             "SELECT * FROM review_cases ORDER BY created_at DESC"
@@ -733,6 +756,263 @@ def get_student_review_detail(
     if not row:
         raise HTTPException(status_code=404, detail="Review case not found")
     return dict(row)
+
+
+@router.post(
+    "/instructor/reviews/{review_id}/resolve",
+    response_model=ReviewResolveResponse,
+)
+def resolve_student_review(
+    review_id: int,
+    body: ReviewResolveRequest,
+    claims: dict = Depends(verify_token),
+):
+    """Instructor / Admin endpoint to evaluate and resolve a student review case (Approve, Reject, or Retry)."""
+    auth.require_role(["instructor", "admin"], claims)
+
+    grader = caller_identity(claims, None)
+    if not grader:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    clean_status = body.status.strip().upper() if body.status else ""
+    if clean_status not in {"APPROVED", "REJECTED", "RETRY"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid status: must be one of ('APPROVED', 'REJECTED', 'RETRY')",
+        )
+
+    final_score = body.score
+    if final_score is not None:
+        if not isinstance(final_score, int) or final_score < 0 or final_score > 100:
+            raise HTTPException(
+                status_code=400,
+                detail="score must be between 0 and 100",
+            )
+    else:
+        if clean_status == "APPROVED":
+            final_score = 100
+        elif clean_status == "REJECTED":
+            final_score = 0
+        elif clean_status == "RETRY":
+            final_score = None
+
+    clean_feedback = (
+        body.feedback.strip()
+        if (body.feedback and body.feedback.strip())
+        else None
+    )
+    if clean_feedback and len(clean_feedback) > 5000:
+        raise HTTPException(
+            status_code=400,
+            detail="feedback exceeds maximum length of 5000 characters",
+        )
+
+    conn = get_db_connection()
+    try:
+        with conn:
+            row = conn.execute(
+                "SELECT student_id, scenario_id, milestone_id FROM review_cases WHERE review_id=?",
+                (review_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Review case not found")
+
+            student_id = row["student_id"]
+            cur = conn.execute(
+                "UPDATE review_cases "
+                "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE review_id = ?",
+                (clean_status, final_score, clean_feedback, grader, review_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Review case not found")
+    finally:
+        conn.close()
+
+    # Log event on independent connection to prevent SQLite deadlock
+    try:
+        log_event(
+            "REVIEW_CASE_RESOLVED",
+            student_id=student_id,
+            result=clean_status,
+            detail=f"review_id={review_id}, score={final_score}, graded_by={grader}",
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to record REVIEW_CASE_RESOLVED audit log for review_id=%s: %s",
+            review_id,
+            exc,
+            exc_info=True,
+        )
+
+    return ReviewResolveResponse(
+        status="resolved",
+        review_id=review_id,
+        decision=clean_status,
+    )
+
+
+@router.post(
+    "/reviews/{review_id}/resubmit",
+    response_model=ReviewResubmitResponse,
+)
+def resubmit_student_review(
+    review_id: int,
+    body: ReviewResubmitRequest,
+    claims: dict = Depends(verify_token),
+):
+    """Student endpoint to resubmit a review case that was returned for RETRY."""
+    caller = caller_identity(claims, None)
+    if not caller:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    clean_report = (
+        body.report_text.strip()
+        if (body.report_text and body.report_text.strip())
+        else None
+    )
+    if clean_report and len(clean_report) > 10000:
+        raise HTTPException(
+            status_code=400,
+            detail="report_text exceeds maximum length of 10000 characters",
+        )
+
+    clean_conflict = (
+        body.conflict_reason.strip()
+        if (body.conflict_reason and body.conflict_reason.strip())
+        else None
+    )
+    if clean_conflict and len(clean_conflict) > 10000:
+        raise HTTPException(
+            status_code=400,
+            detail="conflict_reason exceeds maximum length of 10000 characters",
+        )
+
+    evidence_text = None
+    if body.evidence_data is not None:
+        if isinstance(body.evidence_data, (dict, list)):
+            evidence_text = json.dumps(body.evidence_data) if body.evidence_data else None
+        elif isinstance(body.evidence_data, str):
+            s = body.evidence_data.strip()
+            if not s or s in ("{}", "[]"):
+                evidence_text = None
+            else:
+                try:
+                    parsed = json.loads(s)
+                    evidence_text = None if isinstance(parsed, (dict, list)) and not parsed else s
+                except Exception:
+                    evidence_text = s
+
+    if evidence_text is not None:
+        try:
+            raw_bytes = evidence_text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="evidence_data contains invalid Unicode characters",
+            )
+        if len(raw_bytes) > 65536:
+            raise HTTPException(
+                status_code=400,
+                detail="evidence_data exceeds maximum length of 65536 bytes",
+            )
+
+    if clean_report is None and clean_conflict is None and evidence_text is None:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one updated field (report_text, conflict_reason, evidence_data) must be provided for resubmission",
+        )
+
+    conn = get_db_connection()
+    try:
+        with conn:
+            row = conn.execute(
+                "SELECT student_id, status FROM review_cases WHERE review_id=?",
+                (review_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Review case not found")
+
+            # Ownership check strictly PRECEDES status check to avoid status-oracle leaks
+            if row["student_id"] != caller:
+                raise HTTPException(status_code=404, detail="Review case not found")
+
+            if row["status"] != "RETRY":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only reviews in RETRY status can be resubmitted",
+                )
+
+            cur = conn.execute(
+                "UPDATE review_cases "
+                "SET status = 'PENDING', "
+                "    report_text = COALESCE(?, report_text), "
+                "    conflict_reason = COALESCE(?, conflict_reason), "
+                "    evidence_data = COALESCE(?, evidence_data), "
+                "    score = NULL, "
+                "    feedback = NULL, "
+                "    graded_by = NULL, "
+                "    updated_at = CURRENT_TIMESTAMP "
+                "WHERE review_id = ? AND student_id = ? AND status = 'RETRY'",
+                (clean_report, clean_conflict, evidence_text, review_id, caller),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Review case was modified concurrently or is no longer in RETRY status",
+                )
+    finally:
+        conn.close()
+
+    # Log event on independent connection
+    try:
+        log_event(
+            "REVIEW_CASE_RESUBMITTED",
+            student_id=caller,
+            result="PENDING",
+            detail=f"review_id={review_id}",
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to record REVIEW_CASE_RESUBMITTED audit log for review_id=%s: %s",
+            review_id,
+            exc,
+            exc_info=True,
+        )
+
+    return ReviewResubmitResponse(
+        status="resubmitted",
+        review_id=review_id,
+    )
+
+
+@router.get("/reviews/{review_id}")
+def get_review_detail(
+    review_id: int, claims: dict = Depends(verify_token)
+):
+    """Get review case details. Accessible by the owning student, or instructors and admins."""
+    caller = caller_identity(claims, None)
+    if not caller:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    roles = auth.extract_roles(claims)
+    is_staff = any(r in roles for r in ("instructor", "admin"))
+
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM review_cases WHERE review_id=?", (review_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Review case not found")
+
+        if not is_staff and row["student_id"] != caller:
+            raise HTTPException(status_code=404, detail="Review case not found")
+
+        return dict(row)
+    finally:
+        conn.close()
+
 
 
 

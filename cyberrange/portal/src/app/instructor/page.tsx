@@ -2,22 +2,56 @@
 
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { AccessDenied, Badge, LoadingSpinner, MockDataNotice } from "@/components/ui";
+import { AccessDenied, Badge, LoadingSpinner } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
-import { mockReviewQueue } from "@/lib/mock/instructorMock";
 import { useInstructorStudents } from "@/hooks/useInstructorStudents";
+import { useInstructorReviews } from "@/hooks/useInstructorReviews";
+import { formatScenarioName } from "@/lib/scenarioLabels";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
+  PENDING: "warning",
+  APPROVED: "success",
+  REJECTED: "danger",
+  RETRY: "info",
   pending: "warning",
   approved: "success",
   rejected: "danger",
   retry: "info",
 };
 
-export default function InstructorDashboardPage() {
-  const { students, loading, error, forbidden } = useInstructorStudents();
+function formatDate(dateStr?: string | null): string {
+  if (!dateStr) return "-";
+  try {
+    const d = new Date(dateStr);
+    return isNaN(d.getTime())
+      ? dateStr
+      : d.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+  } catch {
+    return dateStr;
+  }
+}
 
-  if (forbidden) {
+export default function InstructorDashboardPage() {
+  const {
+    students,
+    loading: studentsLoading,
+    error: studentsError,
+    forbidden: studentsForbidden,
+  } = useInstructorStudents();
+
+  const {
+    reviews,
+    loading: reviewsLoading,
+    error: reviewsError,
+    forbidden: reviewsForbidden,
+  } = useInstructorReviews({ statusFilter: "PENDING" });
+
+  if (studentsForbidden || reviewsForbidden) {
     return (
       <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor" hideSearch>
         <AccessDenied message="You need an instructor or admin role to view the dashboard." />
@@ -27,7 +61,11 @@ export default function InstructorDashboardPage() {
 
   const studentCount = students.length;
   const activePods = students.filter((s) => s.active_pod).length;
-  const pendingReviews = students.reduce((sum, s) => sum + s.pending_review_count, 0);
+  const pendingReviewsStr = reviewsError
+    ? "-"
+    : reviewsLoading
+    ? "-"
+    : String(reviews.length);
 
   return (
     <LayoutWrapper navItems={instructorNavItems} sectionLabel="Instructor" hideSearch>
@@ -38,21 +76,21 @@ export default function InstructorDashboardPage() {
         </div>
       </div>
 
-      {error && (
+      {studentsError && (
         <div className="mb-4 p-3 alert-error text-sm">
-          <p>{error}</p>
+          <p>{studentsError}</p>
         </div>
       )}
 
-      {loading ? (
+      {studentsLoading ? (
         <div className="flex justify-center py-12">
           <LoadingSpinner message="Loading dashboard..." />
         </div>
-      ) : error ? null : (
+      ) : studentsError ? null : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
           {[
             { label: "Students", value: String(studentCount) },
-            { label: "Pending Reviews", value: String(pendingReviews) },
+            { label: "Pending Reviews", value: pendingReviewsStr },
             { label: "Active Pods", value: String(activePods) },
           ].map((stat) => (
             <div key={stat.label} className="card-surface p-6 text-center">
@@ -65,40 +103,63 @@ export default function InstructorDashboardPage() {
 
       <div className="card-surface p-6">
         <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold text-text-main">Review Queue</h2>
-            <MockDataNotice />
-          </div>
+          <h2 className="text-lg font-bold text-text-main">Review Queue</h2>
           <Link href="/instructor/reviews" className="text-sm text-brand font-semibold hover:underline">
             View all reviews →
           </Link>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-text-muted border-b border-border">
-                <th className="py-2 pr-4 font-semibold">Case</th>
-                <th className="py-2 pr-4 font-semibold">Student</th>
-                <th className="py-2 pr-4 font-semibold">Scenario</th>
-                <th className="py-2 pr-4 font-semibold">Submitted</th>
-                <th className="py-2 pr-4 font-semibold">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockReviewQueue.slice(0, 4).map((c) => (
-                <tr key={c.id} className="border-b border-border last:border-0">
-                  <td className="py-3 pr-4 font-mono text-text-main">{c.id}</td>
-                  <td className="py-3 pr-4 text-text-main">{c.student}</td>
-                  <td className="py-3 pr-4 text-text-muted">{c.scenario}</td>
-                  <td className="py-3 pr-4 text-text-muted">{c.submitted}</td>
-                  <td className="py-3 pr-4">
-                    <Badge variant={STATUS_BADGE[c.status]}>{c.status}</Badge>
-                  </td>
+
+        {reviewsError && (
+          <div className="mb-4 p-3 alert-error text-sm">
+            <p>{reviewsError}</p>
+          </div>
+        )}
+
+        {reviewsLoading ? (
+          <div className="flex justify-center py-8">
+            <LoadingSpinner size="sm" message="Loading reviews..." />
+          </div>
+        ) : reviewsError ? null : reviews.length === 0 ? (
+          <div className="p-8 text-center text-text-muted text-sm">
+            No reviews in queue.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-text-muted border-b border-border">
+                  <th className="py-2 pr-4 font-semibold">Case</th>
+                  <th className="py-2 pr-4 font-semibold">Student</th>
+                  <th className="py-2 pr-4 font-semibold">Scenario</th>
+                  <th className="py-2 pr-4 font-semibold">Submitted</th>
+                  <th className="py-2 pr-4 font-semibold">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {reviews.slice(0, 5).map((c) => (
+                  <tr key={c.review_id} className="border-b border-border last:border-0 hover:bg-muted/10">
+                    <td className="py-3 pr-4 font-mono">
+                      <Link
+                        href={`/instructor/reviews/${c.review_id}`}
+                        className="text-brand font-semibold hover:underline"
+                      >
+                        #{c.review_id}
+                      </Link>
+                    </td>
+                    <td className="py-3 pr-4 text-text-main font-medium">{c.student_id}</td>
+                    <td className="py-3 pr-4 text-text-muted">{formatScenarioName(c.scenario_id)}</td>
+                    <td className="py-3 pr-4 text-text-muted">{formatDate(c.created_at)}</td>
+                    <td className="py-3 pr-4">
+                      <Badge variant={STATUS_BADGE[c.status.toUpperCase()] || "default"}>
+                        {c.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">

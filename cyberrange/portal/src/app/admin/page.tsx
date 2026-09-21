@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, MockDataNotice } from "@/components/ui";
+import { Badge, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
-import { mockCapacity, mockPods, mockServiceStatus, mockUsers } from "@/lib/mock/adminMock";
+import { useAdminPods } from "@/hooks/useAdminPods";
+import { mockServiceStatus } from "@/lib/mock/adminMock";
 
 const SERVICE_BADGE: Record<string, "success" | "warning" | "danger"> = {
   healthy: "success",
@@ -13,36 +14,67 @@ const SERVICE_BADGE: Record<string, "success" | "warning" | "danger"> = {
 };
 
 export default function AdminDashboardPage() {
-  const activePods = mockPods.filter((p) => p.status === "active").length;
+  const { pods, capacity, loading, error, capacityError } = useAdminPods();
+
+  const activePodsCount = capacity?.active_pods !== undefined
+    ? capacity.active_pods
+    : pods.filter((p) => p.status === "ACTIVE" || p.status === "PROVISIONING").length;
+
+  const podCapacityStr = capacity
+    ? `${capacity.active_pods} / ${capacity.max_pods}`
+    : capacityError
+    ? "Unavailable"
+    : "-";
+
+  const availableRamStr = capacity?.available_mb !== null && capacity?.available_mb !== undefined
+    ? `${Math.round(capacity.available_mb / 1024)} GB free`
+    : capacityError
+    ? "Unavailable"
+    : "-";
 
   return (
     <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold text-text-main">Admin Dashboard</h1>
-          <p className="text-text-muted mt-1">Route shell for platform administration</p>
+          <p className="text-text-muted mt-1">Platform administration and range telemetry</p>
         </div>
-        <MockDataNotice />
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {[
-          { label: "Users", value: String(mockUsers.length) },
-          { label: "Active Pods", value: String(activePods) },
-          { label: "Pod Capacity", value: `${mockCapacity.podsInUse}/${mockCapacity.podsCapacity}` },
-          { label: "Storage Used", value: `${mockCapacity.storageUsedGb}/${mockCapacity.storageCapacityGb} GB` },
-        ].map((stat) => (
-          <div key={stat.label} className="card-surface p-6 text-center">
-            <p className="text-2xl sm:text-3xl font-bold text-text-main whitespace-nowrap">{stat.value}</p>
-            <p className="text-sm text-text-muted mt-1">{stat.label}</p>
-          </div>
-        ))}
-      </div>
+      {error && (
+        <div className="mb-4 p-3 alert-error text-sm">
+          <p>{error}</p>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <LoadingSpinner message="Loading admin overview..." />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+          {[
+            { label: "Active Pods", value: String(activePodsCount) },
+            { label: "Pod Capacity", value: podCapacityStr },
+            { label: "Host RAM", value: availableRamStr },
+          ].map((stat) => (
+            <div key={stat.label} className="card-surface p-6 text-center">
+              <p className="text-2xl sm:text-3xl font-bold text-text-main whitespace-nowrap">{stat.value}</p>
+              <p className="text-sm text-text-muted mt-1">{stat.label}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 card-surface p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-text-main">Service Status</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-text-main">Service Status</h2>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-muted text-text-muted border border-border">
+                Fixture data
+              </span>
+            </div>
             <Link href="/admin/system" className="text-sm text-brand font-semibold hover:underline">
               View system health →
             </Link>
@@ -63,7 +95,7 @@ export default function AdminDashboardPage() {
         <div className="space-y-6">
           <Link href="/admin/users" className="card-surface p-6 hover:shadow-card-hover transition block">
             <h3 className="text-lg font-bold text-text-main mb-1">Users</h3>
-            <p className="text-sm text-text-muted">Accounts and roles.</p>
+            <p className="text-sm text-text-muted">Accounts and Keycloak role assignment.</p>
           </Link>
           <Link href="/admin/pods" className="card-surface p-6 hover:shadow-card-hover transition block">
             <h3 className="text-lg font-bold text-text-main mb-1">Pods</h3>
