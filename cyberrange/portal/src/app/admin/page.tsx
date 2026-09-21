@@ -5,16 +5,12 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { Badge, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
 import { useAdminPods } from "@/hooks/useAdminPods";
-import { mockServiceStatus } from "@/lib/mock/adminMock";
-
-const SERVICE_BADGE: Record<string, "success" | "warning" | "danger"> = {
-  healthy: "success",
-  degraded: "warning",
-  down: "danger",
-};
+import { useAdminInfraHealth } from "@/hooks/useAdminInfraHealth";
+import { badgeVariantForStatus } from "@/lib/infraHealth";
 
 export default function AdminDashboardPage() {
   const { pods, capacity, loading, error, capacityError } = useAdminPods();
+  const { data: infra, loading: infraLoading, error: infraError } = useAdminInfraHealth();
 
   const activePodsCount = capacity?.active_pods !== undefined
     ? capacity.active_pods
@@ -47,6 +43,12 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
+      {infraError && (
+        <div className="mb-4 p-3 alert-error text-sm">
+          <p>{infraError}</p>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-12">
           <LoadingSpinner message="Loading admin overview..." />
@@ -69,33 +71,32 @@ export default function AdminDashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 card-surface p-6">
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold text-text-main">Service Status</h2>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-muted text-text-muted border border-border">
-                Fixture data
-              </span>
-            </div>
+            <h2 className="text-lg font-bold text-text-main">Service Status</h2>
             <Link href="/admin/system" className="text-sm text-brand font-semibold hover:underline">
               View system health →
             </Link>
           </div>
-          <div className="space-y-3">
-            {mockServiceStatus.map((svc) => (
-              <div key={svc.name} className="flex items-center justify-between p-3 rounded-lg border border-border">
-                <div>
-                  <p className="font-semibold text-text-main text-sm">{svc.name}</p>
-                  <p className="text-xs text-text-muted mt-0.5">{svc.detail}</p>
+          {infraLoading && !infra ? (
+            <LoadingSpinner message="Loading service health..." />
+          ) : (
+            <div className="space-y-3">
+              {(infra?.services ?? []).map((svc) => (
+                <div key={svc.name} className="flex items-center justify-between p-3 rounded-lg border border-border">
+                  <div>
+                    <p className="font-semibold text-text-main text-sm">{svc.name}</p>
+                    <p className="text-xs text-text-muted mt-0.5">{svc.detail}</p>
+                  </div>
+                  <Badge variant={badgeVariantForStatus(svc.status)}>{svc.status}</Badge>
                 </div>
-                <Badge variant={SERVICE_BADGE[svc.status]}>{svc.status}</Badge>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
           <Link href="/admin/users" className="card-surface p-6 hover:shadow-card-hover transition block">
             <h3 className="text-lg font-bold text-text-main mb-1">Users</h3>
-            <p className="text-sm text-text-muted">Accounts and Keycloak role assignment.</p>
+            <p className="text-sm text-text-muted">Accounts and role assignment.</p>
           </Link>
           <Link href="/admin/pods" className="card-surface p-6 hover:shadow-card-hover transition block">
             <h3 className="text-lg font-bold text-text-main mb-1">Pods</h3>

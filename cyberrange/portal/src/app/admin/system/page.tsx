@@ -4,16 +4,12 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { Badge, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
 import { useAdminPods } from "@/hooks/useAdminPods";
-import { mockServiceStatus } from "@/lib/mock/adminMock";
-
-const SERVICE_BADGE: Record<string, "success" | "warning" | "danger"> = {
-  healthy: "success",
-  degraded: "warning",
-  down: "danger",
-};
+import { useAdminInfraHealth } from "@/hooks/useAdminInfraHealth";
+import { badgeVariantForStatus } from "@/lib/infraHealth";
 
 export default function AdminSystemPage() {
   const { capacity, loading, capacityError } = useAdminPods();
+  const { data: infra, loading: infraLoading, error: infraError } = useAdminInfraHealth();
 
   const podPct = capacity && capacity.max_pods > 0
     ? Math.min(100, Math.round((capacity.active_pods / capacity.max_pods) * 100))
@@ -32,6 +28,13 @@ export default function AdminSystemPage() {
         <div className="mb-6 p-4 alert-error rounded-lg">
           <p className="text-sm font-semibold">Capacity Telemetry Unavailable</p>
           <p className="text-xs mt-0.5">{capacityError}</p>
+        </div>
+      )}
+
+      {infraError && (
+        <div className="mb-6 p-4 alert-error rounded-lg">
+          <p className="text-sm font-semibold">Service Health Unavailable</p>
+          <p className="text-xs mt-0.5">{infraError}</p>
         </div>
       )}
 
@@ -102,29 +105,30 @@ export default function AdminSystemPage() {
       )}
 
       <div className="card-surface p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <h2 className="text-lg font-bold text-text-main">Service Status</h2>
-          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-muted text-text-muted border border-border">
-            Fixture data
-          </span>
-        </div>
-        <div className="space-y-3">
-          {mockServiceStatus.map((svc) => (
-            <div key={svc.name} className="flex items-center justify-between p-3 rounded-lg border border-border">
-              <div>
-                <p className="font-semibold text-text-main text-sm">{svc.name}</p>
-                <p className="text-xs text-text-muted mt-0.5">{svc.detail}</p>
+        <h2 className="text-lg font-bold text-text-main mb-4">Service Status</h2>
+        {infraLoading && !infra ? (
+          <LoadingSpinner message="Loading service health..." />
+        ) : (
+          <div className="space-y-3">
+            {(infra?.services ?? []).map((svc) => (
+              <div key={svc.name} className="flex items-center justify-between p-3 rounded-lg border border-border">
+                <div>
+                  <p className="font-semibold text-text-main text-sm">{svc.name}</p>
+                  <p className="text-xs text-text-muted mt-0.5">{svc.detail}</p>
+                </div>
+                <Badge variant={badgeVariantForStatus(svc.status)}>{svc.status}</Badge>
               </div>
-              <Badge variant={SERVICE_BADGE[svc.status]}>{svc.status}</Badge>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="card-surface p-6 mt-6">
         <h2 className="text-lg font-bold text-text-main mb-2">Audit & Telemetry Information</h2>
         <p className="text-sm text-text-muted">
-          Range host memory and pod allocations are updated dynamically from the provisioning capacity engine. Service status entries are fixture data; live daemon health checks are not wired yet (tracked in P0-01).
+          Range host memory and pod allocations come from the provisioning capacity engine.
+          API and LXD service status come from <code className="text-xs">/admin/infra-health</code>.
+          Identity and SIEM health probes remain deferred (#55).
         </p>
       </div>
     </LayoutWrapper>
