@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 import requests
-from fastapi import HTTPException, Header
+from fastapi import Depends, HTTPException, Header
 
 from introspect_cache import get_cached, store
 from secrets_loader import get_secret, SecretsConfigError
@@ -124,6 +124,27 @@ def require_role(required_roles: list, claims: dict) -> None:
     user_roles = extract_roles(claims)
     if not any(role in user_roles for role in required_roles):
         raise HTTPException(status_code=403, detail="Forbidden: Insufficient privileges")
+
+
+# The three application roles (AUTH-03 contract). Keycloak-internal roles
+# (offline_access, uma_authorization, default-roles-cyber-range) never count.
+APP_ROLES = ("student", "instructor", "admin")
+
+
+def require_app_role(claims: dict = Depends(verify_token)) -> dict:
+    """Router-level guard (SEC-01 #36): authenticated AND holding at least one
+    application role.
+
+    AUTH-03's policy is that an account with no application role is
+    unauthorized. The portal enforces that for pages (middleware.ts ->
+    /no-role), but the self-scoped Student routes (provision, progress,
+    reviews, pod status/lab access) only checked *who* was calling, so a
+    role-less account could skip /no-role by calling /api/* or the backend
+    directly. Attached to whole routers so a new route cannot forget it.
+    Instructor/Admin-only routes still add their narrower require_role().
+    """
+    require_role(list(APP_ROLES), claims)
+    return claims
 
 
 def require_owner(pod_row, claims: dict) -> None:
