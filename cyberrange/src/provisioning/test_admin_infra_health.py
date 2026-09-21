@@ -106,3 +106,121 @@ def test_build_capacity_payload_fail_closed_null_meminfo():
     assert body["can_provision"] is False
     assert can_provision_ram(None) is False
 
+
+CAPACITY_KEYS = {
+    "available_mb",
+    "active_pods",
+    "max_pods",
+    "pod_ram_mb",
+    "ram_buffer_mb",
+    "profile",
+    "ram_required_mb",
+    "can_provision",
+}
+
+
+def test_infra_health_admin_200_lxd_healthy(monkeypatch):
+    monkeypatch.setattr(ih, "available_ram_mb", lambda: 8192)
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, False))
+    app.dependency_overrides[verify_token] = lambda: admin_claims()
+    client = TestClient(app)
+    res = client.get("/admin/infra-health", headers={"Authorization": "Bearer mock"})
+    assert res.status_code == 200
+    body = res.json()
+    assert set(body["capacity"]) == CAPACITY_KEYS
+    names = [s["name"] for s in body["services"]]
+    assert names == ["API", "LXD"]
+    assert {s["name"]: s["status"] for s in body["services"]} == {
+        "API": "Healthy",
+        "LXD": "Healthy",
+    }
+    assert "Keycloak" not in names
+    assert "Wazuh" not in names
+    assert "OVN" not in names
+
+
+def test_infra_health_lxd_none_is_unavailable_not_healthy(monkeypatch):
+    monkeypatch.setattr(ih, "available_ram_mb", lambda: 8192)
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (None, False))
+    app.dependency_overrides[verify_token] = lambda: admin_claims()
+    client = TestClient(app)
+    body = client.get("/admin/infra-health", headers={"Authorization": "Bearer mock"}).json()
+    lxd = next(s for s in body["services"] if s["name"] == "LXD")
+    assert lxd["status"] == "Unavailable"
+
+
+def test_infra_health_lxd_timeout_is_unavailable(monkeypatch):
+    monkeypatch.setattr(ih, "available_ram_mb", lambda: 8192)
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, True))
+    app.dependency_overrides[verify_token] = lambda: admin_claims()
+    client = TestClient(app)
+    body = client.get("/admin/infra-health", headers={"Authorization": "Bearer mock"}).json()
+    lxd = next(s for s in body["services"] if s["name"] == "LXD")
+    assert lxd["status"] == "Unavailable"
+
+
+def test_infra_health_student_403(monkeypatch):
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, False))
+    app.dependency_overrides[verify_token] = lambda: student_claims()
+    client = TestClient(app)
+    res = client.get("/admin/infra-health", headers={"Authorization": "Bearer mock"})
+    assert res.status_code == 403
+
+
+def test_infra_health_instructor_403(monkeypatch):
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, False))
+    app.dependency_overrides[verify_token] = lambda: instructor_claims()
+    client = TestClient(app)
+    res = client.get("/admin/infra-health", headers={"Authorization": "Bearer mock"})
+    assert res.status_code == 403
+
+
+def test_infra_health_unauthenticated_401(monkeypatch):
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, False))
+    app.dependency_overrides.pop(verify_token, None)
+    client = TestClient(app)
+    res = client.get("/admin/infra-health")
+    assert res.status_code in (401, 403)
+
+
+def test_infra_health_db_failure_api_unavailable_capacity_null(monkeypatch):
+    monkeypatch.setattr(ih, "available_ram_mb", lambda: 8192)
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, False))
+
+    def _boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ih, "get_db_connection", _boom)
+    app.dependency_overrides[verify_token] = lambda: admin_claims()
+    client = TestClient(app)
+    res = client.get("/admin/infra-health", headers={"Authorization": "Bearer mock"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["capacity"] is None
+    api = next(s for s in body["services"] if s["name"] == "API")
+    assert api["status"] == "Unavailable"
+
+
+def test_health_liveness_unchanged_and_does_not_call_lxd(monkeypatch):
+    called = {"n": 0}
+
+    def _nope():
+        called["n"] += 1
+        raise AssertionError("GET /health must not probe LXD")
+
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", _nope)
+    app.dependency_overrides.clear()
+    client = TestClient(app)
+    res = client.get("/health")
+    assert res.status_code == 200
+    assert res.json() == {"status": "ok"}
+    assert called["n"] == 0
+
+
+def test_capacity_still_unauthenticated_after_infra_health():
+    app.dependency_overrides.clear()
+    client = TestClient(app)
+    res = client.get("/capacity")
+    assert res.status_code == 200
+    assert set(res.json()) == CAPACITY_KEYS
+

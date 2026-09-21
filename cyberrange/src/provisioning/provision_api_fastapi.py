@@ -20,6 +20,7 @@ from db import get_db_connection, init_db
 from logging_config import configure_logging
 from pods_router import router as pods_router
 from users_router import router as users_router
+from infra_health import router as infra_health_router
 from reaper import pod_ttl_reaper
 from score_poller import score_poller
 from scoring_imports import load_scoring_modules
@@ -47,6 +48,7 @@ if _score_mod is None or _wazuh_mod is None:
 app = FastAPI(title="Cyber Range Pod Provisioning API (LXD Version)", version="1.2.0")
 app.include_router(pods_router)
 app.include_router(users_router)
+app.include_router(infra_health_router)
 app.include_router(ae.alerts_router)
 app.dependency_overrides[ae.verify_token_dep] = real_verify_token
 ae.require_owner = real_require_owner
