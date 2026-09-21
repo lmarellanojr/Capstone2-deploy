@@ -4,10 +4,10 @@ import logging
 import sys
 
 import urllib3
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 from auth import require_owner as real_require_owner
-from auth import validate_auth_config
+from auth import require_app_role, validate_auth_config
 from auth import verify_token as real_verify_token
 import alerts_endpoint as ae
 from capacity import (
@@ -50,7 +50,9 @@ if _score_mod is None or _wazuh_mod is None:
 app = FastAPI(title="Cyber Range Pod Provisioning API (LXD Version)", version="1.2.0")
 app.include_router(pods_router)
 app.include_router(users_router)
-app.include_router(ae.alerts_router)
+# alerts_endpoint.py keeps its own stub-friendly verify_token_dep, so the
+# app-role guard (SEC-01 #36) is attached here rather than in that module.
+app.include_router(ae.alerts_router, dependencies=[Depends(require_app_role)])
 app.dependency_overrides[ae.verify_token_dep] = real_verify_token
 ae.require_owner = real_require_owner
 ae.get_db_connection = get_db_connection
