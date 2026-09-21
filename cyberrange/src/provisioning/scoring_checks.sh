@@ -18,12 +18,12 @@ set -euo pipefail
 SCENARIO_ID="${1:-}"
 MILESTONE_ID="${2:-}"
 TIMEOUT=10
-LOG_FILE="/var/log/cyberrange-scoring.log"
+LOG_FILE="${LOG_FILE:-/var/log/cyberrange-scoring.log}"
 
 # === LOGGING ===
 log() {
     local msg="[$(date +'%Y-%m-%d %H:%M:%S')] $*"
-    echo "$msg" >> "$LOG_FILE" 2>/dev/null || true
+    { echo "$msg" >> "$LOG_FILE"; } 2>/dev/null || true
 }
 
 error() {
@@ -82,6 +82,7 @@ check_behavior() {
 # subnet (10.0.<n>.0/24), which is exactly the condition that was missing
 # when this bug surfaced (interface administratively down -> ip route empty).
 has_subnet_route() {
+    command -v ip >/dev/null 2>&1 || return 1
     ip -4 route show 2>/dev/null | grep -qE '^10\.0\.[0-9]+\.0/24 '
 }
 
@@ -92,7 +93,8 @@ has_subnet_route() {
 # student's real subnet is 10.0.51.0/24). Deriving it from the live interface
 # ties the check to the actual pod, same spirit as has_subnet_route.
 own_subnet_prefix() {
-    ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d'.' -f1-3
+    command -v ip >/dev/null 2>&1 || return 0
+    ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d'.' -f1-3 || true
 }
 
 # Metasploit console history (interactive msfconsole does not write .bash_history).
@@ -121,7 +123,7 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 check_scenario_1() {
     local milestone=$1
     local prefix esc
-    prefix=$(own_subnet_prefix)
+    prefix=$(own_subnet_prefix 2>/dev/null || true)
     esc="${prefix//./\\.}"  # escape dots for regex use
     case $milestone in
         1)
