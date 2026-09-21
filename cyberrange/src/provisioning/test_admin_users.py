@@ -1,0 +1,578 @@
+"""ADM-USER (issue #32): Admin-only Keycloak user & role management.
+
+Router tests run against FakeKeycloak (in-memory, same interface as
+keycloak_admin.KeycloakAdminClient) wired in via dependency_overrides, so no
+Keycloak is needed. The HTTP client itself is covered at the bottom against a
+fake requests session. Every test gets a temporary SQLite DB from conftest.py's
+temp_db fixture -- never the shared pod_mgmt.db.
+"""
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+import db
+import keycloak_admin
+from auth import verify_token
+from keycloak_admin import (
+    APP_ROLES,
+    KeycloakAdminClient,
+    KeycloakAdminError,
+    KeycloakConflict,
+    KeycloakNotConfigured,
+    KeycloakNotFound,
+    KeycloakRejected,
+)
+from provision_api_fastapi import app
+
+NOISE_ROLES = ["offline_access", "uma_authorization", "default-roles-cyber-range"]
+
+
+def claims(username, *roles):
+    return {"preferred_username": username, "realm_access": {"roles": list(roles) + NOISE_ROLES}}
+
+
+ADMIN = claims("admin_demo", "admin")
+INSTRUCTOR = claims("instructor_demo", "instructor")
+STUDENT = claims("student_demo", "student")
+NO_ROLE = claims("no_app_role_user")
+
+
+class FakeKeycloak:
+    """In-memory stand-in for KeycloakAdminClient."""
+
+    def __init__(self):
+        self.users: dict[str, dict] = {}
+        self.roles: dict[str, set] = {}
+        self.passwords: dict[str, tuple] = {}
+        self.logged_out: list[str] = []
+        self.fail_on: set = set()
+        self.reject_password = False
+
+    def add(self, username, *roles, enabled=True):
+        uid = str(uuid.uuid4())
+        self.users[uid] = {
+            "id": uid,
+            "username": username,
+            "enabled": enabled,
+            "createdTimestamp": 1790000000000,
+        }
+        self.roles[uid] = set(roles) | {"default-roles-cyber-range"}
+        return uid
+
+    def _maybe_fail(self, op):
+        if op in self.fail_on:
+            raise KeycloakAdminError(f"{op} failed")
+
+    def get_user(self, user_id):
+        self._maybe_fail("get_user")
+        user = self.users.get(user_id)
+        if not user or user["username"].startswith("service-account-"):
+            raise KeycloakNotFound(user_id)
+        return dict(user)
+
+    def list_users(self, *, search, first, max_results):
+        self._maybe_fail("list_users")
+        users = [u for u in self.users.values() if not u["username"].startswith("service-account-")]
+        if search:
+            users = [u for u in users if search in u["username"]]
+        return [dict(u) for u in users[first : first + max_results]]
+
+    def app_role_members(self):
+        return {uid: [r for r in APP_ROLES if r in rs] for uid, rs in self.roles.items()}
+
+    def user_app_roles(self, user_id):
+        return [r for r in APP_ROLES if r in self.roles[user_id]]
+
+    def create_user(self, *, username, email, first_name, last_name):
+        self._maybe_fail("create_user")
+        if any(u["username"] == username for u in self.users.values()):
+            raise KeycloakConflict(username)
+        uid = self.add(username)
+        self.users[uid].update({"email": email, "firstName": first_name, "lastName": last_name})
+        return uid
+
+    def set_password(self, user_id, password, temporary):
+        if self.reject_password:
+            raise KeycloakRejected("policy")
+        self._maybe_fail("set_password")
+        self.passwords[user_id] = (password, temporary)
+
+    def delete_user(self, user_id):
+        self._maybe_fail("delete_user")
+        self.users.pop(user_id, None)
+        self.roles.pop(user_id, None)
+
+    def set_enabled(self, user_id, enabled):
+        self._maybe_fail("set_enabled")
+        self.users[user_id]["enabled"] = enabled
+
+    def logout_user(self, user_id):
+        self.logged_out.append(user_id)
+
+    def set_app_role(self, user_id, role):
+        self._maybe_fail("set_app_role")
+        self.roles[user_id] = (self.roles[user_id] - set(APP_ROLES)) | {role}
+
+
+@pytest.fixture
+def kc():
+    fake = FakeKeycloak()
+    app.dependency_overrides[keycloak_admin.get_client] = lambda: fake
+    return fake
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
+
+
+def as_caller(c):
+    app.dependency_overrides[verify_token] = lambda: c
+
+
+def audit_rows(event=None):
+    conn = db.get_db_connection()
+    try:
+        q = "SELECT event_type, student_id, result, detail FROM audit_log"
+        rows = conn.execute(q + (" WHERE event_type=?" if event else ""), (event,) if event else ()).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+NEW_USER = {
+    "username": "test_student1",
+    "email": "test_student1@local",
+    "first_name": "Test",
+    "last_name": "Student",
+    "role": "student",
+    "password": "Tmp!pass-1234",
+}
+
+PLACEHOLDER_ID = "00000000-0000-0000-0000-000000000000"
+ROUTES = [
+    ("get", "/admin/users", None),
+    ("post", "/admin/users", NEW_USER),
+    ("patch", f"/admin/users/{PLACEHOLDER_ID}/enabled", {"enabled": False}),
+    ("put", f"/admin/users/{PLACEHOLDER_ID}/role", {"role": "student"}),
+]
+
+
+# --- authorization boundary -------------------------------------------------
+
+
+@pytest.mark.parametrize("method,path,body", ROUTES)
+def test_unauthenticated_gets_401(client, kc, method, path, body):
+    app.dependency_overrides.pop(verify_token, None)
+    r = getattr(client, method)(path, **({"json": body} if body else {}))
+    assert r.status_code == 401
+    assert kc.users == {}
+
+
+@pytest.mark.parametrize("caller", [STUDENT, INSTRUCTOR, NO_ROLE], ids=["student", "instructor", "no_role"])
+@pytest.mark.parametrize("method,path,body", ROUTES)
+def test_non_admin_gets_403(client, kc, caller, method, path, body):
+    as_caller(caller)
+    r = getattr(client, method)(path, **({"json": body} if body else {}))
+    assert r.status_code == 403
+    assert kc.users == {}
+
+
+# --- list -------------------------------------------------------------------
+
+
+def test_list_users_returns_app_role_and_hides_service_accounts(client, kc):
+    as_caller(ADMIN)
+    kc.add("student_demo", "student")
+    kc.add("admin_demo", "admin")
+    kc.add("service-account-cyberrange-user-admin")
+    kc.add("norole_user")
+    r = client.get("/admin/users")
+    assert r.status_code == 200
+    by_name = {u["username"]: u for u in r.json()["users"]}
+    assert set(by_name) == {"student_demo", "admin_demo", "norole_user"}
+    assert by_name["student_demo"]["role"] == "student"
+    assert by_name["student_demo"]["roles"] == ["student"]
+    assert by_name["student_demo"]["enabled"] is True
+    assert by_name["student_demo"]["created_at"].endswith("Z")
+    assert by_name["norole_user"]["role"] is None
+    # Keycloak-internal roles are never reported as application roles.
+    assert all("default-roles-cyber-range" not in u["roles"] for u in by_name.values())
+
+
+def test_list_rejects_oversized_page(client, kc):
+    as_caller(ADMIN)
+    assert client.get("/admin/users?max=500").status_code == 422
+
+
+# --- create -----------------------------------------------------------------
+
+
+def test_create_user_happy_path(client, kc):
+    as_caller(ADMIN)
+    r = client.post("/admin/users", json=NEW_USER)
+    assert r.status_code == 201
+    body = r.json()
+    assert body["username"] == "test_student1"
+    assert body["role"] == "student"
+    assert body["enabled"] is True
+    assert "password" not in body
+    uid = body["id"]
+    assert kc.user_app_roles(uid) == ["student"]
+    assert kc.passwords[uid] == ("Tmp!pass-1234", True)  # temporary by default
+
+
+def test_create_user_can_set_permanent_password(client, kc):
+    as_caller(ADMIN)
+    r = client.post("/admin/users", json={**NEW_USER, "temporary_password": False})
+    assert r.status_code == 201
+    assert kc.passwords[r.json()["id"]][1] is False
+
+
+@pytest.mark.parametrize("role", ["student", "instructor", "admin"])
+def test_create_user_each_app_role(client, kc, role):
+    as_caller(ADMIN)
+    r = client.post("/admin/users", json={**NEW_USER, "role": role})
+    assert r.status_code == 201
+    assert kc.user_app_roles(r.json()["id"]) == [role]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"role": "superadmin"},
+        {"role": "default-roles-cyber-range"},
+        {"role": "offline_access"},
+        {"username": "Upper_Case"},
+        {"username": "bad name"},
+        {"username": "-leadingdash"},
+        {"username": "x" * 33},
+        {"password": "short"},
+        {"email": "not-an-email"},
+        {"realmRoles": ["admin"]},
+        {"enabled": False},
+        {"credentials": [{"type": "password", "value": "x"}]},
+    ],
+)
+def test_create_user_rejects_invalid_or_smuggled_fields(client, kc, override):
+    as_caller(ADMIN)
+    r = client.post("/admin/users", json={**NEW_USER, **override})
+    assert r.status_code == 422
+    assert kc.users == {}
+
+
+def test_create_duplicate_username_409(client, kc):
+    as_caller(ADMIN)
+    kc.add("test_student1", "student")
+    r = client.post("/admin/users", json=NEW_USER)
+    assert r.status_code == 409
+    rows = audit_rows("ADMIN_USER_CREATE")
+    assert rows[-1]["result"] == "FAILED" and "reason=exists" in rows[-1]["detail"]
+
+
+def test_create_rolls_back_when_role_assignment_fails(client, kc):
+    as_caller(ADMIN)
+    kc.fail_on.add("set_app_role")
+    r = client.post("/admin/users", json=NEW_USER)
+    assert r.status_code == 503
+    assert not any(u["username"] == "test_student1" for u in kc.users.values())
+    assert "rolled_back" in audit_rows("ADMIN_USER_CREATE")[-1]["detail"]
+
+
+def test_create_password_policy_rejection_is_422_and_rolled_back(client, kc):
+    as_caller(ADMIN)
+    kc.reject_password = True
+    r = client.post("/admin/users", json=NEW_USER)
+    assert r.status_code == 422
+    assert kc.users == {}
+    assert "reason=password_policy rolled_back" in audit_rows("ADMIN_USER_CREATE")[-1]["detail"]
+
+
+def test_create_is_audited_without_password(client, kc):
+    as_caller(ADMIN)
+    client.post("/admin/users", json=NEW_USER)
+    rows = audit_rows("ADMIN_USER_CREATE")
+    assert rows == [
+        {
+            "event_type": "ADMIN_USER_CREATE",
+            "student_id": "test_student1",
+            "result": "OK",
+            "detail": "actor=admin_demo role=student temporary_password=True",
+        }
+    ]
+    assert all(NEW_USER["password"] not in str(r) for r in audit_rows())
+
+
+# --- enable / disable ---------------------------------------------------------
+
+
+def test_disable_then_enable_user(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    r = client.patch(f"/admin/users/{uid}/enabled", json={"enabled": False})
+    assert r.status_code == 200
+    assert r.json()["enabled"] is False
+    assert kc.users[uid]["enabled"] is False
+    # Disabling ends sessions so refresh tokens / introspection stop working.
+    assert kc.logged_out == [uid]
+
+    r = client.patch(f"/admin/users/{uid}/enabled", json={"enabled": True})
+    assert r.status_code == 200
+    assert r.json()["enabled"] is True
+    assert kc.logged_out == [uid]  # enabling does not log anyone out
+
+    events = [(r["event_type"], r["result"]) for r in audit_rows()]
+    assert events == [("ADMIN_USER_DISABLE", "OK"), ("ADMIN_USER_ENABLE", "OK")]
+
+
+def test_admin_cannot_disable_self(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("admin_demo", "admin")
+    r = client.patch(f"/admin/users/{uid}/enabled", json={"enabled": False})
+    assert r.status_code == 409
+    assert kc.users[uid]["enabled"] is True
+    assert audit_rows("ADMIN_USER_DISABLE")[-1]["result"] == "DENIED"
+
+
+def test_enabled_unknown_user_404(client, kc):
+    as_caller(ADMIN)
+    assert client.patch(f"/admin/users/{PLACEHOLDER_ID}/enabled", json={"enabled": False}).status_code == 404
+
+
+def test_service_account_is_not_manageable(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("service-account-cyberrange-user-admin")
+    assert client.patch(f"/admin/users/{uid}/enabled", json={"enabled": False}).status_code == 404
+    assert kc.users[uid]["enabled"] is True
+
+
+def test_malformed_user_id_422(client, kc):
+    as_caller(ADMIN)
+    assert client.patch("/admin/users/..%2Fclients/enabled", json={"enabled": False}).status_code in (404, 422)
+    assert client.patch("/admin/users/not-a-uuid/enabled", json={"enabled": False}).status_code == 422
+
+
+# --- role assignment ------------------------------------------------------------
+
+
+def test_role_change_replaces_app_role_and_keeps_internal_roles(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    r = client.put(f"/admin/users/{uid}/role", json={"role": "instructor"})
+    assert r.status_code == 200
+    assert r.json()["role"] == "instructor"
+    assert r.json()["roles"] == ["instructor"]
+    assert kc.roles[uid] == {"instructor", "default-roles-cyber-range"}
+    assert kc.logged_out == [uid]
+    row = audit_rows("ADMIN_USER_ROLE_SET")[-1]
+    assert row["result"] == "OK"
+    assert row["detail"] == "actor=admin_demo role=instructor previous=student"
+
+
+def test_role_unchanged_does_not_log_user_out(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    assert client.put(f"/admin/users/{uid}/role", json={"role": "student"}).status_code == 200
+    assert kc.logged_out == []
+
+
+def test_role_change_collapses_multi_role_user_to_one(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("odd_user", "student", "instructor")
+    r = client.put(f"/admin/users/{uid}/role", json={"role": "student"})
+    assert r.json()["roles"] == ["student"]
+
+
+def test_role_rejects_non_app_role(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    for bad in ["realm-admin", "manage-users", "default-roles-cyber-range", "Admin"]:
+        assert client.put(f"/admin/users/{uid}/role", json={"role": bad}).status_code == 422
+    assert kc.user_app_roles(uid) == ["student"]
+
+
+def test_admin_cannot_change_own_role(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("admin_demo", "admin")
+    r = client.put(f"/admin/users/{uid}/role", json={"role": "student"})
+    assert r.status_code == 409
+    assert kc.user_app_roles(uid) == ["admin"]
+    assert audit_rows("ADMIN_USER_ROLE_SET")[-1]["result"] == "DENIED"
+
+
+def test_admin_can_demote_another_admin(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("other_admin", "admin")
+    assert client.put(f"/admin/users/{uid}/role", json={"role": "student"}).status_code == 200
+    assert kc.user_app_roles(uid) == ["student"]
+
+
+# --- degraded Keycloak ------------------------------------------------------------
+
+
+def test_keycloak_failure_is_503_and_audited(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.fail_on.add("set_enabled")
+    r = client.patch(f"/admin/users/{uid}/enabled", json={"enabled": False})
+    assert r.status_code == 503
+    assert audit_rows("ADMIN_USER_DISABLE")[-1]["result"] == "FAILED"
+
+
+def test_unconfigured_client_is_503_not_crash(client):
+    as_caller(ADMIN)
+    app.dependency_overrides[keycloak_admin.get_client] = lambda: KeycloakAdminClient(None, None, None, None)
+    r = client.get("/admin/users")
+    assert r.status_code == 503
+    assert r.json()["detail"] == "User management is not configured"
+
+
+def test_student_flows_unaffected_when_user_management_unconfigured(client):
+    # Unconfigured Keycloak admin must not break unrelated endpoints.
+    app.dependency_overrides[keycloak_admin.get_client] = lambda: KeycloakAdminClient(None, None, None, None)
+    as_caller(STUDENT)
+    assert client.get("/pods").status_code == 200
+    assert client.get("/health").status_code == 200
+
+
+# --- no public signup -------------------------------------------------------------
+
+
+def test_no_unauthenticated_route_can_create_users():
+    """Every route that can reach Keycloak user writes is under /admin/users and
+    guarded by verify_token -- there is no signup/register route anywhere."""
+    # The OpenAPI schema, not app.routes: newer FastAPI nests included routers.
+    paths = app.openapi()["paths"]
+    assert paths, "no routes found -- this test would pass vacuously"
+    assert not any(k in p.lower() for p in paths for k in ("signup", "sign-up", "register"))
+    user_write_routes = {
+        (path, method.upper())
+        for path, ops in paths.items()
+        for method in ops
+        if path.startswith("/admin/users") and method in {"post", "put", "patch", "delete"}
+    }
+    assert user_write_routes == {
+        ("/admin/users", "POST"),
+        ("/admin/users/{user_id}/enabled", "PATCH"),
+        ("/admin/users/{user_id}/role", "PUT"),
+    }
+
+
+# --- KeycloakAdminClient HTTP behaviour -------------------------------------------
+
+
+class FakeResponse:
+    def __init__(self, status_code, body=None, headers=None):
+        self.status_code = status_code
+        self._body = body
+        self.headers = headers or {}
+
+    def json(self):
+        return self._body
+
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def post(self, url, **kw):
+        self.calls.append(("POST", url, kw))
+        return self.responses.pop(0)
+
+    def request(self, method, url, **kw):
+        self.calls.append((method, url, kw))
+        return self.responses.pop(0)
+
+
+TOKEN_OK = FakeResponse(200, {"access_token": "svc-token", "expires_in": 300})
+
+
+def make_client(responses):
+    session = FakeSession(responses)
+    return KeycloakAdminClient("http://kc/auth", "cyber-range", "cyberrange-user-admin", "s3cret", session=session), session
+
+
+def test_client_uses_client_credentials_and_caches_token():
+    kc, s = make_client([TOKEN_OK, FakeResponse(200, []), FakeResponse(200, [])])
+    kc.list_users(search=None, first=0, max_results=10)
+    kc.list_users(search=None, first=0, max_results=10)
+    token_calls = [c for c in s.calls if c[1].endswith("/protocol/openid-connect/token")]
+    assert len(token_calls) == 1
+    assert token_calls[0][2]["data"] == {"grant_type": "client_credentials"}
+    assert token_calls[0][1] == "http://kc/auth/realms/cyber-range/protocol/openid-connect/token"
+    assert s.calls[1][1] == "http://kc/auth/admin/realms/cyber-range/users"
+    assert s.calls[1][2]["headers"]["Authorization"] == "Bearer svc-token"
+
+
+def test_client_create_parses_location_header():
+    loc = "http://kc/auth/admin/realms/cyber-range/users/1234abcd-0000-0000-0000-000000000000"
+    kc, s = make_client([TOKEN_OK, FakeResponse(201, None, {"Location": loc})])
+    uid = kc.create_user(username="u1", email=None, first_name=None, last_name=None)
+    assert uid == "1234abcd-0000-0000-0000-000000000000"
+    sent = s.calls[1][2]["json"]
+    assert sent["enabled"] is True and "credentials" not in sent and "realmRoles" not in sent
+
+
+@pytest.mark.parametrize(
+    "code,exc",
+    [(404, KeycloakNotFound), (409, KeycloakConflict), (400, KeycloakRejected), (403, KeycloakAdminError), (500, KeycloakAdminError)],
+)
+def test_client_maps_http_errors(code, exc):
+    kc, _ = make_client([TOKEN_OK, FakeResponse(code)])
+    with pytest.raises(exc):
+        kc.set_enabled("u", False)
+
+
+def test_client_bad_secret_fails_closed():
+    kc, _ = make_client([FakeResponse(401)])
+    with pytest.raises(KeycloakAdminError):
+        kc.list_users(search=None, first=0, max_results=1)
+
+
+def test_client_unconfigured_raises_not_configured():
+    with pytest.raises(KeycloakNotConfigured):
+        KeycloakAdminClient(None, "cyber-range", "x", None).list_users(search=None, first=0, max_results=1)
+
+
+def test_client_set_app_role_adds_before_removing_and_ignores_internal_roles():
+    current = [
+        {"id": "r-stu", "name": "student"},
+        {"id": "r-def", "name": "default-roles-cyber-range"},
+    ]
+    kc, s = make_client(
+        [
+            TOKEN_OK,
+            FakeResponse(200, current),  # GET role-mappings
+            FakeResponse(200, {"id": "r-ins", "name": "instructor"}),  # GET /roles/instructor
+            FakeResponse(204),  # POST add
+            FakeResponse(204),  # DELETE remove
+        ]
+    )
+    kc.set_app_role("uid-1", "instructor")
+    methods = [(m, u.split("/cyber-range")[-1]) for m, u, _ in s.calls[1:]]
+    assert methods == [
+        ("GET", "/users/uid-1/role-mappings/realm"),
+        ("GET", "/roles/instructor"),
+        ("POST", "/users/uid-1/role-mappings/realm"),
+        ("DELETE", "/users/uid-1/role-mappings/realm"),
+    ]
+    # Only the old app role is removed; default-roles-cyber-range is untouched.
+    assert s.calls[-1][2]["json"] == [{"id": "r-stu", "name": "student"}]
+
+
+def test_client_set_app_role_rejects_non_app_role():
+    kc, _ = make_client([])
+    with pytest.raises(ValueError):
+        kc.set_app_role("uid-1", "realm-admin")
+
+
+def test_base_and_realm_derived_from_introspect_url(monkeypatch):
+    monkeypatch.delenv("KEYCLOAK_BASE_URL", raising=False)
+    monkeypatch.delenv("KEYCLOAK_REALM", raising=False)
+    monkeypatch.setenv(
+        "KEYCLOAK_INTROSPECT_URL",
+        "http://10.115.77.12/auth/realms/cyber-range/protocol/openid-connect/token/introspect",
+    )
+    assert keycloak_admin._derive_base_and_realm() == ("http://10.115.77.12/auth", "cyber-range")
