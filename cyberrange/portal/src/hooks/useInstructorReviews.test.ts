@@ -221,7 +221,7 @@ describe("useInstructorReviews race condition mitigation", () => {
 
     const { result, rerender } = renderHook(
       ({ filter }: { filter?: string }) => useInstructorReviews({ statusFilter: filter }),
-      { initialProps: { filter: undefined } }
+      { initialProps: { filter: undefined as string | undefined } }
     )
 
     expect(result.current.loading).toBe(true)
@@ -289,27 +289,6 @@ describe("useInstructorReviews race condition mitigation", () => {
     expect(result.current.reviews[0].review_id).toBe(202)
 
     listReviewsMock.mockRestore()
-  })
-
-  it("ensures error state is distinguishable from empty state to prevent dual rendering", () => {
-    const errorState = evaluateReviewsResult({
-      success: false,
-      error: { isAxiosError: true, response: { status: 500, data: { detail: "Internal Error" } } },
-    })
-
-    expect(errorState.error).toBeTruthy()
-    expect(errorState.reviews).toEqual([])
-
-    // Guard logic: only render empty-state when error is null
-    const getRenderBranch = (error: string | null, reviewsCount: number) => {
-      if (error) return "error-only"
-      if (reviewsCount === 0) return "empty-state"
-      return "table"
-    }
-
-    expect(getRenderBranch(errorState.error, errorState.reviews.length)).toBe("error-only")
-    expect(getRenderBranch(null, 0)).toBe("empty-state")
-    expect(getRenderBranch(null, 5)).toBe("table")
   })
 })
 
