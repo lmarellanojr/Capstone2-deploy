@@ -78,11 +78,15 @@ ROUTE_POLICY = {
     ("GET", "/progress"): (ANY_APP_ROLE, "/progress", None),
     ("DELETE", "/progress/{scenario_id}"): (ANY_APP_ROLE, "/progress/1", None),
     ("POST", "/reviews/submit"): (ANY_APP_ROLE, "/reviews/submit", {"scenario_id": 1, "report_text": "matrix probe"}),
+    # INST-03 (#86): owner-or-staff read, owner-only resubmit (see IDOR tests below).
+    ("GET", "/reviews/{review_id}"): (ANY_APP_ROLE, "/reviews/1", None),
+    ("POST", "/reviews/{review_id}/resubmit"): (ANY_APP_ROLE, "/reviews/1/resubmit", {"report_text": "matrix probe"}),
     ("GET", "/instructor/pods"): (INSTRUCTOR, "/instructor/pods", None),
     ("GET", "/instructor/students"): (INSTRUCTOR, "/instructor/students", None),
     ("GET", "/instructor/students/{student_id}"): (INSTRUCTOR, "/instructor/students/student_demo", None),
     ("GET", "/instructor/reviews"): (INSTRUCTOR, "/instructor/reviews", None),
     ("GET", "/instructor/reviews/{review_id}"): (INSTRUCTOR, "/instructor/reviews/1", None),
+    ("POST", "/instructor/reviews/{review_id}/resolve"): (INSTRUCTOR, "/instructor/reviews/1/resolve", {"status": "APPROVED"}),
     ("DELETE", "/admin/pods/{pod_id}/force-destroy"): (ADMIN, f"/admin/pods/{POD}/force-destroy", None),
     ("GET", "/admin/users"): (ADMIN, "/admin/users", None),
     ("POST", "/admin/users"): (ADMIN, "/admin/users", {"username": "matrix_probe", "role": "student", "password": "Probe!12345"}),
@@ -280,6 +284,58 @@ def test_progress_reset_only_touches_callers_rows(client):
     left = [r[0] for r in conn.execute("SELECT student_id FROM milestone_verification").fetchall()]
     conn.close()
     assert left == ["victim_student"]
+
+
+def _insert_review(owner, status="PENDING"):
+    conn = db.get_db_connection()
+    cur = conn.execute(
+        "INSERT INTO review_cases (student_id, scenario_id, case_type, report_text, status) "
+        "VALUES (?, 1, 'WRITTEN_REPORT', 'original', ?)",
+        (owner, status),
+    )
+    conn.commit()
+    review_id = cur.lastrowid
+    conn.close()
+    return review_id
+
+
+def _review_row(review_id):
+    conn = db.get_db_connection()
+    row = dict(conn.execute("SELECT * FROM review_cases WHERE review_id=?", (review_id,)).fetchone())
+    conn.close()
+    return row
+
+
+@pytest.mark.parametrize("caller,want", [("student", 404), ("instructor", 200), ("admin", 200)])
+def test_other_students_review_detail(client, caller, want):
+    """IDOR on INST-03's GET /reviews/{id}: owner or staff only; 404 for another student."""
+    rid = _insert_review("victim_student")
+    as_caller(caller)
+    r = client.get(f"/reviews/{rid}")
+    assert r.status_code == want, r.text[:200]
+    if want == 404:
+        assert "original" not in r.text
+
+
+@pytest.mark.parametrize("caller", ["student", "instructor", "admin"])
+def test_cannot_resubmit_another_students_review(client, caller):
+    """Owner-only, even for staff: nobody can rewrite a student's submission for them."""
+    rid = _insert_review("victim_student", status="RETRY")
+    before = _review_row(rid)
+    as_caller(caller)
+    r = client.post(f"/reviews/{rid}/resubmit", json={"report_text": "tampered"})
+    assert r.status_code == 404, r.text[:200]
+    assert _review_row(rid) == before
+
+
+@pytest.mark.parametrize("caller", ["student", "no_role"])
+def test_student_cannot_resolve_reviews(client, caller):
+    rid = _insert_review("student_demo")
+    before = _review_row(rid)
+    as_caller(caller)
+    r = client.post(f"/instructor/reviews/{rid}/resolve", json={"status": "APPROVED", "score": 100})
+    assert r.status_code == 403
+    assert _review_row(rid) == before
 
 
 @pytest.mark.parametrize(

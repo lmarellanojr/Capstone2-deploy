@@ -13,7 +13,7 @@
 |---|---|---|
 | **Pages** (`/dashboard`, `/instructor/*`, `/admin/*`, ...) | `portal/src/middleware.ts` + `routeRoles.ts` (AUTH-04/05) | `portal/src/middleware.test.ts`: 5 callers × 13 pages, manual URL attempts, and a matcher inventory proving every non-public page is protected |
 | **Proxy routes** (`/api/*`) | `portal/src/lib/apiProxy.ts` requires a session and forwards **only the session's own token**; the backend decides | `portal/src/lib/apiProxy.test.ts`: no session → 401 with no upstream call, client `Authorization`/`X-Roles` headers ignored, backend 401/403 passed through unchanged, and an inventory proving every `/api` route goes through the proxy or is a reviewed exception |
-| **Backend URLs** (FastAPI) | `auth.require_app_role` (new, router-level) + `require_role` / `require_owner` per route | `src/provisioning/test_sec01_rbac_matrix.py`: 5 callers × every served route (24), plus IDOR and identity-smuggling attempts. A route inventory fails if any route is added without a policy |
+| **Backend URLs** (FastAPI) | `auth.require_app_role` (new, router-level) + `require_role` / `require_owner` per route | `src/provisioning/test_sec01_rbac_matrix.py`: 5 callers × every served route (27), plus IDOR and identity-smuggling attempts. A route inventory fails if any route is added without a policy |
 | **Live backend** | same, against the real Keycloak + API | `deploy/host/verify_sec01_rbac.sh` (§5) |
 | **Live pages + proxy** | same, through the real portal and browser session | browser console check (§6) |
 
@@ -23,11 +23,11 @@ The callers are: unauthenticated, **authenticated with no application role**, St
 
 ## 2. Finding fixed in this PR
 
-**Role-less accounts could use every Student API.** AUTH-03's policy is that an account with none of `student` / `instructor` / `admin` is unauthorized. The portal enforces that for pages (middleware → `/no-role`). But the self-scoped Student routes only checked *who* was calling, never *whether they had a role*: `POST /pods/provision`, `GET /pods`, `/pods/{id}/*`, `/progress`, `DELETE /progress/{id}` and `POST /reviews/submit`. A role-less Keycloak account could skip `/no-role` by calling `/api/*` or the backend directly, and provision a pod or write review cases.
+**Role-less accounts could use every Student API.** AUTH-03's policy is that an account with none of `student` / `instructor` / `admin` is unauthorized. The portal enforces that for pages (middleware → `/no-role`). But the self-scoped Student routes only checked *who* was calling, never *whether they had a role*: `POST /pods/provision`, `GET /pods`, `/pods/{id}/*`, `/progress`, `DELETE /progress/{id}`, `POST /reviews/submit`, and INST-03's (#86) `GET /reviews/{id}` and `POST /reviews/{id}/resubmit`. A role-less Keycloak account could skip `/no-role` by calling `/api/*` or the backend directly, and provision a pod or write review cases.
 
 **Fix:** `auth.require_app_role` is a FastAPI dependency attached to the **whole** `pods_router` and alerts router, so a future route cannot forget it. Instructor/Admin routes keep their narrower `require_role`.
 
-**Proof:** against unfixed `main` (`2b9eb8f`), exactly the 12 no-role matrix rows plus `test_no_role_account_cannot_provision_or_write` fail. Every other row already passed there, so the existing Student / Instructor / Admin guards were correct. No current account is affected: every user in the test realm holds exactly one application role (read-only `kcadm` check, 2026-09-21).
+**Proof:** against unfixed `main` (`2fb5206`, after INST-03), `test_sec01_rbac_matrix.py` gives `15 failed, 162 passed`: exactly the 14 no-role matrix rows plus `test_no_role_account_cannot_provision_or_write`. Every other row, including the IDOR tests on INST-03's review routes, already passed there, so the existing Student / Instructor / Admin guards were correct. No current account is affected: every user in the test realm holds exactly one application role (read-only `kcadm` check, 2026-09-21).
 
 ---
 
@@ -62,11 +62,14 @@ The callers are: unauthenticated, **authenticated with no application role**, St
 | GET | `/progress` | app_role | 401 ✅ | 403 ✅ | 200 ✅ | 200 ✅ | 200 ✅ |
 | DELETE | `/progress/{scenario_id}` | app_role | 401 ✅ | 403 ✅ | 200 ✅ | 200 ✅ | 200 ✅ |
 | POST | `/reviews/submit` | app_role | 401 ✅ | 403 ✅ | 200 ✅ | 200 ✅ | 200 ✅ |
+| GET | `/reviews/{review_id}` | app_role | 401 ✅ | 403 ✅ | 404 ✅ | 404 ✅ | 404 ✅ |
+| POST | `/reviews/{review_id}/resubmit` | app_role | 401 ✅ | 403 ✅ | 404 ✅ | 404 ✅ | 404 ✅ |
 | GET | `/instructor/pods` | instructor | 401 ✅ | 403 ✅ | 403 ✅ | 200 ✅ | 200 ✅ |
 | GET | `/instructor/students` | instructor | 401 ✅ | 403 ✅ | 403 ✅ | 200 ✅ | 200 ✅ |
 | GET | `/instructor/students/{student_id}` | instructor | 401 ✅ | 403 ✅ | 403 ✅ | 404 ✅ | 404 ✅ |
 | GET | `/instructor/reviews` | instructor | 401 ✅ | 403 ✅ | 403 ✅ | 200 ✅ | 200 ✅ |
 | GET | `/instructor/reviews/{review_id}` | instructor | 401 ✅ | 403 ✅ | 403 ✅ | 404 ✅ | 404 ✅ |
+| POST | `/instructor/reviews/{review_id}/resolve` | instructor | 401 ✅ | 403 ✅ | 403 ✅ | 404 ✅ | 404 ✅ |
 | DELETE | `/admin/pods/{pod_id}/force-destroy` | admin | 401 ✅ | 403 ✅ | 403 ✅ | 403 ✅ | 409 ✅ |
 | GET | `/admin/users` | admin | 401 ✅ | 403 ✅ | 403 ✅ | 403 ✅ | 200 ✅ |
 | POST | `/admin/users` | admin | 401 ✅ | 403 ✅ | 403 ✅ | 403 ✅ | 201 ✅ |
@@ -75,6 +78,7 @@ The callers are: unauthenticated, **authenticated with no application role**, St
 
 **Manual URL/API bypass (unit):**
 - **Another user's pod id in the URL:** 404 for Student, Instructor and Admin on guac-token, lab-urls, milestones, alerts, verify and destroy. The victim's pod is untouched. `/status` gives 404 for Student and Instructor, 200 for Admin (admin inspect).
+- **Another student's review (INST-03):** `GET /reviews/{id}` → 404 for Student, 200 for Instructor/Admin. `POST /reviews/{id}/resubmit` → 404 for everyone but the owner, including staff, and the row is unchanged. `POST /instructor/reviews/{id}/resolve` → 403 for Student and role-less accounts, and the row is unchanged.
 - **`?student_id=victim` on `GET /pods`:** ignored for Student and Instructor.
 - **`student_id` in the provision or review body:** ignored; rows are stored under the caller.
 - **`DELETE /progress/{id}`:** only removes the caller's own rows.
@@ -142,6 +146,6 @@ _Pending live run._
 
 ```bash
 cd cyberrange
-.venv/bin/python -m pytest -q -p no:warnings                                   # backend: 315 passed
-cd portal && npx jest                                                          # portal: 119 passed
+.venv/bin/python -m pytest -q -p no:warnings                                   # backend: 374 passed
+cd portal && npx jest                                                          # portal: 142 passed
 ```
