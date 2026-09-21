@@ -55,36 +55,44 @@ kcadm.sh update realms/cyber-range -s registrationAllowed=false
 echo "registrationAllowed=$(kcadm.sh get realms/cyber-range --fields registrationAllowed --format csv --noquotes | tail -1)"
 
 # --- service-account-only confidential client ---
+# One hardened setting list for both paths, so a re-run fully re-locks a
+# client someone widened in the console (public client, redirects, browser or
+# password grants) -- this client holds manage-users.
+HARDEN=(
+  -s enabled=true
+  -s publicClient=false
+  -s protocol=openid-connect
+  -s serviceAccountsEnabled=true
+  -s standardFlowEnabled=false
+  -s implicitFlowEnabled=false
+  -s directAccessGrantsEnabled=false
+  -s 'redirectUris=[]'
+  -s 'webOrigins=[]'
+)
 CID=$(kcadm.sh get clients -r cyber-range -q "clientId=$CLIENT_ID" --fields id --format csv --noquotes 2>/dev/null | tail -1 || true)
 if [ -z "$CID" ] || [ "$CID" = "id" ]; then
-  kcadm.sh create clients -r cyber-range \
-    -s "clientId=$CLIENT_ID" \
-    -s enabled=true \
-    -s publicClient=false \
-    -s protocol=openid-connect \
-    -s serviceAccountsEnabled=true \
-    -s standardFlowEnabled=false \
-    -s implicitFlowEnabled=false \
-    -s directAccessGrantsEnabled=false \
-    -s 'redirectUris=[]' \
-    -s 'webOrigins=[]'
+  kcadm.sh create clients -r cyber-range -s "clientId=$CLIENT_ID" "${HARDEN[@]}"
   CID=$(kcadm.sh get clients -r cyber-range -q "clientId=$CLIENT_ID" --fields id --format csv --noquotes | tail -1)
   echo USER_ADMIN_CLIENT_CREATED
 else
-  # Re-assert the locked-down flow settings in case someone widened them in the console.
-  kcadm.sh update "clients/$CID" -r cyber-range \
-    -s serviceAccountsEnabled=true -s standardFlowEnabled=false \
-    -s implicitFlowEnabled=false -s directAccessGrantsEnabled=false
-  echo USER_ADMIN_CLIENT_EXISTS
+  kcadm.sh update "clients/$CID" -r cyber-range "${HARDEN[@]}"
+  echo USER_ADMIN_CLIENT_EXISTS_RELOCKED
 fi
+echo "client: $(kcadm.sh get "clients/$CID" -r cyber-range --fields publicClient,standardFlowEnabled,implicitFlowEnabled,directAccessGrantsEnabled,serviceAccountsEnabled,redirectUris,webOrigins --format csv --noquotes | tail -1)"
 
 SA_USER="service-account-$CLIENT_ID"
+WANT_ROLES="manage-users query-users view-realm view-users"
 kcadm.sh add-roles -r cyber-range --uusername "$SA_USER" --cclientid realm-management \
   --rolename view-users --rolename query-users --rolename manage-users --rolename view-realm
 
-echo "=== $SA_USER realm-management roles ==="
-kcadm.sh get-roles -r cyber-range --uusername "$SA_USER" --cclientid realm-management --fields name --format csv --noquotes | tr '\n' ' '
-echo
+# Exactly the four realm-management roles -- fail loudly on any extra (e.g. a
+# console-granted realm-admin) rather than silently removing it.
+HAVE_ROLES=$(kcadm.sh get-roles -r cyber-range --uusername "$SA_USER" --cclientid realm-management --fields name --format csv --noquotes | grep -vx name | sort | tr '\n' ' ' | sed 's/ $//')
+echo "=== $SA_USER realm-management roles: $HAVE_ROLES"
+if [ "$HAVE_ROLES" != "$WANT_ROLES" ]; then
+  echo "ROLE_DRIFT: expected exactly [$WANT_ROLES] -- remove extras in the Keycloak console, then re-run"
+  exit 1
+fi
 
 SECRET=$(kcadm.sh get "clients/$CID/client-secret" -r cyber-range --fields value --format csv --noquotes | tail -1)
 [ -n "$SECRET" ] && [ "$SECRET" != "value" ] || { echo "could not read client secret"; exit 1; }

@@ -11,10 +11,11 @@
 # through the same Keycloak URL the API introspects against
 # (KEYCLOAK_INTROSPECT_URL), so issuer/introspection behaviour matches prod.
 #
-# NOT read-only: creates one throwaway user per run (adm_user_test_<HHMMSS>),
-# changes its role, disables/enables it, and leaves it DISABLED. It never
-# modifies the demo accounts. Takes ~2.5 min: two 61s waits let the API's
-# 60s introspection cache expire before checking that revoked tokens fail.
+# NOT read-only: creates two throwaway users per run (adm_user_test_<HHMMSS>,
+# a student, and adm_admin_test_<HHMMSS>, an admin that gets revoked), changes
+# roles, disables/enables, and leaves both DISABLED. It never modifies the demo
+# accounts. Revoked tokens are expected to fail IMMEDIATELY (the API evicts
+# them from its introspection cache), so there are no waits.
 set -uo pipefail
 REPO=/home/llms_admin/cyberrange
 set -a; . "$REPO/env/.env"; . /home/llms_admin/cyberrange-data/demo-accounts.env; set +a
@@ -23,6 +24,7 @@ TOKEN_URL="${KEYCLOAK_INTROSPECT_URL%/introspect}"
 RESP=$(mktemp); chmod 600 "$RESP"; trap 'rm -f "$RESP"' EXIT
 TEST_USER="adm_user_test_$(date +%H%M%S)"
 TEST_PW="Adm!$(openssl rand -hex 8)"
+TEST_ADMIN="adm_admin_test_$(date +%H%M%S)"
 NOBODY=00000000-0000-0000-0000-000000000000
 FAILS=0
 
@@ -71,6 +73,13 @@ call() {  # call <want> <label> <METHOD> <path> [token] [json]
 }
 TEST_ID_MASK=__none__
 
+profile() {  # profile <label> -- first/last name + email of $TEST_USER as GET /admin/users returns them
+  local got
+  got=$(curl -sS -H "Authorization: Bearer $ADMIN_TOK" "$API/admin/users?search=$TEST_USER" \
+    | python3 -c 'import json,sys; u=[x for x in json.load(sys.stdin)["users"] if x["username"]==sys.argv[1]]; print("%s|%s|%s" % (u[0]["first_name"], u[0]["last_name"], u[0]["email"]) if u else "missing")' "$TEST_USER")
+  [ "$got" = "ADM|Test|$TEST_USER@local" ]; check $? "$1" "first|last|email=$got"
+}
+
 echo "=== ADM-USER #32 evidence  $(date -u +%FT%TZ)  api=$API  branch=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)@$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)"
 
 echo; echo "=== 1. Demo account tokens"
@@ -110,13 +119,13 @@ call 409 "admin: duplicate username"               POST  /admin/users "$ADMIN_TO
 call 422 "admin: non-app role rejected"            POST  /admin/users "$ADMIN_TOK" "${CREATE/\"role\":\"student\"/\"role\":\"realm-admin\"}"
 call 422 "admin: smuggled realmRoles rejected"     POST  /admin/users "$ADMIN_TOK" "${CREATE%\}},\"realmRoles\":[\"admin\"]}"
 T1=$(token "$TEST_USER" "$TEST_PW")
-[[ $T1 != ERR:* ]] && [ "$(roles_of "$T1")" = student ]; check $? "new user can sign in as student" "${T1:0:4}... roles=$( [[ $T1 == ERR:* ]] && echo "$T1" || roles_of "$T1")"
+[[ $T1 != ERR:* ]] && [ "$(roles_of "$T1")" = student ]; check $? "new user can sign in as student" "roles=$( [[ $T1 == ERR:* ]] && echo "$T1" || roles_of "$T1")"
+profile "list returns name + email (brief representation)"
 
 echo; echo "=== 5. Role assignment + role refresh"
-call 200 "new user's student token works"         GET   /pods "$T1"
+call 200 "new user's student token works (now cached)" GET /pods "$T1"
 call 200 "admin: set role -> instructor"           PUT   "/admin/users/$TEST_ID/role" "$ADMIN_TOK" '{"role":"instructor"}'
-echo "      waiting 61s for the API's introspection cache (max 60s) ..."; sleep 61
-call 401 "old student token rejected after change" GET   /pods "$T1"
+call 401 "old token rejected immediately"          GET   /pods "$T1"
 T2=$(token "$TEST_USER" "$TEST_PW")
 [ "$(roles_of "$T2")" = instructor ]; check $? "fresh sign-in carries new role" "roles=$(roles_of "$T2")"
 call 200 "instructor endpoint now allowed"         GET   /instructor/pods "$T2"
@@ -126,11 +135,11 @@ echo; echo "=== 6. Disable / enable"
 call 200 "admin: disable user"                     PATCH "/admin/users/$TEST_ID/enabled" "$ADMIN_TOK" '{"enabled":false}'
 R=$(token "$TEST_USER" "$TEST_PW")
 [[ $R == ERR:* ]]; check $? "disabled user cannot sign in" "${R:0:60}"
-echo "      waiting 61s for the API's introspection cache (max 60s) ..."; sleep 61
-call 401 "disabled user's existing token rejected" GET   /pods "$T2"
+call 401 "cached token rejected immediately"       GET   /pods "$T2"
 call 200 "admin: enable user"                      PATCH "/admin/users/$TEST_ID/enabled" "$ADMIN_TOK" '{"enabled":true}'
 T3=$(token "$TEST_USER" "$TEST_PW")
 [[ $T3 != ERR:* ]]; check $? "re-enabled user can sign in" "roles=$( [[ $T3 == ERR:* ]] && echo "$T3" || roles_of "$T3")"
+profile "name + email survive disable then enable"
 
 echo; echo "=== 7. Admin self-protection"
 ADMIN_ID=$(curl -sS -H "Authorization: Bearer $ADMIN_TOK" "$API/admin/users?search=admin_demo" \
@@ -140,16 +149,32 @@ call 409 "admin cannot disable self"               PATCH "/admin/users/$ADMIN_ID
 call 409 "admin cannot change own role"            PUT   "/admin/users/$ADMIN_ID/role" "$ADMIN_TOK" '{"role":"student"}'
 TEST_ID_MASK=$TEST_ID
 
+echo; echo "=== 7b. Revoked Admin cannot act on a still-valid token"
+ADMIN2_BODY=$(printf '{"username":"%s","role":"admin","password":"%s","temporary_password":false}' "$TEST_ADMIN" "$TEST_PW")
+call 201 "admin: create second admin $TEST_ADMIN"  POST  /admin/users "$ADMIN_TOK" "$ADMIN2_BODY"
+ADMIN2_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "$RESP" 2>/dev/null)
+A2=$(token "$TEST_ADMIN" "$TEST_PW")
+[ "$(roles_of "$A2")" = admin ]; check $? "second admin signs in" "roles=$(roles_of "$A2")"
+call 200 "second admin token works (now cached)"   GET   /admin/users "$A2"
+TEST_ID_MASK=$ADMIN2_ID
+call 200 "admin_demo demotes second admin"          PUT   "/admin/users/$ADMIN2_ID/role" "$ADMIN_TOK" '{"role":"student"}'
+TEST_ID_MASK=$ADMIN_ID
+call 401 "revoked admin cannot create an admin"    POST  /admin/users "$A2" "$(printf '{"username":"%s_x","role":"admin","password":"%s"}' "$TEST_ADMIN" "$TEST_PW")"
+call 401 "revoked admin cannot disable admin_demo" PATCH "/admin/users/$ADMIN_ID/enabled" "$A2" '{"enabled":false}'
+TEST_ID_MASK=$ADMIN2_ID
+call 200 "cleanup: disable second admin"           PATCH "/admin/users/$ADMIN2_ID/enabled" "$ADMIN_TOK" '{"enabled":false}'
+TEST_ID_MASK=$TEST_ID
+
 echo; echo "=== 8. Audit trail (audit_log, newest first)"
 python3 - "$DB_PATH" <<'PY'
 import sqlite3, sys
 conn = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 for r in conn.execute("SELECT timestamp, event_type, student_id, result, detail FROM audit_log "
-                      "WHERE event_type LIKE 'ADMIN_USER_%' ORDER BY id DESC LIMIT 12"):
+                      "WHERE event_type LIKE 'ADMIN_USER_%' ORDER BY id DESC LIMIT 16"):
     print("      " + " | ".join(str(x) for x in r))
 PY
 
 echo; echo "=== 9. Cleanup"
 call 200 "admin: leave test user disabled"         PATCH "/admin/users/$TEST_ID/enabled" "$ADMIN_TOK" '{"enabled":false}'
 
-echo; echo "=== RESULT: $FAILS failure(s)  test_user=$TEST_USER (left disabled)"
+echo; echo "=== RESULT: $FAILS failure(s)  test_users=$TEST_USER,$TEST_ADMIN (both left disabled)"

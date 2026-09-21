@@ -9,10 +9,13 @@ temp_db fixture -- never the shared pod_mgmt.db.
 import uuid
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import db
+import introspect_cache
 import keycloak_admin
+import users_router
 from auth import verify_token
 from keycloak_admin import (
     APP_ROLES,
@@ -78,6 +81,17 @@ class FakeKeycloak:
             users = [u for u in users if search in u["username"]]
         return [dict(u) for u in users[first : first + max_results]]
 
+    def enabled_admins(self):
+        self._maybe_fail("enabled_admins")
+        return [
+            dict(self.users[uid]) for uid, rs in self.roles.items()
+            if "admin" in rs and self.users[uid]["enabled"]
+            and not self.users[uid]["username"].startswith("service-account-")
+        ]
+
+    def usernames(self):
+        return {u["username"] for u in self.users.values()}
+
     def app_role_members(self):
         return {uid: [r for r in APP_ROLES if r in rs] for uid, rs in self.roles.items()}
 
@@ -117,7 +131,11 @@ class FakeKeycloak:
 
 @pytest.fixture
 def kc():
+    introspect_cache.reset_for_tests()
     fake = FakeKeycloak()
+    # The acting Admin must really be an enabled admin in Keycloak: writes
+    # re-check the caller there rather than trusting cached token claims.
+    fake.admin_id = fake.add("admin_demo", "admin")
     app.dependency_overrides[keycloak_admin.get_client] = lambda: fake
     return fake
 
@@ -167,7 +185,7 @@ def test_unauthenticated_gets_401(client, kc, method, path, body):
     app.dependency_overrides.pop(verify_token, None)
     r = getattr(client, method)(path, **({"json": body} if body else {}))
     assert r.status_code == 401
-    assert kc.users == {}
+    assert kc.usernames() == {"admin_demo"}
 
 
 @pytest.mark.parametrize("caller", [STUDENT, INSTRUCTOR, NO_ROLE], ids=["student", "instructor", "no_role"])
@@ -176,7 +194,7 @@ def test_non_admin_gets_403(client, kc, caller, method, path, body):
     as_caller(caller)
     r = getattr(client, method)(path, **({"json": body} if body else {}))
     assert r.status_code == 403
-    assert kc.users == {}
+    assert kc.usernames() == {"admin_demo"}
 
 
 # --- list -------------------------------------------------------------------
@@ -185,7 +203,6 @@ def test_non_admin_gets_403(client, kc, caller, method, path, body):
 def test_list_users_returns_app_role_and_hides_service_accounts(client, kc):
     as_caller(ADMIN)
     kc.add("student_demo", "student")
-    kc.add("admin_demo", "admin")
     kc.add("service-account-cyberrange-user-admin")
     kc.add("norole_user")
     r = client.get("/admin/users")
@@ -259,7 +276,7 @@ def test_create_user_rejects_invalid_or_smuggled_fields(client, kc, override):
     as_caller(ADMIN)
     r = client.post("/admin/users", json={**NEW_USER, **override})
     assert r.status_code == 422
-    assert kc.users == {}
+    assert kc.usernames() == {"admin_demo"}
 
 
 def test_create_duplicate_username_409(client, kc):
@@ -285,7 +302,7 @@ def test_create_password_policy_rejection_is_422_and_rolled_back(client, kc):
     kc.reject_password = True
     r = client.post("/admin/users", json=NEW_USER)
     assert r.status_code == 422
-    assert kc.users == {}
+    assert kc.usernames() == {"admin_demo"}
     assert "reason=password_policy rolled_back" in audit_rows("ADMIN_USER_CREATE")[-1]["detail"]
 
 
@@ -328,7 +345,7 @@ def test_disable_then_enable_user(client, kc):
 
 def test_admin_cannot_disable_self(client, kc):
     as_caller(ADMIN)
-    uid = kc.add("admin_demo", "admin")
+    uid = kc.admin_id
     r = client.patch(f"/admin/users/{uid}/enabled", json={"enabled": False})
     assert r.status_code == 409
     assert kc.users[uid]["enabled"] is True
@@ -394,7 +411,7 @@ def test_role_rejects_non_app_role(client, kc):
 
 def test_admin_cannot_change_own_role(client, kc):
     as_caller(ADMIN)
-    uid = kc.add("admin_demo", "admin")
+    uid = kc.admin_id
     r = client.put(f"/admin/users/{uid}/role", json={"role": "student"})
     assert r.status_code == 409
     assert kc.user_app_roles(uid) == ["admin"]
@@ -406,6 +423,116 @@ def test_admin_can_demote_another_admin(client, kc):
     uid = kc.add("other_admin", "admin")
     assert client.put(f"/admin/users/{uid}/role", json={"role": "student"}).status_code == 200
     assert kc.user_app_roles(uid) == ["student"]
+
+
+# --- PR #88 review: revoked Admins, cached tokens, last Admin -------------------
+
+
+def test_demoted_admin_with_cached_admin_claims_cannot_write(client, kc):
+    """Token claims still say admin (introspection cache), Keycloak says student."""
+    as_caller(ADMIN)
+    kc.set_app_role(kc.admin_id, "student")
+    victim = kc.add("other_admin", "admin")
+    assert client.post("/admin/users", json={**NEW_USER, "role": "admin"}).status_code == 403
+    assert client.patch(f"/admin/users/{victim}/enabled", json={"enabled": False}).status_code == 403
+    assert client.put(f"/admin/users/{victim}/role", json={"role": "student"}).status_code == 403
+    assert kc.usernames() == {"admin_demo", "other_admin"}
+    assert kc.users[victim]["enabled"] is True and kc.user_app_roles(victim) == ["admin"]
+    assert {r["detail"].split("reason=")[-1] for r in audit_rows()} == {"actor_not_admin"}
+
+
+def test_disabled_admin_with_cached_claims_cannot_write(client, kc):
+    as_caller(ADMIN)
+    kc.users[kc.admin_id]["enabled"] = False
+    assert client.post("/admin/users", json=NEW_USER).status_code == 403
+    assert kc.usernames() == {"admin_demo"}
+
+
+def test_revoked_admin_cannot_retaliate(client, kc):
+    """Admin A demotes Admin B; B's still-cached admin token then tries to demote A."""
+    b_id = kc.add("admin_b", "admin")
+    as_caller(ADMIN)
+    assert client.put(f"/admin/users/{b_id}/role", json={"role": "student"}).status_code == 200
+    as_caller(claims("admin_b", "admin"))  # stale claims
+    assert client.put(f"/admin/users/{kc.admin_id}/role", json={"role": "student"}).status_code == 403
+    assert client.patch(f"/admin/users/{kc.admin_id}/enabled", json={"enabled": False}).status_code == 403
+    assert kc.user_app_roles(kc.admin_id) == ["admin"] and kc.users[kc.admin_id]["enabled"] is True
+    assert [u["username"] for u in kc.enabled_admins()] == ["admin_demo"]
+
+
+def _cache_token_for(uid, username):
+    import time
+
+    token = f"token-of-{username}"
+    introspect_cache.store(
+        token,
+        {"active": True, "sub": uid, "preferred_username": username, "exp": time.time() + 300,
+         "realm_access": {"roles": ["admin"]}},
+    )
+    return token
+
+
+def test_disable_evicts_target_tokens_from_introspection_cache(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("other_admin", "admin")
+    token = _cache_token_for(uid, "other_admin")
+    bystander = _cache_token_for(kc.admin_id, "admin_demo")
+    assert client.patch(f"/admin/users/{uid}/enabled", json={"enabled": False}).status_code == 200
+    assert introspect_cache.get_cached(token) is None
+    assert introspect_cache.get_cached(bystander) is not None  # nobody else is logged out
+
+
+def test_role_change_evicts_target_tokens_from_introspection_cache(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("other_admin", "admin")
+    token = _cache_token_for(uid, "other_admin")
+    assert client.put(f"/admin/users/{uid}/role", json={"role": "student"}).status_code == 200
+    assert introspect_cache.get_cached(token) is None
+
+
+def test_unchanged_role_keeps_cached_token(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("other_admin", "admin")
+    token = _cache_token_for(uid, "other_admin")
+    assert client.put(f"/admin/users/{uid}/role", json={"role": "admin"}).status_code == 200
+    assert introspect_cache.get_cached(token) is not None
+
+
+def test_enable_does_not_evict_tokens(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_x", "student")
+    token = _cache_token_for(uid, "student_x")
+    assert client.patch(f"/admin/users/{uid}/enabled", json={"enabled": True}).status_code == 200
+    assert introspect_cache.get_cached(token) is not None
+
+
+def test_last_admin_backstop():
+    target = {"id": "a1", "username": "only_admin"}
+    with pytest.raises(HTTPException) as e:
+        users_router._reject_last_admin([{"id": "a1", "username": "only_admin"}], target, "x", "ADMIN_USER_DISABLE", "")
+    assert e.value.status_code == 409
+    assert audit_rows("ADMIN_USER_DISABLE")[-1]["detail"] == "actor=x reason=last_admin"
+    # Another enabled Admin remains -> allowed.
+    users_router._reject_last_admin(
+        [{"id": "a1"}, {"id": "a2"}], target, "x", "ADMIN_USER_DISABLE", ""
+    )
+
+
+def test_keycloak_down_during_admin_recheck_is_503(client, kc):
+    as_caller(ADMIN)
+    kc.fail_on.add("enabled_admins")
+    assert client.post("/admin/users", json=NEW_USER).status_code == 503
+    assert kc.usernames() == {"admin_demo"}
+
+
+def test_introspect_cache_invalidate_user_only_removes_that_user():
+    introspect_cache.reset_for_tests()
+    t1 = _cache_token_for("u1", "alice")
+    t2 = _cache_token_for("u2", "bob")
+    assert introspect_cache.invalidate_user(sub="u1") == 1
+    assert introspect_cache.get_cached(t1) is None and introspect_cache.get_cached(t2) is not None
+    assert introspect_cache.invalidate_user(username="bob") == 1
+    assert introspect_cache.get_cached(t2) is None
 
 
 # --- degraded Keycloak ------------------------------------------------------------
@@ -560,6 +687,26 @@ def test_client_set_app_role_adds_before_removing_and_ignores_internal_roles():
     ]
     # Only the old app role is removed; default-roles-cyber-range is untouched.
     assert s.calls[-1][2]["json"] == [{"id": "r-stu", "name": "student"}]
+
+
+def test_client_set_enabled_is_read_modify_write():
+    """Review #88: a bare {"enabled": ...} PUT can clear profile fields on Keycloak 24+."""
+    current = {"id": "uid-1", "username": "u1", "email": "u1@local", "firstName": "U", "lastName": "One",
+               "enabled": True, "attributes": {"dept": ["sec"]}}
+    kc, s = make_client([TOKEN_OK, FakeResponse(200, dict(current)), FakeResponse(204)])
+    kc.set_enabled("uid-1", False)
+    (m1, u1, _), (m2, u2, kw) = s.calls[1], s.calls[2]
+    assert (m1, m2) == ("GET", "PUT") and u1 == u2
+    assert kw["json"] == {**current, "enabled": False}
+
+
+def test_client_enabled_admins_filters_disabled_and_service_accounts():
+    kc, _ = make_client([TOKEN_OK, FakeResponse(200, [
+        {"id": "1", "username": "a", "enabled": True},
+        {"id": "2", "username": "b", "enabled": False},
+        {"id": "3", "username": "service-account-x", "enabled": True},
+    ])])
+    assert [u["username"] for u in kc.enabled_admins()] == ["a"]
 
 
 def test_client_set_app_role_rejects_non_app_role():

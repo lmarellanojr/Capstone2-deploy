@@ -190,6 +190,18 @@ class KeycloakAdminClient:
                 members.setdefault(u["id"], []).append(role)
         return members
 
+    def enabled_admins(self) -> list[dict]:
+        """Enabled users holding the `admin` realm role, read fresh from Keycloak
+        (never from the introspection cache). Direct role members only -- this
+        API only ever assigns roles directly, never via groups or composites."""
+        users = self._request(
+            "GET", "/roles/admin/users", params={"first": 0, "max": ROLE_MEMBER_LIMIT}
+        ).json()
+        return [
+            u for u in users
+            if u.get("enabled") and not u.get("username", "").startswith(SERVICE_ACCOUNT_PREFIX)
+        ]
+
     def user_app_roles(self, user_id: str) -> list[str]:
         mappings = self._request("GET", f"/users/{user_id}/role-mappings/realm").json()
         return [m["name"] for m in mappings if m.get("name") in APP_ROLES]
@@ -233,8 +245,13 @@ class KeycloakAdminClient:
         self._request("DELETE", f"/users/{user_id}")
 
     def set_enabled(self, user_id: str, enabled: bool) -> None:
-        # Keycloak's PUT /users/{id} is a partial update for the fields sent.
-        self._request("PUT", f"/users/{user_id}", json={"enabled": enabled})
+        # Read-modify-write: with the declarative user profile (always on in
+        # Keycloak 24+, and the host runs 25.0.6), a PUT that omits
+        # email / firstName / lastName / attributes can clear them. Send the
+        # full current representation with only `enabled` changed.
+        rep = self._request("GET", f"/users/{user_id}").json()
+        rep["enabled"] = enabled
+        self._request("PUT", f"/users/{user_id}", json=rep)
 
     def logout_user(self, user_id: str) -> None:
         """End every session so refresh tokens stop working and introspection reports inactive."""

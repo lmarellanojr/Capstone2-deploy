@@ -7,6 +7,7 @@ self-service route: accounts are created by an Admin, never by signup.
 Contract for the portal Admin UI: docs/ADM-USER-contract.md.
 """
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
@@ -14,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 import auth
+import introspect_cache
 from auth import caller_identity, verify_token
 from db import log_event
 from keycloak_admin import (
@@ -125,14 +127,54 @@ def _load_target(kc: KeycloakAdminClient, user_id: str) -> dict:
 
 
 def _reject_self(target: dict, actor: str, event: str, detail: str) -> None:
-    # Guarantees an Admin can never lock themselves out, and -- because the
-    # acting Admin always keeps their own role -- the realm can never be left
-    # with zero enabled Admins via this API.
+    # An Admin can never disable or demote themselves. Together with
+    # _confirm_actor_still_admin (the actor is a freshly verified, enabled Admin
+    # who is not the target), this is what keeps at least one enabled Admin.
     if target.get("username") == actor:
-        _audit(event, target.get("username"), "DENIED", actor, f"{detail} reason=self")
+        _audit(event, target.get("username"), "DENIED", actor, f"{detail} reason=self".strip())
         raise HTTPException(
             status_code=409, detail="Admins cannot disable or change the role of their own account"
         )
+
+
+# Serializes every user-management write in this process (the API runs as a
+# single uvicorn worker). A request that passed verify_token before a
+# concurrent revoke finishes therefore re-checks its caller only after that
+# revoke has landed, instead of racing it.
+_write_lock = threading.Lock()
+
+
+def _confirm_actor_still_admin(kc: KeycloakAdminClient, actor: str, event: str, target: Optional[str], detail: str) -> list[dict]:
+    """Re-check the caller against Keycloak for every write.
+
+    verify_token may answer from the introspection cache for up to 60s, so a
+    just-disabled or just-demoted Admin could otherwise keep writing (e.g.
+    create a new admin, or revoke the Admin who revoked them). Returns the
+    fresh list of enabled Admins for the last-Admin guard.
+    """
+    try:
+        admins = kc.enabled_admins()
+    except KeycloakAdminError as e:
+        raise _unavailable(e)
+    if not any(u.get("username") == actor for u in admins):
+        _audit(event, target, "DENIED", actor, f"{detail} reason=actor_not_admin".strip())
+        raise HTTPException(status_code=403, detail="Forbidden: Insufficient privileges")
+    return admins
+
+
+def _reject_last_admin(admins: list[dict], target: dict, actor: str, event: str, detail: str) -> None:
+    # Backstop invariant: never disable or demote the only remaining enabled
+    # Admin. Unreachable while _reject_self + _confirm_actor_still_admin hold,
+    # kept so a future change to either cannot silently empty the realm.
+    if not any(u.get("id") != target["id"] for u in admins):
+        _audit(event, target.get("username"), "DENIED", actor, f"{detail} reason=last_admin".strip())
+        raise HTTPException(status_code=409, detail="Cannot disable or demote the last enabled Admin")
+
+
+def _revoke_cached_tokens(user_id: str, username: Optional[str]) -> None:
+    # Keycloak logout makes introspection report the user's tokens inactive,
+    # but verify_token would keep serving cached claims for up to 60s.
+    introspect_cache.invalidate_user(sub=user_id, username=username)
 
 
 @router.get("/admin/users")
@@ -160,6 +202,12 @@ def admin_create_user(
 ):
     actor = _require_admin(claims)
     detail = f"role={body.role}"
+    with _write_lock:
+        _confirm_actor_still_admin(kc, actor, "ADMIN_USER_CREATE", body.username, detail)
+        return _create_user_locked(body, actor, detail, kc)
+
+
+def _create_user_locked(body: CreateUserRequest, actor: str, detail: str, kc: KeycloakAdminClient) -> dict:
     try:
         user_id = kc.create_user(
             username=body.username,
@@ -209,21 +257,28 @@ def admin_set_user_enabled(
 ):
     actor = _require_admin(claims)
     event = "ADMIN_USER_ENABLE" if body.enabled else "ADMIN_USER_DISABLE"
-    target = _load_target(kc, user_id)
-    username = target.get("username")
-    _reject_self(target, actor, event, "")
-    try:
-        kc.set_enabled(user_id, body.enabled)
-        if not body.enabled:
-            # Disabling alone blocks new logins; ending sessions also kills
-            # refresh tokens and makes introspection report the current access
-            # token inactive (visible to this API within the 60s cache TTL).
-            kc.logout_user(user_id)
-        roles = kc.user_app_roles(user_id)
-        target = kc.get_user(user_id)
-    except KeycloakAdminError as e:
-        _audit(event, username, "FAILED", actor, "reason=keycloak")
-        raise _unavailable(e)
+    with _write_lock:
+        target = _load_target(kc, user_id)
+        username = target.get("username")
+        admins = _confirm_actor_still_admin(kc, actor, event, username, "")
+        _reject_self(target, actor, event, "")
+        if not body.enabled and any(u.get("id") == user_id for u in admins):
+            _reject_last_admin(admins, target, actor, event, "")
+        try:
+            kc.set_enabled(user_id, body.enabled)
+            if not body.enabled:
+                # Disabling alone blocks new logins; ending sessions also kills
+                # refresh tokens and makes introspection report the current
+                # access token inactive.
+                kc.logout_user(user_id)
+            roles = kc.user_app_roles(user_id)
+            target = kc.get_user(user_id)
+        except KeycloakAdminError as e:
+            _audit(event, username, "FAILED", actor, "reason=keycloak")
+            raise _unavailable(e)
+        finally:
+            if not body.enabled:
+                _revoke_cached_tokens(user_id, username)
     _audit(event, username, "OK", actor)
     return serialize_user(target, roles)
 
@@ -238,20 +293,28 @@ def admin_set_user_role(
     actor = _require_admin(claims)
     event = "ADMIN_USER_ROLE_SET"
     detail = f"role={body.role}"
-    target = _load_target(kc, user_id)
-    username = target.get("username")
-    _reject_self(target, actor, event, detail)
-    try:
-        previous = kc.user_app_roles(user_id)
-        kc.set_app_role(user_id, body.role)
-        if previous != [body.role]:
-            # A demoted user's existing access token still carries the old
-            # role until it expires; ending sessions makes introspection
-            # reject it, so the change applies at next sign-in.
-            kc.logout_user(user_id)
-        roles = kc.user_app_roles(user_id)
-    except KeycloakAdminError as e:
-        _audit(event, username, "FAILED", actor, f"{detail} reason=keycloak")
-        raise _unavailable(e)
+    with _write_lock:
+        target = _load_target(kc, user_id)
+        username = target.get("username")
+        admins = _confirm_actor_still_admin(kc, actor, event, username, detail)
+        _reject_self(target, actor, event, detail)
+        if body.role != "admin" and any(u.get("id") == user_id for u in admins):
+            _reject_last_admin(admins, target, actor, event, detail)
+        previous: list[str] = []
+        try:
+            previous = kc.user_app_roles(user_id)
+            kc.set_app_role(user_id, body.role)
+            if previous != [body.role]:
+                # A demoted user's existing access token still carries the old
+                # role until it expires; ending sessions makes introspection
+                # reject it, so the change applies at next sign-in.
+                kc.logout_user(user_id)
+            roles = kc.user_app_roles(user_id)
+        except KeycloakAdminError as e:
+            _audit(event, username, "FAILED", actor, f"{detail} reason=keycloak")
+            raise _unavailable(e)
+        finally:
+            if previous != [body.role]:
+                _revoke_cached_tokens(user_id, username)
     _audit(event, username, "OK", actor, f"{detail} previous={','.join(previous) or 'none'}")
     return serialize_user(target, roles)

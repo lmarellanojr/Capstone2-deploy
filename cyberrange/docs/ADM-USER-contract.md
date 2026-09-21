@@ -90,7 +90,9 @@ All four routes use `verify_token` followed by `require_role(["admin"])`.
 | 403 | Authenticated but not `admin` (student, instructor, or no app role) | `Forbidden: Insufficient privileges` |
 | 404 | `{id}` isn't a (manageable) user in the realm | `User not found` |
 | 409 | Create: username or email already exists | `Username or email already exists` |
+| 403 | Write by a caller whose token still says `admin` but who is no longer an enabled Admin in Keycloak (revoked moments ago) | `Forbidden: Insufficient privileges` |
 | 409 | An Admin tries to disable themselves or change their own role | `Admins cannot disable or change the role of their own account` |
+| 409 | Disabling or demoting the last enabled Admin (backstop; not reachable through the normal flow) | `Cannot disable or demote the last enabled Admin` |
 | 422 | Validation: bad username/email/role, short password, unknown field, `{id}` not a UUID, `max` > 200 | FastAPI validation body |
 | 422 | Keycloak's password policy rejected the password (the user isn't created) | `Password does not meet the Keycloak password policy` |
 | 503 | User management isn't configured on this host | `User management is not configured` |
@@ -102,20 +104,21 @@ Create is all-or-nothing. If setting the password or the role fails after the Ke
 
 ## 4. Behavior the UI should reflect
 
-- **Disable** blocks new sign-ins and ends all of the user's Keycloak sessions. Their refresh token stops working immediately. The provision API rejects their current access token once its introspection cache entry expires (at most 60 s).
-- **Role change** also ends the user's sessions, whenever the role actually changes, so the new role applies at their next sign-in. Otherwise a demoted Admin's existing token would keep `admin` until it expired. Re-sending the same role is a no-op and doesn't sign them out.
+- **Disable** blocks new sign-ins and ends all of the user's Keycloak sessions. Their refresh token stops working immediately, and the provision API evicts their cached tokens, so their current access token is rejected on the very next request.
+- **Role change** also ends the user's sessions, whenever the role actually changes, so the new role applies at their next sign-in. Their cached tokens are evicted too, so a demoted Admin's existing token stops working on the next request. Re-sending the same role is a no-op and doesn't sign them out.
 - **Enable** doesn't end any session.
-- **Self-protection:** hide or disable the Disable and Change-role controls on the signed-in Admin's own row (`User.username === session.user` username). The API enforces this regardless with a 409. Because an Admin can never demote or disable themselves, the realm can't be left without an Admin through this API.
+- **Self-protection:** hide or disable the Disable and Change-role controls on the signed-in Admin's own row (`User.username === session.user` username). The API enforces this regardless with a 409.
+- **Writes re-check the caller against Keycloak.** A token that still says `admin` is not trusted for create, enable/disable or role changes: the caller must currently be an enabled Admin in Keycloak, or the call returns 403. Writes are also serialized. Together with self-protection, this means the realm can't be left without an enabled Admin through this API, even with several Admins acting at once.
 
 ---
 
 ## 5. Audit
 
-Every write, including denied self-actions and failures, adds a row to the existing `audit_log` table. No schema change was needed.
+Every write, including denied attempts (`reason=self`, `reason=actor_not_admin`, `reason=last_admin`) and failures, adds a row to the existing `audit_log` table. No schema change was needed.
 
 | `event_type` | `student_id` | `result` | `detail` example |
 |---|---|---|---|
-| `ADMIN_USER_CREATE` | target username | `OK` / `FAILED` | `actor=admin_demo role=student temporary_password=True` |
+| `ADMIN_USER_CREATE` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo role=student temporary_password=True` |
 | `ADMIN_USER_DISABLE` / `ADMIN_USER_ENABLE` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo` |
 | `ADMIN_USER_ROLE_SET` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo role=instructor previous=student` |
 
