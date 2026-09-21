@@ -6,7 +6,7 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, Button, LoadingSpinner } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
 import { useInstructorReviews } from "@/hooks/useInstructorReviews";
-import { formatScenarioName } from "@/lib/scenarioLabels";
+import { formatScenarioName, formatMilestoneLabel } from "@/lib/scenarioLabels";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   PENDING: "warning",
@@ -141,7 +141,7 @@ export default function InstructorReviewsPage() {
                     </td>
                     <td className="py-3 px-4 text-text-main font-semibold">{c.student_id}</td>
                     <td className="py-3 px-4 text-text-muted">
-                      {formatScenarioName(c.scenario_id)} · Milestone {c.milestone_id ?? 1}
+                      {formatScenarioName(c.scenario_id)} · {formatMilestoneLabel(c.milestone_id)}
                     </td>
                     <td className="py-3 px-4 text-xs font-mono text-text-muted">{c.case_type}</td>
                     <td className="py-3 px-4 text-text-muted">{formatDate(c.created_at)}</td>

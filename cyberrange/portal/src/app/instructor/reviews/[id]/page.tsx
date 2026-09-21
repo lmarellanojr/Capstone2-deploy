@@ -15,12 +15,13 @@ import {
   ModalFooter,
 } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
-import { instructor, ReviewCase } from "@/lib/api";
+import { instructor, InstructorMilestone, ReviewCase } from "@/lib/api";
 import { parseEvidenceData } from "@/lib/evidenceParser";
 import { mapErrorToMessage, isForbiddenError } from "@/lib/errorHandler";
 import { useToastContext } from "@/context/ToastContext";
-import { formatScenarioName } from "@/lib/scenarioLabels";
+import { formatScenarioName, formatMilestoneLabel } from "@/lib/scenarioLabels";
 import { validateScore, resolveScorePayload } from "@/lib/scoreEvaluation";
+import { selectVerifierAttempts } from "@/lib/verifierEvidence";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   PENDING: "warning",
@@ -32,6 +33,13 @@ const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = 
   rejected: "danger",
   retry: "info",
 };
+
+function verifierBadgeVariant(status: string): "success" | "danger" | "warning" {
+  const s = status.toUpperCase();
+  if (s === "PASS") return "success";
+  if (s === "FAIL") return "danger";
+  return "warning";
+}
 
 function formatDate(dateStr?: string | null): string {
   if (!dateStr) return "-";
@@ -67,6 +75,14 @@ export default function ReviewDetailPage() {
   const [confirmDecision, setConfirmDecision] = useState<"APPROVED" | "REJECTED" | "RETRY" | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Automated verifier evidence, correlated read-only from the student's
+  // milestone_verification history (handoff §2.4). Loaded separately so a
+  // failure here never blocks reviewing the case itself.
+  const [verifierMilestones, setVerifierMilestones] = useState<InstructorMilestone[] | null>(null);
+  const [verifierLoading, setVerifierLoading] = useState(false);
+  const [verifierError, setVerifierError] = useState<string | null>(null);
+  const [verifierAttempt, setVerifierAttempt] = useState(0);
+
   const fetchReview = useCallback(async () => {
     if (!params.id) return;
     setLoading(true);
@@ -98,6 +114,35 @@ export default function ReviewDetailPage() {
   useEffect(() => {
     void fetchReview();
   }, [fetchReview]);
+
+  const studentId = reviewCase?.student_id;
+  useEffect(() => {
+    if (!studentId) return;
+    let cancelled = false;
+    setVerifierLoading(true);
+    setVerifierError(null);
+    instructor
+      .getStudentProgress(studentId)
+      .then((detail) => {
+        if (!cancelled) setVerifierMilestones(detail.milestones);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setVerifierMilestones(null);
+        setVerifierError(mapErrorToMessage(err).message);
+      })
+      .finally(() => {
+        if (!cancelled) setVerifierLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [studentId, verifierAttempt]);
+
+  const verifierAttempts =
+    reviewCase && verifierMilestones
+      ? selectVerifierAttempts(verifierMilestones, reviewCase.scenario_id, reviewCase.milestone_id)
+      : [];
 
   const handleOpenConfirm = (decision: "APPROVED" | "REJECTED" | "RETRY") => {
     const validation = validateScore(decision, score);
@@ -184,7 +229,7 @@ export default function ReviewDetailPage() {
               </div>
               <p className="text-text-muted mt-1 text-sm">
                 Student <span className="font-semibold text-text-main">{reviewCase.student_id}</span> ·{" "}
-                {formatScenarioName(reviewCase.scenario_id)} · Milestone {reviewCase.milestone_id ?? 1}
+                {formatScenarioName(reviewCase.scenario_id)} · {formatMilestoneLabel(reviewCase.milestone_id)}
               </p>
             </div>
           </div>
@@ -231,12 +276,72 @@ export default function ReviewDetailPage() {
 
               {/* Evidence Section */}
               <div className="card-surface p-6">
-                <h2 className="text-lg font-bold text-text-main mb-3">Evidence Data</h2>
+                <h2 className="text-lg font-bold text-text-main mb-3">Student Evidence</h2>
                 <div className="rounded-lg overflow-hidden border border-border">
                   <pre className="font-mono text-xs p-4 bg-muted/50 text-text-main overflow-x-auto whitespace-pre-wrap max-h-96">
                     {parseEvidenceData(reviewCase.evidence_data)}
                   </pre>
                 </div>
+              </div>
+
+              {/* Automated Verifier Evidence */}
+              <div className="card-surface p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-bold text-text-main">Automated Verifier Evidence</h2>
+                  <span className="text-xs text-text-muted">
+                    {formatScenarioName(reviewCase.scenario_id)} · {formatMilestoneLabel(reviewCase.milestone_id)}
+                  </span>
+                </div>
+
+                {verifierLoading ? (
+                  <LoadingSpinner message="Loading verifier results..." />
+                ) : verifierError ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                    <p className="text-danger">Could not load verifier results: {verifierError}</p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setVerifierAttempt((n) => n + 1)}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : verifierAttempts.length === 0 ? (
+                  <p className="text-sm text-text-muted italic">
+                    No automated verification attempts recorded for this{" "}
+                    {reviewCase.milestone_id === null ? "scenario" : "milestone"}.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-text-muted border-b border-border">
+                          <th className="py-2 px-3 font-semibold">Milestone</th>
+                          <th className="py-2 px-3 font-semibold">Result</th>
+                          <th className="py-2 px-3 font-semibold">Detection Score</th>
+                          <th className="py-2 px-3 font-semibold">Verified</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {verifierAttempts.map((m, idx) => (
+                          <tr
+                            key={`${m.milestone_id}-${m.verified_at ?? idx}-${idx}`}
+                            className="border-b border-border last:border-0"
+                          >
+                            <td className="py-2 px-3 text-text-main">{m.milestone_id}</td>
+                            <td className="py-2 px-3">
+                              <Badge variant={verifierBadgeVariant(m.status)}>{m.status}</Badge>
+                            </td>
+                            <td className="py-2 px-3 font-mono text-text-main">
+                              {m.detection_score ?? "-"}
+                            </td>
+                            <td className="py-2 px-3 text-text-muted">{formatDate(m.verified_at)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* Resolution History (if already resolved) */}
