@@ -1,5 +1,5 @@
 """Pydantic request/response models."""
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -76,7 +76,7 @@ class ReviewResolveResponse(BaseModel):
 class ReviewResubmitRequest(BaseModel):
     report_text: Optional[str] = None
     conflict_reason: Optional[str] = None
-    evidence_data: Optional[object] = None
+    evidence_data: Optional[Union[str, dict, list]] = None
 
 
 class ReviewResubmitResponse(BaseModel):

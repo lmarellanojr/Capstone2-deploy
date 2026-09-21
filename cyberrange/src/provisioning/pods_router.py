@@ -1,8 +1,11 @@
 """Pod provisioning and lifecycle API routes."""
 import json
+import logging
 import sqlite3
 from typing import Optional, Union
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
@@ -812,22 +815,32 @@ def resolve_student_review(
                 raise HTTPException(status_code=404, detail="Review case not found")
 
             student_id = row["student_id"]
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE review_cases "
                 "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE review_id = ?",
                 (clean_status, final_score, clean_feedback, grader, review_id),
             )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Review case not found")
     finally:
         conn.close()
 
     # Log event on independent connection to prevent SQLite deadlock
-    log_event(
-        "REVIEW_CASE_RESOLVED",
-        student_id=student_id,
-        result=clean_status,
-        detail=f"review_id={review_id}, score={final_score}, graded_by={grader}",
-    )
+    try:
+        log_event(
+            "REVIEW_CASE_RESOLVED",
+            student_id=student_id,
+            result=clean_status,
+            detail=f"review_id={review_id}, score={final_score}, graded_by={grader}",
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to record REVIEW_CASE_RESOLVED audit log for review_id=%s: %s",
+            review_id,
+            exc,
+            exc_info=True,
+        )
 
     return ReviewResolveResponse(
         status="resolved",
@@ -875,10 +888,29 @@ def resubmit_student_review(
     evidence_text = None
     if body.evidence_data is not None:
         if isinstance(body.evidence_data, (dict, list)):
-            evidence_text = json.dumps(body.evidence_data)
+            evidence_text = json.dumps(body.evidence_data) if body.evidence_data else None
+        elif isinstance(body.evidence_data, str):
+            s = body.evidence_data.strip()
+            if not s or s in ("{}", "[]"):
+                evidence_text = None
+            else:
+                try:
+                    parsed = json.loads(s)
+                    evidence_text = None if isinstance(parsed, (dict, list)) and not parsed else s
+                except Exception:
+                    evidence_text = s
         else:
             evidence_text = str(body.evidence_data)
-        if len(evidence_text) > 65536:
+
+    if evidence_text is not None:
+        try:
+            raw_bytes = evidence_text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="evidence_data contains invalid Unicode characters",
+            )
+        if len(raw_bytes) > 65536:
             raise HTTPException(
                 status_code=400,
                 detail="evidence_data exceeds maximum length of 65536 bytes",
@@ -910,27 +942,42 @@ def resubmit_student_review(
                     detail="Only reviews in RETRY status can be resubmitted",
                 )
 
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE review_cases "
                 "SET status = 'PENDING', "
                 "    report_text = COALESCE(?, report_text), "
                 "    conflict_reason = COALESCE(?, conflict_reason), "
                 "    evidence_data = COALESCE(?, evidence_data), "
                 "    score = NULL, "
+                "    feedback = NULL, "
+                "    graded_by = NULL, "
                 "    updated_at = CURRENT_TIMESTAMP "
-                "WHERE review_id = ?",
-                (clean_report, clean_conflict, evidence_text, review_id),
+                "WHERE review_id = ? AND student_id = ? AND status = 'RETRY'",
+                (clean_report, clean_conflict, evidence_text, review_id, caller),
             )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Review case was modified concurrently or is no longer in RETRY status",
+                )
     finally:
         conn.close()
 
     # Log event on independent connection
-    log_event(
-        "REVIEW_CASE_RESUBMITTED",
-        student_id=caller,
-        result="PENDING",
-        detail=f"review_id={review_id}",
-    )
+    try:
+        log_event(
+            "REVIEW_CASE_RESUBMITTED",
+            student_id=caller,
+            result="PENDING",
+            detail=f"review_id={review_id}",
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to record REVIEW_CASE_RESUBMITTED audit log for review_id=%s: %s",
+            review_id,
+            exc,
+            exc_info=True,
+        )
 
     return ReviewResubmitResponse(
         status="resubmitted",

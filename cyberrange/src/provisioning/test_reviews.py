@@ -1487,6 +1487,42 @@ def test_student_resubmit_empty_payload_fails():
     assert res_ws.status_code == 400
     assert "At least one updated field" in res_ws.json()["detail"]
 
+    # Empty evidence: empty string
+    res_ev_str = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"evidence_data": ""},
+        headers=headers,
+    )
+    assert res_ev_str.status_code == 400
+    assert "At least one updated field" in res_ev_str.json()["detail"]
+
+    # Empty evidence: empty dict
+    res_ev_dict = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"evidence_data": {}},
+        headers=headers,
+    )
+    assert res_ev_dict.status_code == 400
+    assert "At least one updated field" in res_ev_dict.json()["detail"]
+
+    # Empty evidence: empty list
+    res_ev_list = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"evidence_data": []},
+        headers=headers,
+    )
+    assert res_ev_list.status_code == 400
+    assert "At least one updated field" in res_ev_list.json()["detail"]
+
+    # Empty evidence: stringified brackets
+    res_ev_brackets = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"evidence_data": "  {}  "},
+        headers=headers,
+    )
+    assert res_ev_brackets.status_code == 400
+    assert "At least one updated field" in res_ev_brackets.json()["detail"]
+
 
 def test_student_resubmit_oversized_evidence_fails():
     client = TestClient(app)
@@ -1651,4 +1687,260 @@ def test_resolve_and_resubmit_audit_logging():
         assert f"review_id={rev_id}" in resubmit_event["detail"]
     finally:
         conn.close()
+
+
+def test_student_resubmit_cas_concurrent_status_change_conflict(monkeypatch):
+    """Verify atomic CAS: if status changes concurrently between read and write, resubmit raises 409."""
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # 1. Student submits review
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_cas")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Initial report"})
+    rev_id = res_sub.json()["review_id"]
+
+    # 2. Instructor marks RETRY
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    client.post(f"/instructor/reviews/{rev_id}/resolve", json={"status": "RETRY"}, headers=headers)
+
+    # 3. Intercept DB connection so concurrent resolution commits between student read and write
+    import pods_router
+    real_get_conn = pods_router.get_db_connection
+
+    class ConnProxy:
+        def __init__(self, target):
+            self._target = target
+
+        def execute(self, sql, *args, **kwargs):
+            res = self._target.execute(sql, *args, **kwargs)
+            if "SELECT student_id, status FROM review_cases" in sql:
+                # Concurrent instructor resolution commits immediately after student reads status='RETRY'
+                other_conn = real_get_conn()
+                try:
+                    other_conn.execute(
+                        "UPDATE review_cases SET status = 'APPROVED', score = 100 WHERE review_id = ?",
+                        (rev_id,),
+                    )
+                    other_conn.commit()
+                finally:
+                    other_conn.close()
+            return res
+
+        def __enter__(self):
+            self._target.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._target.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self._target, name)
+
+    monkeypatch.setattr(pods_router, "get_db_connection", lambda: ConnProxy(real_get_conn()))
+
+    # 4. Student resubmits -- should hit 409 Conflict due to CAS rowcount == 0
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_cas")
+    res = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "Revised report text"},
+        headers=headers,
+    )
+    assert res.status_code == 409
+    assert "no longer in RETRY status" in res.json()["detail"]
+
+
+def test_student_resubmit_clears_score_feedback_and_graded_by():
+    """Verify that resubmitting for RETRY resets score, feedback, and graded_by to NULL."""
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    # 1. Student submits
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_hygiene")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Initial report"})
+    rev_id = res_sub.json()["review_id"]
+
+    # 2. Instructor marks RETRY with feedback
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_grader")
+    client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "RETRY", "feedback": "Needs more detail in section 2"},
+        headers=headers,
+    )
+
+    # Verify fields populated in RETRY status
+    conn = db.get_db_connection()
+    try:
+        row = conn.execute("SELECT status, score, feedback, graded_by FROM review_cases WHERE review_id = ?", (rev_id,)).fetchone()
+        assert row["status"] == "RETRY"
+        assert row["graded_by"] == "instructor_grader"
+        assert row["feedback"] == "Needs more detail in section 2"
+    finally:
+        conn.close()
+
+    # 3. Student resubmits
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_hygiene")
+    res_resub = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "Expanded report text with section 2 detail"},
+        headers=headers,
+    )
+    assert res_resub.status_code == 200
+
+    # 4. Verify score, feedback, and graded_by are now NULL on the PENDING row
+    conn = db.get_db_connection()
+    try:
+        row_after = conn.execute("SELECT status, score, feedback, graded_by FROM review_cases WHERE review_id = ?", (rev_id,)).fetchone()
+        assert row_after["status"] == "PENDING"
+        assert row_after["score"] is None
+        assert row_after["feedback"] is None
+        assert row_after["graded_by"] is None
+    finally:
+        conn.close()
+
+
+def test_student_resubmit_multibyte_boundary():
+    """Verify that evidence_data length limit is measured in UTF-8 bytes, not character count."""
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_mb")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Initial report"})
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    client.post(f"/instructor/reviews/{rev_id}/resolve", json={"status": "RETRY"}, headers=headers)
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_mb")
+
+    # '€' is 3 bytes in UTF-8. 22,000 chars is 22,000 characters, but 66,000 bytes (> 65536 bytes).
+    # If the limit checked character length, it would wrongly pass.
+    multibyte_evidence = "€" * 22000
+    assert len(multibyte_evidence) < 65536
+    assert len(multibyte_evidence.encode("utf-8")) > 65536
+
+    res_too_large = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"evidence_data": multibyte_evidence},
+        headers=headers,
+    )
+    assert res_too_large.status_code == 400
+    assert "evidence_data exceeds maximum length of 65536 bytes" in res_too_large.json()["detail"]
+
+
+def test_resolve_review_deleted_row_returns_404(monkeypatch):
+    """Verify check-then-write gap: if row is deleted before UPDATE commits, resolve raises 404."""
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_del")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "To be deleted"})
+    rev_id = res_sub.json()["review_id"]
+
+    import pods_router
+    real_get_conn = pods_router.get_db_connection
+
+    class ConnProxy:
+        def __init__(self, target):
+            self._target = target
+
+        def execute(self, sql, *args, **kwargs):
+            res = self._target.execute(sql, *args, **kwargs)
+            if "SELECT student_id, scenario_id, milestone_id FROM review_cases" in sql:
+                # Row deleted immediately after preliminary SELECT check
+                other_conn = real_get_conn()
+                try:
+                    other_conn.execute("DELETE FROM review_cases WHERE review_id = ?", (rev_id,))
+                    other_conn.commit()
+                finally:
+                    other_conn.close()
+            return res
+
+        def __enter__(self):
+            self._target.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._target.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self._target, name)
+
+    monkeypatch.setattr(pods_router, "get_db_connection", lambda: ConnProxy(real_get_conn()))
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "score": 100},
+        headers=headers,
+    )
+    assert res.status_code == 404
+    assert "Review case not found" in res.json()["detail"]
+
+
+def test_audit_logging_failure_does_not_crash_request(monkeypatch):
+    """Verify decoupled audit logging: secondary log_event errors do not 500 committed requests."""
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_log_fail")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Logging test report"})
+    rev_id = res_sub.json()["review_id"]
+
+    def failing_log_event(*args, **kwargs):
+        raise sqlite3.OperationalError("simulated database lock on audit_log")
+
+    import pods_router
+    monkeypatch.setattr(pods_router, "log_event", failing_log_event)
+
+    # 1. Resolve should succeed despite log failure
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "RETRY", "feedback": "Try again"},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+    assert res_res.json()["decision"] == "RETRY"
+
+    # 2. Resubmit should succeed despite log failure
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_log_fail")
+    res_resub = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"report_text": "Updated report without audit log"},
+        headers=headers,
+    )
+    assert res_resub.status_code == 200
+    assert res_resub.json()["status"] == "resubmitted"
+
+
+def test_resubmit_request_evidence_data_rejects_scalar_types():
+    """Verify Pydantic validation: non-container / non-string scalars (float, bool) are rejected."""
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer mock_token"}
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_scalar")
+    res_sub = client.post("/reviews/submit", json={"scenario_id": 1, "report_text": "Scalar test report"})
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    client.post(f"/instructor/reviews/{rev_id}/resolve", json={"status": "RETRY"}, headers=headers)
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_scalar")
+
+    # Float scalar
+    res_float = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"evidence_data": 3.14},
+        headers=headers,
+    )
+    assert res_float.status_code == 422
+
+    # Boolean scalar
+    res_bool = client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"evidence_data": True},
+        headers=headers,
+    )
+    assert res_bool.status_code == 422
+
 
