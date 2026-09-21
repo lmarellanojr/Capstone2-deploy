@@ -23,6 +23,7 @@ dev = [
     "pytest",
     "httpx",   # fastapi.testclient.TestClient's transport
     "mypy",
+    "anyio",
 ]
 # locustfile.py is a standalone load-test script, not imported by the API or
 # by the pytest suite -- kept out of dev/core so CI doesn't pay for it.
@@ -34,6 +35,9 @@ loadtest = [
 pythonpath = ["src/provisioning"]
 testpaths = ["src/provisioning"]
 python_files = ["test_*.py"]
+markers = [
+    "anyio: mark test to run with anyio",
+]
 
 [tool.mypy]
 python_version = "3.11"
