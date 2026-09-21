@@ -57,6 +57,18 @@ def store(token: str, claims: dict) -> None:
         _entries[key] = (dict(claims), expires_at)
 
 
+def invalidate_user(*, sub: str | None = None, username: str | None = None) -> int:
+    """Drop every cached token belonging to a user (ADM-USER disable / role change),
+    so revocation takes effect on the next request instead of after the TTL."""
+    removed = 0
+    with _lock:
+        for key, (claims, _) in list(_entries.items()):
+            if (sub and claims.get("sub") == sub) or (username and claims.get("preferred_username") == username):
+                del _entries[key]
+                removed += 1
+    return removed
+
+
 def reset_for_tests() -> None:
     with _lock:
         _entries.clear()
