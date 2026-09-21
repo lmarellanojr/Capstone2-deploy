@@ -899,8 +899,6 @@ def resubmit_student_review(
                     evidence_text = None if isinstance(parsed, (dict, list)) and not parsed else s
                 except Exception:
                     evidence_text = s
-        else:
-            evidence_text = str(body.evidence_data)
 
     if evidence_text is not None:
         try:
