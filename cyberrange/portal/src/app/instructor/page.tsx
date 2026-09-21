@@ -7,6 +7,7 @@ import { instructorNavItems } from "@/lib/navigation";
 import { useInstructorStudents } from "@/hooks/useInstructorStudents";
 import { useInstructorReviews } from "@/hooks/useInstructorReviews";
 import { formatScenarioName } from "@/lib/scenarioLabels";
+import { formatSqliteDate } from "@/lib/sqliteTime";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   PENDING: "warning",
@@ -18,23 +19,6 @@ const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = 
   rejected: "danger",
   retry: "info",
 };
-
-function formatDate(dateStr?: string | null): string {
-  if (!dateStr) return "-";
-  try {
-    const d = new Date(dateStr);
-    return isNaN(d.getTime())
-      ? dateStr
-      : d.toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-  } catch {
-    return dateStr;
-  }
-}
 
 export default function InstructorDashboardPage() {
   const {
@@ -148,7 +132,7 @@ export default function InstructorDashboardPage() {
                     </td>
                     <td className="py-3 pr-4 text-text-main font-medium">{c.student_id}</td>
                     <td className="py-3 pr-4 text-text-muted">{formatScenarioName(c.scenario_id)}</td>
-                    <td className="py-3 pr-4 text-text-muted">{formatDate(c.created_at)}</td>
+                    <td className="py-3 pr-4 text-text-muted">{formatSqliteDate(c.created_at)}</td>
                     <td className="py-3 pr-4">
                       <Badge variant={STATUS_BADGE[c.status.toUpperCase()] || "default"}>
                         {c.status}
