@@ -144,7 +144,57 @@ What it does:
 
 Output is status codes and pod states only: no tokens, passwords or secrets.
 
-**Run result:** _pending — paste the sanitized output of both runs here after deploying this branch._
+**Run 2026-09-22 on the test host** (`cyberrange.cyberlaboratory.online`). The host's `auth.py`, `pods_router.py`, `users_router.py` and `keycloak_admin.py` were checked byte-identical (SHA-1) to this branch before running; this PR changes no app code, so only the script was copied to the host.
+
+Default run:
+```
+=== SEC-02 Instructor -> Admin denial evidence  2026-09-22T16:11:14Z  api=http://10.115.77.1:5000
+
+=== 1. User / role management (real targets)
+PASS  instructor GET /admin/users -> 403
+PASS  instructor GET /admin/users?search=admin -> 403
+PASS  instructor POST /admin/users (new Admin account) -> 403
+PASS  instructor PATCH admin_demo enabled=false -> 403
+PASS  instructor PATCH student_demo enabled=false -> 403
+PASS  instructor PUT own role -> admin -> 403
+PASS  instructor PUT admin_demo role -> student -> 403
+PASS  instructor PUT student_demo role -> instructor -> 403
+PASS    + forged X-Roles/X-Forwarded-User headers -> 403
+PASS    + ?role=admin query -> 403
+PASS  realm unchanged (5 accounts; usernames, enabled flags and roles identical)
+PASS  no sec02_backdoor account
+PASS  fresh instructor token still denied GET /admin/users -> 403
+PASS  fresh instructor token still allowed /instructor/students -> 200
+
+=== 2. Force-destroy
+PASS  instructor DELETE /admin/pods/999999/force-destroy (403 before lookup) -> 403
+PASS    + forged X-Roles header -> 403
+PASS    POST instead of DELETE -> 405
+PASS  admin control: same URL reaches the pod lookup -> 404
+(disposable-pod test skipped; rerun with --with-disposable-pod)
+
+=== 3. Reset (not implemented in PR #50 -> must be unrouted)
+PASS  instructor POST /admin/pods/999999/reset -> 404
+PASS  instructor PUT /admin/pods/999999/reset -> 404
+PASS  instructor POST /pods/999999/reset -> 404
+PASS  instructor POST /admin/pods/999999/restart -> 404
+PASS  no reset route in /openapi.json
+
+=== RESULT: 0 failure(s)
+```
+
+`--with-disposable-pod` run (sections 1, 2 and 3 repeated with the same PASS results and `RESULT: 0 failure(s)`; only the added section is shown):
+```
+=== 2b. Disposable pod (owned by instructor_demo)
+pod 1 (created by this run: 1)
+state before: FAILED_ROLLBACK_COMPLETE
+PASS  instructor force-destroy on own FAILED_ROLLBACK_COMPLETE pod -> 403
+PASS  pod state unchanged after denial (FAILED_ROLLBACK_COMPLETE) -> FAILED_ROLLBACK_COMPLETE
+cleanup: owner destroy -> 200
+PASS  disposable pod torn down (status) -> DESTROYED
+```
+
+**Note on the disposable pod.** Provisioning of the disposable pod failed on the host and rolled back to `FAILED_ROLLBACK_COMPLETE` about 13 s after the pod network setup, so it never reached ACTIVE. `FAILED_ROLLBACK_COMPLETE` is one of the two states force-destroy accepts, so the denial test is valid: the Instructor got 403 and the state was unchanged. The ACTIVE-pod case is covered by the unit tests only. The provisioning failure is a host issue outside SEC-02 and needs to be raised with the team. The host's pod slot was free again afterwards (`/capacity`: `active_pods: 0`).
 
 ## 7. Live pages + proxy (browser)
 
@@ -163,7 +213,19 @@ console.table(rows)
 
 It uses a nonexistent pod id, so nothing can change even if a denial failed.
 
-**Run result:** _pending._
+**Run 2026-09-22 on the test host**, signed in through the real portal login as `instructor_demo`; the snippet above plus two Instructor controls and a sidebar check:
+
+| Target | Got | Result |
+|---|---|---|
+| `/admin` | → `/dashboard` | PASS |
+| `/admin/users` | → `/dashboard` | PASS |
+| `/admin/pods` | → `/dashboard` | PASS |
+| `/admin/pods/999999` | → `/dashboard` | PASS |
+| `/admin/system` | → `/dashboard` | PASS |
+| `DELETE /api/admin/pods/999999/force-destroy` with `X-Roles: admin` | 403 | PASS |
+| control: `GET /api/instructor/students` | 200 | PASS |
+| control: `/instructor` | opens | PASS |
+| Instructor sidebar links | `/instructor`, `/instructor/students`, `/instructor/reviews` (no `/admin` link, no force-destroy button) | PASS |
 
 ## 8. Review partner reproduction (Shekinah)
 
@@ -175,11 +237,12 @@ Reproduce independently. Representative denials:
 
 ## 9. Findings
 
-**Status:** unit evidence complete; live host evidence (§6, §7) and review-partner reproduction (§8) pending. Until both are in, this PR relates to #54 rather than closing it.
+**Status:** unit evidence (§3, §4) and live host evidence (§6, §7, 2026-09-22) complete. Review-partner reproduction (§8) pending; until it is in, this PR relates to #54 rather than closing it.
 
 | Severity | Finding | Action |
 |---|---|---|
-| None (unit only) | **In the unit tests** (§3, §4), no Instructor → Admin bypass was found: every Admin-only operation is denied before any DB write, Keycloak call or teardown. Not yet confirmed on the host: §6/§7 live evidence and the §8 review-partner reproduction are pending. | re-state after live evidence and §8 are in |
+| None | No Instructor → Admin bypass found in the unit tests (§3, §4) or on the live host (§6, §7): every Admin-only operation is denied, with no change to the realm or the pod. The §8 review-partner reproduction is still pending. | none |
+| Env | Disposable-pod provisioning on the test host failed and rolled back (`FAILED_ROLLBACK_COMPLETE`) on 2026-09-22, so the live force-destroy denial ran on a FAILED pod, not an ACTIVE one (§6). Students may be unable to start labs on this host. | raise with the team; outside SEC-02 |
 | Info | User-route role smuggling in the body (`realmRoles`, `roles`, `clientRoles`) gets **422** (`extra="forbid"`) before the role check's 403. No action is performed. This is the same as the SEC-01 §3 informational finding. | none (unchanged) |
 | Info | Reset is not implemented (PR #50). Recorded as unavailable. The inventory test will require coverage when it lands. | revisit when a reset contract exists |
 | Info | ADM-SYS-01 (#95) will add Admin system-management routes. `test_every_admin_only_route_is_covered` fails until they get SEC-02 cases. | extend when #95 merges |
