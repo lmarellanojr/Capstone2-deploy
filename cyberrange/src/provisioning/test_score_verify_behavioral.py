@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Dict, List, Literal, Tuple
 
 import pytest
+from fastapi import HTTPException
 
 from scoring import verify_milestone
 from score_poller import (
@@ -205,9 +206,10 @@ class TestStructuralInvariants:
 
 # ============================================================================
 # SECTION 2 — Scenario 01: Network Reconnaissance (kali, 4 milestones)
+# Persistence per scenario (G-03)
 # ============================================================================
 class TestScenario01Reconnaissance:
-    """PASS and FAIL for Scenario 01 across all 4 milestones."""
+    """Milestone persistence verification across all 4 milestones for Scenario 01 (G-03)."""
 
     @pytest.mark.anyio
     async def test_scenario_01_pass_all_milestones(self, sv_db):
@@ -265,9 +267,10 @@ class TestScenario01Reconnaissance:
 
 # ============================================================================
 # SECTION 3 — Scenario 06: SQL Injection (kali, 3 milestones)
+# Persistence per scenario (G-03)
 # ============================================================================
 class TestScenario06SQLInjection:
-    """PASS and FAIL for Scenario 06 across all 3 milestones."""
+    """Milestone persistence verification across all 3 milestones for Scenario 06 (G-03)."""
 
     @pytest.mark.anyio
     async def test_scenario_06_pass_all_milestones(self, sv_db):
@@ -310,9 +313,10 @@ class TestScenario06SQLInjection:
 
 # ============================================================================
 # SECTION 4 — Scenario 09: SIEM Alert Triage (meta, 3 milestones)
+# Persistence per scenario (G-03) + advisory detection invariant (G-06)
 # ============================================================================
 class TestScenario09SIEMTriage:
-    """PASS/FAIL + advisory detection invariant for Scenario 09."""
+    """Milestone persistence (G-03) and advisory detection invariant (G-06) for Scenario 09."""
 
     @pytest.mark.anyio
     async def test_scenario_09_pass_with_siem_detection(self, sv_db):
@@ -417,9 +421,10 @@ class TestScenario09SIEMTriage:
 
 # ============================================================================
 # SECTION 5 — Scenario 11: Vulnerability Hardening (meta, 3 milestones)
+# Persistence per scenario (G-03)
 # ============================================================================
 class TestScenario11Hardening:
-    """PASS and FAIL for Scenario 11 across all 3 milestones."""
+    """Milestone persistence verification across all 3 milestones for Scenario 11 (G-03)."""
 
     @pytest.mark.anyio
     async def test_scenario_11_pass_all_milestones(self, sv_db):
@@ -632,19 +637,19 @@ class TestScoringEngineGuards:
     async def test_scoring_disabled_returns_503(self, sv_db):
         """When scoring_enabled=False, verify_milestone raises 503."""
         pod = _insert_pod("disabled", 60, scenario_id="01")
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await verify_milestone(
                 pod=pod, scenario_id=1, milestone_id=1,
                 scoring_enabled=False, ssh_verifier_cls=None,
                 detection_enabled=False, detection_for=None, verify_siem_alert=None,
             )
-        assert "503" in str(exc_info.value.status_code) or exc_info.value.status_code == 503
+        assert exc_info.value.status_code == 503
 
     @pytest.mark.anyio
     async def test_no_verifier_class_returns_503(self, sv_db):
         """When ssh_verifier_cls is None, verify_milestone raises 503."""
         pod = _insert_pod("noverifier", 61, scenario_id="01")
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             await verify_milestone(
                 pod=pod, scenario_id=1, milestone_id=1,
                 scoring_enabled=True, ssh_verifier_cls=None,
@@ -673,33 +678,6 @@ class TestScoringChecksShCoverage:
         assert "6) check_scenario_6" in content
         assert "9) check_scenario_9" in content
         assert "11) check_scenario_11" in content
-
-    def test_scoring_checks_scenario_01_has_4_milestones(self):
-        """check_scenario_1 handles milestones 1-4."""
-        from ssh_verifier import SCORING_SCRIPT_PATH
-        content = Path(SCORING_SCRIPT_PATH).read_text()
-        # Extract check_scenario_1 function body
-        assert "check_scenario_1()" in content
-        for m in ("1)", "2)", "3)", "4)"):
-            assert m in content  # Milestone case handlers
-
-    def test_scoring_checks_scenario_06_has_3_milestones(self):
-        """check_scenario_6 handles milestones 1-3."""
-        from ssh_verifier import SCORING_SCRIPT_PATH
-        content = Path(SCORING_SCRIPT_PATH).read_text()
-        assert "check_scenario_6()" in content
-
-    def test_scoring_checks_scenario_09_has_3_milestones(self):
-        """check_scenario_9 handles milestones 1-3."""
-        from ssh_verifier import SCORING_SCRIPT_PATH
-        content = Path(SCORING_SCRIPT_PATH).read_text()
-        assert "check_scenario_9()" in content
-
-    def test_scoring_checks_scenario_11_has_3_milestones(self):
-        """check_scenario_11 handles milestones 1-3."""
-        from ssh_verifier import SCORING_SCRIPT_PATH
-        content = Path(SCORING_SCRIPT_PATH).read_text()
-        assert "check_scenario_11()" in content
 
     def test_scoring_checks_unknown_scenario_returns_unknown(self):
         """Default case in scoring_checks.sh should output UNKNOWN."""
@@ -781,6 +759,59 @@ class TestScoringChecksDirectBashExecution:
         res = subprocess.run([_BASH_EXE, self.script_path], capture_output=True, text=True)
         assert res.returncode != 0
 
+    def test_direct_bash_scenario_01_m1_artifact_pass(self, tmp_path):
+        """Scenario 01 M1: seeded history + stub ip → PASS."""
+        import os
+        import subprocess
+
+        history = tmp_path / ".bash_history"
+        history.write_text("nmap -sn 10.0.51.0/24\n")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub_ip = bin_dir / "ip"
+        stub_content = (
+            "#!/bin/bash\n"
+            "if [[ \"$*\" == *\"addr show\"* ]]; then\n"
+            "  echo \"2: eth0    inet 10.0.51.100/24 brd 10.0.51.255 scope global eth0\"\n"
+            "elif [[ \"$*\" == *\"route\"* ]]; then\n"
+            "  echo \"10.0.51.0/24 dev eth0 proto kernel scope link src 10.0.51.100\"\n"
+            "fi\n"
+        )
+        stub_ip.write_text(stub_content)
+        subprocess.run([_BASH_EXE, "-c", f"chmod +x '{stub_ip.as_posix()}'"], check=True)
+
+        env = {
+            "HOME": tmp_path.as_posix(),
+            "PATH": f"{bin_dir};{os.environ.get('PATH', '')}",
+        }
+        rc, token, stderr = self._run_script(1, 1, env=env)
+        assert rc == 0
+        assert token == "PASS", f"Expected PASS, got {token}; stderr={stderr}"
+
+    def test_direct_bash_scenario_01_empty_prefix_fails(self, tmp_path):
+        """Scenario 01 M1: empty prefix logs WARN and returns FAIL."""
+        log_file = tmp_path / "scoring.log"
+        env = {
+            "HOME": tmp_path.as_posix(),
+            "LOG_FILE": log_file.as_posix(),
+        }
+        rc, token, stderr = self._run_script(1, 1, env=env)
+        assert rc == 0
+        assert token == "FAIL"
+        assert log_file.exists()
+        log_text = log_file.read_text()
+        assert "WARN: no IPv4 on eth0; scenario 1 checks will FAIL" in log_text
+
+    def test_direct_bash_scenario_11_m1_history_pass(self, tmp_path):
+        """Scenario 11 M1: seeded history with tomcat-users inspect → PASS."""
+        history = tmp_path / ".bash_history"
+        history.write_text("cat /etc/tomcat9/tomcat-users.xml\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(11, 1, env=env)
+        assert rc == 0
+        assert token == "PASS"
+
     def test_direct_bash_scenario_09_m1_artifact_pass(self):
         """Scenario 09 M1: alert_triage.json with required fields produces PASS."""
         import subprocess
@@ -790,6 +821,22 @@ class TestScoringChecksDirectBashExecution:
         try:
             subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
             rc, token, stderr = self._run_script(9, 1)
+            assert rc == 0
+            assert token == "PASS"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_09_m2_artifact_pass(self):
+        """Scenario 09 M2: incident_timeline.md artifact produces PASS."""
+        import subprocess
+
+        setup_cmd = (
+            'mkdir -p /tmp && printf "# Incident Timeline\\n- rule 5710 triggered\\n- phase 1 complete\\n" > /tmp/incident_timeline.md'
+        )
+        cleanup_cmd = 'rm -f /tmp/incident_timeline.md'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(9, 2)
             assert rc == 0
             assert token == "PASS"
         finally:

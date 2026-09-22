@@ -56,8 +56,10 @@ check_behavior() {
 
     # 1. Shell History Check (Approach 1)
     if [[ "$log_type" == "history" || "$log_type" == "all" ]]; then
-        # Check root and all users in /home
-        if grep -qE "$pattern" /root/.bash_history /home/*/.bash_history /root/.zsh_history /home/*/.zsh_history 2>/dev/null; then
+        # Check root, all users in /home, and $HOME (for test overrides)
+        local hist_targets=(/root/.bash_history /home/*/.bash_history /root/.zsh_history /home/*/.zsh_history)
+        [[ -n "${HOME:-}" && -f "${HOME}/.bash_history" ]] && hist_targets+=("${HOME}/.bash_history")
+        if grep -qE "$pattern" "${hist_targets[@]}" 2>/dev/null; then
             log "PASS: Found pattern in history"
             return 0
         fi
@@ -123,7 +125,8 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 check_scenario_1() {
     local milestone=$1
     local prefix esc
-    prefix=$(own_subnet_prefix 2>/dev/null || true)
+    prefix=$(own_subnet_prefix)
+    [[ -z "$prefix" ]] && log "WARN: no IPv4 on eth0; scenario 1 checks will FAIL"
     esc="${prefix//./\\.}"  # escape dots for regex use
     case $milestone in
         1)
