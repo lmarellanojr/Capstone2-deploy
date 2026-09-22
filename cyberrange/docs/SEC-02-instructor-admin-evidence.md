@@ -175,9 +175,11 @@ Reproduce independently. Representative denials:
 
 ## 9. Findings
 
+**Status:** unit evidence complete; live host evidence (§6, §7) and review-partner reproduction (§8) pending. Until both are in, this PR relates to #54 rather than closing it.
+
 | Severity | Finding | Action |
 |---|---|---|
-| None | No Instructor → Admin bypass found. Every Admin-only operation is denied before any DB write, Keycloak call or teardown. | none |
+| None (unit only) | **In the unit tests** (§3, §4), no Instructor → Admin bypass was found: every Admin-only operation is denied before any DB write, Keycloak call or teardown. Not yet confirmed on the host: §6/§7 live evidence and the §8 review-partner reproduction are pending. | re-state after live evidence and §8 are in |
 | Info | User-route role smuggling in the body (`realmRoles`, `roles`, `clientRoles`) gets **422** (`extra="forbid"`) before the role check's 403. No action is performed. This is the same as the SEC-01 §3 informational finding. | none (unchanged) |
 | Info | Reset is not implemented (PR #50). Recorded as unavailable. The inventory test will require coverage when it lands. | revisit when a reset contract exists |
 | Info | ADM-SYS-01 (#95) will add Admin system-management routes. `test_every_admin_only_route_is_covered` fails until they get SEC-02 cases. | extend when #95 merges |
