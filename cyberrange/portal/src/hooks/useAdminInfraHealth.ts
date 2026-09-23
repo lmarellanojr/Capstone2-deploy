@@ -31,10 +31,11 @@ export function useAdminInfraHealth() {
       if (id !== reqId.current) return
       const message = mapErrorToMessage(err).message
       const httpStatus = axios.isAxiosError(err) ? err.response?.status : undefined
+      const apiDetail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined
       setError(message)
       setData({
         capacity: null,
-        services: servicesFromFetchFailure(message, httpStatus),
+        services: servicesFromFetchFailure(message, httpStatus, apiDetail),
       })
       setCheckedAt(new Date())
     } finally {

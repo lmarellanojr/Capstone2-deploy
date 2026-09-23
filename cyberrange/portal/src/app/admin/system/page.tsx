@@ -132,9 +132,9 @@ export default function AdminSystemPage() {
       <div className="card-surface p-6 mt-6">
         <h2 className="text-lg font-bold text-text-main mb-2">Audit & Telemetry Information</h2>
         <p className="text-sm text-text-muted">
-          Capacity and API/LXD status come from one snapshot via{" "}
-          <code className="text-xs">/admin/infra-health</code>. Identity and SIEM health probes
-          remain deferred (#55).
+          Capacity and API, LXD, Keycloak and Wazuh status come from one snapshot via{" "}
+          <code className="text-xs">/admin/infra-health</code>. Keycloak is checked through the
+          API&apos;s token introspection; Wazuh through the read-only scoring account.
         </p>
       </div>
     </LayoutWrapper>
