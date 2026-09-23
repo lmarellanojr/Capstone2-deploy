@@ -23,3 +23,13 @@ export function formatScenarioName(scenarioId: number | string | null): string {
   const id = Number(scenarioId);
   return SCENARIO_LABELS[id] ?? `Scenario ${scenarioId}`;
 }
+
+/**
+ * Returns the milestone label for a review case.
+ * A null milestone_id means the case covers the whole scenario
+ * (INSTRUCTOR_API_HANDOFF.md §2.3: "Overall Report").
+ */
+export function formatMilestoneLabel(milestoneId: number | null | undefined): string {
+  if (milestoneId === null || milestoneId === undefined) return "Overall Report";
+  return `Milestone ${milestoneId}`;
+}

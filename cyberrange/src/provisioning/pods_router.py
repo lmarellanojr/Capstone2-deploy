@@ -27,7 +27,10 @@ from provision import get_lxd_free_mb, perform_destruction, perform_provisioning
 from scoring import verify_milestone
 from ttl import ttl_payload
 
-router = APIRouter()
+# SEC-01 (#36): every route here requires one of the three application roles,
+# on top of whatever narrower check the route adds (require_owner,
+# require_role(["instructor", "admin"]), ...). See auth.require_app_role.
+router = APIRouter(dependencies=[Depends(auth.require_app_role)])
 
 
 def _scoring_deps() -> dict:
