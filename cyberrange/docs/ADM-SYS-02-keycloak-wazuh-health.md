@@ -95,7 +95,9 @@ restarts, no `pod_mgmt.db` access; temp directory removed afterwards.
 | Client secret in output | no |
 
 The live host's deployed tree predates ADM-SYS-01 (`infra_health.py` absent),
-so the Admin UI rows themselves are verified after deploy.
+so the Admin UI rows themselves are verified after deploy. Until that evidence
+and the review partner's verification are in, the PR references #55 with
+`Relates to` rather than `Closes`, so merging does not close the issue early.
 
 ## Verifying (for review)
 
@@ -105,8 +107,10 @@ On a host, as Admin, `GET /api/admin/infra-health` and watch the Keycloak/Wazuh 
 
 | Case | How | Expect |
 |------|-----|--------|
-| Both up | normal | Keycloak Healthy, Wazuh Healthy |
-| Wazuh down | stop wazuh-manager (`systemctl stop wazuh-manager` or the container) | Wazuh Unavailable within about 2 s |
-| Wazuh bad creds | wrong `WAZUH_SCORING_PW`, restart API | Wazuh Degraded |
+| Keycloak up | normal | Keycloak Healthy (introspection works) |
+| Wazuh up, scoring not configured (**current live baseline**) | normal on Ampere today: no `WAZUH_SCORING_USER` / `WAZUH_SCORING_PW` in the API `.env` | Wazuh **Degraded**, "manager API reachable, but scoring credentials not configured on the API". This is expected, not a failed check |
+| Wazuh up, scoring configured | only after Manual 06 Step 1 is done on the host | Wazuh Healthy (agent `000` is `active`) |
+| Wazuh down | stop the manager (`lxc stop wazuh-manager` on Ampere, `systemctl stop wazuh-manager` on a native install) | Wazuh Unavailable within about 2 s |
+| Wazuh bad creds | only when scoring is configured: wrong `WAZUH_SCORING_PW`, restart API | Wazuh Degraded |
 | Keycloak down | stop Keycloak, wait ~60 s for the introspection cache to expire, press Refresh on `/admin/system` | Keycloak Unavailable, API Degraded, LXD/Wazuh "not checked". Within the first ~60 s the cached session may reach the probe instead, which also reports Keycloak Unavailable |
 | Student/Instructor | call the route | 403, no probe |
