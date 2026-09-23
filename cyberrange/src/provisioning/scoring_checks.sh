@@ -126,7 +126,9 @@ check_scenario_1() {
     local milestone=$1
     local prefix esc
     prefix=$(own_subnet_prefix)
-    [[ -z "$prefix" ]] && log "WARN: no IPv4 on eth0; scenario 1 checks will FAIL"
+    if [[ -z "$prefix" && "$milestone" != "4" ]]; then
+        log "WARN: no IPv4 on eth0; scenario 1 M1-M3 will FAIL"
+    fi
     esc="${prefix//./\\.}"  # escape dots for regex use
     case $milestone in
         1)

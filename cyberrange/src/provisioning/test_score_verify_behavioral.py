@@ -22,6 +22,7 @@ Reviewer: Lenie Joice Mendoza
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Literal, Tuple
@@ -713,15 +714,21 @@ class TestScoringChecksDirectBashExecution:
     """Direct subprocess execution of scoring_checks.sh using bash."""
 
     @pytest.fixture(autouse=True)
-    def setup_script(self):
+    def setup_script(self, tmp_path: Path):
         from ssh_verifier import SCORING_SCRIPT_PATH
         self.script_path = str(Path(SCORING_SCRIPT_PATH).resolve())
         assert Path(self.script_path).exists()
+        self.default_home = tmp_path / "bash_home"
+        self.default_home.mkdir(parents=True, exist_ok=True)
+        self.default_log = tmp_path / "scoring.log"
 
     def _run_script(self, scenario: int | str, milestone: int | str, env=None) -> Tuple[int, str, str]:
-        import os
         import subprocess
-        run_env = {**os.environ}
+        run_env = {
+            **os.environ,
+            "HOME": self.default_home.as_posix(),
+            "LOG_FILE": self.default_log.as_posix(),
+        }
         if env:
             run_env.update(env)
         res = subprocess.run(
@@ -761,7 +768,6 @@ class TestScoringChecksDirectBashExecution:
 
     def test_direct_bash_scenario_01_m1_artifact_pass(self, tmp_path):
         """Scenario 01 M1: seeded history + stub ip → PASS."""
-        import os
         import subprocess
 
         history = tmp_path / ".bash_history"
@@ -783,7 +789,8 @@ class TestScoringChecksDirectBashExecution:
 
         env = {
             "HOME": tmp_path.as_posix(),
-            "PATH": f"{bin_dir};{os.environ.get('PATH', '')}",
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "LOG_FILE": (tmp_path / "scoring.log").as_posix(),
         }
         rc, token, stderr = self._run_script(1, 1, env=env)
         assert rc == 0
@@ -791,9 +798,18 @@ class TestScoringChecksDirectBashExecution:
 
     def test_direct_bash_scenario_01_empty_prefix_fails(self, tmp_path):
         """Scenario 01 M1: empty prefix logs WARN and returns FAIL."""
+        import subprocess
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub_ip = bin_dir / "ip"
+        stub_ip.write_text("#!/bin/bash\nexit 0\n")
+        subprocess.run([_BASH_EXE, "-c", f"chmod +x '{stub_ip.as_posix()}'"], check=True)
+
         log_file = tmp_path / "scoring.log"
         env = {
             "HOME": tmp_path.as_posix(),
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
             "LOG_FILE": log_file.as_posix(),
         }
         rc, token, stderr = self._run_script(1, 1, env=env)
@@ -801,7 +817,30 @@ class TestScoringChecksDirectBashExecution:
         assert token == "FAIL"
         assert log_file.exists()
         log_text = log_file.read_text()
-        assert "WARN: no IPv4 on eth0; scenario 1 checks will FAIL" in log_text
+        assert "WARN: no IPv4 on eth0; scenario 1 M1-M3 will FAIL" in log_text
+
+    def test_direct_bash_scenario_01_m4_empty_prefix_no_warn(self, tmp_path):
+        """Scenario 01 M4: empty prefix does NOT log WARN (M4 doesn't use prefix)."""
+        import subprocess
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub_ip = bin_dir / "ip"
+        stub_ip.write_text("#!/bin/bash\nexit 0\n")
+        subprocess.run([_BASH_EXE, "-c", f"chmod +x '{stub_ip.as_posix()}'"], check=True)
+
+        log_file = tmp_path / "scoring.log"
+        env = {
+            "HOME": tmp_path.as_posix(),
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "LOG_FILE": log_file.as_posix(),
+        }
+        rc, token, stderr = self._run_script(1, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL"
+        if log_file.exists():
+            log_text = log_file.read_text()
+            assert "WARN: no IPv4 on eth0" not in log_text
 
     def test_direct_bash_scenario_11_m1_history_pass(self, tmp_path):
         """Scenario 11 M1: seeded history with tomcat-users inspect → PASS."""
