@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import axios from "axios"
 import { admin } from "@/lib/api"
 import { mapErrorToMessage } from "@/lib/errorHandler"
@@ -16,15 +16,19 @@ export function useAdminInfraHealth() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
+  const reqId = useRef(0)
 
   const refresh = useCallback(async () => {
+    const id = ++reqId.current
     setLoading(true)
     try {
       const body = await admin.getInfraHealth()
+      if (id !== reqId.current) return
       setData(body)
       setError(null)
       setCheckedAt(new Date())
     } catch (err) {
+      if (id !== reqId.current) return
       const message = mapErrorToMessage(err).message
       const httpStatus = axios.isAxiosError(err) ? err.response?.status : undefined
       setError(message)
@@ -34,7 +38,7 @@ export function useAdminInfraHealth() {
       })
       setCheckedAt(new Date())
     } finally {
-      setLoading(false)
+      if (id === reqId.current) setLoading(false)
     }
   }, [])
 

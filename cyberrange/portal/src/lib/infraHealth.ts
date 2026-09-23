@@ -46,11 +46,6 @@ export function servicesFromFetchFailure(
   ]
 }
 
-/** @deprecated Prefer servicesFromFetchFailure with an optional HTTP status. */
-export function unavailableServicesFromError(message: string): InfraService[] {
-  return servicesFromFetchFailure(message)
-}
-
 export function formatCheckedAt(date: Date): string {
   return date.toLocaleTimeString(undefined, {
     hour: "2-digit",

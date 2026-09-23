@@ -11,18 +11,27 @@ export default function AdminDashboardPage() {
   const { data: infra, loading, error, refresh, checkedAt } = useAdminInfraHealth();
   const capacity = infra?.capacity ?? null;
 
-  const activePodsCount = capacity?.active_pods ?? "-";
+  const snapshotReady = !loading || infra !== null;
+  const capacityUnavailable = snapshotReady && capacity === null;
+
+  const activePodsCount = capacity
+    ? capacity.active_pods
+    : capacityUnavailable
+      ? "Unavailable"
+      : "-";
+
   const podCapacityStr = capacity
     ? `${capacity.active_pods} / ${capacity.max_pods}`
-    : error
-    ? "Unavailable"
-    : "-";
+    : capacityUnavailable
+      ? "Unavailable"
+      : "-";
+
   const availableRamStr =
     capacity?.available_mb !== null && capacity?.available_mb !== undefined
       ? `${Math.round(capacity.available_mb / 1024)} GB free`
-      : error
-      ? "Unavailable"
-      : "-";
+      : capacityUnavailable
+        ? "Unavailable"
+        : "-";
 
   return (
     <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
