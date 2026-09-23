@@ -18,9 +18,9 @@ UNAVAILABLE = "Unavailable"
 
 LXD_PROBE_TIMEOUT_S = 2.0
 
-# One shared worker for LXD probes. A hung get_lxd_free_mb keeps at most one
-# thread blocked; later requests see the in-flight future and fail closed as
-# timed out instead of stacking more workers (#55 will reuse this pattern).
+# One shared worker for LXD probes. Concurrent callers wait on the same
+# in-flight future (each with its own timeout) instead of stacking workers
+# or returning a fake immediate timeout (#55 will reuse this pattern).
 _lxd_pool = ThreadPoolExecutor(max_workers=1)
 _lxd_lock = threading.Lock()
 _lxd_inflight: Optional[Future] = None
@@ -80,18 +80,20 @@ def classify_lxd(
 def probe_lxd_free_mb(timeout_s: float = LXD_PROBE_TIMEOUT_S) -> Tuple[Optional[float], bool]:
     """Return (free_mb, timed_out). Never raise into the request handler.
 
-    Cap hung LXD work at one in-flight future on the module pool. If a prior
-    probe is still running, return timed-out immediately without submitting
-    another job. Each waiting request still gets its own timeout bound.
+    Cap LXD work at one in-flight future on the module pool. Concurrent
+    callers wait on that same future (each with its own timeout) instead of
+    returning timed-out immediately. A truly hung job still times out after
+    timeout_s for every waiter.
     """
     global _lxd_inflight
     from provision import get_lxd_free_mb
 
     with _lxd_lock:
         if _lxd_inflight is not None and not _lxd_inflight.done():
-            return None, True
-        fut = _lxd_pool.submit(get_lxd_free_mb)
-        _lxd_inflight = fut
+            fut = _lxd_inflight
+        else:
+            fut = _lxd_pool.submit(get_lxd_free_mb)
+            _lxd_inflight = fut
 
     try:
         return fut.result(timeout=timeout_s), False

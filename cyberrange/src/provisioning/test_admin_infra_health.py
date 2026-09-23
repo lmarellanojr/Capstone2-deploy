@@ -219,7 +219,7 @@ def test_health_liveness_unchanged_and_does_not_call_lxd(monkeypatch):
 
 
 def test_probe_lxd_caps_in_flight_at_one(monkeypatch):
-    """A hung LXD probe must not stack a second worker on the next request."""
+    """A hung LXD probe must not stack a second worker; waiters share it."""
     import threading
     import time
 
@@ -242,6 +242,7 @@ def test_probe_lxd_caps_in_flight_at_one(monkeypatch):
     assert free1 is None
     assert started.wait(1.0)
 
+    # Second caller waits on the same future and also times out (no re-submit).
     free2, timed2 = ih.probe_lxd_free_mb(timeout_s=0.15)
     assert timed2 is True
     assert free2 is None
@@ -254,6 +255,46 @@ def test_probe_lxd_caps_in_flight_at_one(monkeypatch):
         if time.time() > deadline:
             break
         time.sleep(0.05)
+    with ih._lxd_lock:
+        ih._lxd_inflight = None
+
+
+def test_probe_lxd_concurrent_waiters_share_result(monkeypatch):
+    """Two concurrent probes wait on one job and both get the real result."""
+    import threading
+    import time
+
+    calls = {"n": 0}
+    barrier = threading.Barrier(2)
+    results = {}
+
+    def _slow():
+        calls["n"] += 1
+        time.sleep(0.3)
+        return 20000.0
+
+    monkeypatch.setattr("provision.get_lxd_free_mb", _slow)
+    with ih._lxd_lock:
+        ih._lxd_inflight = None
+
+    def _worker(idx):
+        barrier.wait(timeout=2.0)
+        results[idx] = ih.probe_lxd_free_mb(timeout_s=2.0)
+
+    threads = [
+        threading.Thread(target=_worker, args=(0,)),
+        threading.Thread(target=_worker, args=(1,)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+        assert not t.is_alive()
+
+    assert results[0] == (20000.0, False)
+    assert results[1] == (20000.0, False)
+    assert calls["n"] == 1
+
     with ih._lxd_lock:
         ih._lxd_inflight = None
 
