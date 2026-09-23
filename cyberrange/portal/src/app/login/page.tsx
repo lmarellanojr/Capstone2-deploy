@@ -48,22 +48,28 @@ function LoginContent() {
 
   const handleSignIn = async () => {
     setIsLoading(true);
-    // Must redirect:true so browser navigates to Keycloak after state/pkce cookies are set.
-    // redirect:false returned a URL but never navigated — broken OAuth start.
-    //
-    // Always return to /login itself (carrying the original target, if any,
-    // as /login's own callbackUrl param) instead of handing NextAuth the raw
-    // target directly. Review finding: passing an explicit callbackUrl
-    // straight to signIn() let NextAuth redirect there after OAuth without
-    // ever loading this page again, so the effect above -- and its role /
-    // no-role routing -- never ran for that sign-in. Validated through the
-    // same resolveSameOriginPath used above, so an off-site value can't even
-    // get embedded into the round-trip in the first place.
-    const safeCallbackUrl = resolveSameOriginPath(explicitCallbackUrl, window.location.origin);
-    const returnTo = safeCallbackUrl
-      ? `/login?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
-      : "/login";
-    await signIn("keycloak", { callbackUrl: returnTo, redirect: true });
+    try {
+      // Must redirect:true so browser navigates to Keycloak after state/pkce cookies are set.
+      // redirect:false returned a URL but never navigated — broken OAuth start.
+      //
+      // Always return to /login itself (carrying the original target, if any,
+      // as /login's own callbackUrl param) instead of handing NextAuth the raw
+      // target directly. Review finding: passing an explicit callbackUrl
+      // straight to signIn() let NextAuth redirect there after OAuth without
+      // ever loading this page again, so the effect above -- and its role /
+      // no-role routing -- never ran for that sign-in. Validated through the
+      // same resolveSameOriginPath used above, so an off-site value can't even
+      // get embedded into the round-trip in the first place.
+      const safeCallbackUrl = resolveSameOriginPath(explicitCallbackUrl, window.location.origin);
+      const returnTo = safeCallbackUrl
+        ? `/login?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+        : "/login";
+      await signIn("keycloak", { callbackUrl: returnTo, redirect: true });
+    } catch {
+      // In case of client-side initiation failure, keep page usable
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (status === "authenticated" && error !== "SessionExpired") {
@@ -110,11 +116,14 @@ function LoginContent() {
           loading={isLoading}
           className="w-full"
         >
-          {isLoading ? "Signing in..." : "Continue with school SSO"}
+          {isLoading ? "Logging in..." : "Log in"}
         </Button>
 
         <p className="text-text-muted text-xs text-center mt-6">
-          Secure authentication via Keycloak
+          Secure authentication via Keycloak demo accounts
+        </p>
+        <p className="text-text-muted text-[11px] text-center mt-1">
+          Sign in with your assigned student, instructor, or admin credentials
         </p>
       </div>
     </div>
