@@ -1,10 +1,28 @@
-"""ADM-SYS-01 infra health (Issue #37). Temp DB via conftest; never live LXD."""
+"""ADM-SYS-01 (#37) and ADM-SYS-02 (#55) infra health. Temp DB via conftest;
+never live LXD, Keycloak or Wazuh."""
 import pytest
+import requests
 from fastapi.testclient import TestClient
 
 from auth import verify_token
 from provision_api_fastapi import app
 import infra_health as ih
+
+# Captured before the autouse stub replaces them on the module.
+real_check_keycloak = ih.check_keycloak
+real_check_wazuh = ih.check_wazuh
+
+
+@pytest.fixture(autouse=True)
+def stub_identity_siem(monkeypatch):
+    """Endpoint tests must not reach a real Keycloak or Wazuh."""
+    monkeypatch.setattr(ih, "check_keycloak", lambda: ih._row("Keycloak", "Healthy", "stub"))
+    monkeypatch.setattr(ih, "check_wazuh", lambda: ih._row("Wazuh", "Healthy", "stub"))
+    ih._keycloak_flight.reset()
+    ih._wazuh_flight.reset()
+    yield
+    ih._keycloak_flight.reset()
+    ih._wazuh_flight.reset()
 
 
 def admin_claims(username="admin1"):
@@ -129,13 +147,13 @@ def test_infra_health_admin_200_lxd_healthy(monkeypatch):
     body = res.json()
     assert set(body["capacity"]) == CAPACITY_KEYS
     names = [s["name"] for s in body["services"]]
-    assert names == ["API", "LXD"]
+    assert names == ["API", "LXD", "Keycloak", "Wazuh"]
     assert {s["name"]: s["status"] for s in body["services"]} == {
         "API": "Healthy",
         "LXD": "Healthy",
+        "Keycloak": "Healthy",
+        "Wazuh": "Healthy",
     }
-    assert "Keycloak" not in names
-    assert "Wazuh" not in names
     assert "OVN" not in names
 
 
@@ -306,3 +324,322 @@ def test_capacity_still_unauthenticated_after_infra_health():
     assert res.status_code == 200
     assert set(res.json()) == CAPACITY_KEYS
 
+
+
+# --- ADM-SYS-02 (#55): Keycloak -------------------------------------------
+
+STATUSES = {"Healthy", "Degraded", "Unavailable"}
+SECRET = "s3cr3t-client-secret"
+
+
+class _Resp:
+    def __init__(self, status_code, body=None, json_error=False):
+        self.status_code = status_code
+        self._body = body
+        self._json_error = json_error
+
+    def json(self):
+        if self._json_error:
+            raise ValueError("not json")
+        return self._body
+
+
+@pytest.fixture
+def keycloak_configured(monkeypatch):
+    monkeypatch.setattr("auth.AUTH_ENABLED", True)
+    monkeypatch.setattr("auth.KEYCLOAK_INTROSPECT", "https://kc.internal/realms/cyber-range/protocol/openid-connect/token/introspect")
+    monkeypatch.setattr("auth.KEYCLOAK_CLIENT_SECRET", SECRET)
+
+
+def _kc_answers(monkeypatch, resp=None, exc=None):
+    def _probe(timeout):
+        assert timeout <= ih.SERVICE_PROBE_TIMEOUT_S
+        if exc is not None:
+            raise exc
+        return resp
+
+    monkeypatch.setattr("auth.probe_introspection", _probe)
+
+
+def test_keycloak_healthy_on_inactive_introspection(monkeypatch, keycloak_configured):
+    _kc_answers(monkeypatch, _Resp(200, {"active": False}))
+    row = real_check_keycloak()
+    assert row == {"name": "Keycloak", "status": "Healthy", "detail": "token introspection responding"}
+
+
+@pytest.mark.parametrize(
+    "exc,detail",
+    [
+        (requests.ConnectTimeout("t"), "timed out"),
+        (requests.ReadTimeout("t"), "timed out"),
+        (requests.ConnectionError("refused"), "unreachable"),
+    ],
+)
+def test_keycloak_network_failure_is_unavailable(monkeypatch, keycloak_configured, exc, detail):
+    _kc_answers(monkeypatch, exc=exc)
+    row = real_check_keycloak()
+    assert row["status"] == "Unavailable"
+    assert detail in row["detail"]
+
+
+@pytest.mark.parametrize("code", [502, 503, 504])
+def test_keycloak_proxy_down_is_unavailable(monkeypatch, keycloak_configured, code):
+    _kc_answers(monkeypatch, _Resp(code, json_error=True))
+    assert real_check_keycloak()["status"] == "Unavailable"
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [
+        _Resp(401, {"error": "invalid_client"}),
+        _Resp(500, json_error=True),
+        _Resp(200, json_error=True),
+        _Resp(200, {"unexpected": True}),
+        _Resp(200, {"active": True}),
+    ],
+)
+def test_keycloak_reachable_but_wrong_is_degraded(monkeypatch, keycloak_configured, resp):
+    _kc_answers(monkeypatch, resp)
+    assert real_check_keycloak()["status"] == "Degraded"
+
+
+@pytest.mark.parametrize(
+    "attr,value",
+    [
+        ("auth.AUTH_ENABLED", False),
+        ("auth.KEYCLOAK_INTROSPECT", None),
+        ("auth.KEYCLOAK_CLIENT_SECRET", None),
+    ],
+)
+def test_keycloak_unconfigured_is_unavailable_and_not_called(monkeypatch, keycloak_configured, attr, value):
+    monkeypatch.setattr(attr, value)
+    _kc_answers(monkeypatch, exc=AssertionError("must not call Keycloak"))
+    assert real_check_keycloak()["status"] == "Unavailable"
+
+
+# --- ADM-SYS-02 (#55): Wazuh ----------------------------------------------
+
+
+def _http_error(code):
+    resp = requests.Response()
+    resp.status_code = code
+    return requests.HTTPError(response=resp)
+
+
+@pytest.fixture
+def wazuh_configured(monkeypatch):
+    monkeypatch.setattr("wazuh_client.WAZUH_USER", "scoring")
+    monkeypatch.setattr("wazuh_client.WAZUH_PASS", SECRET)
+
+
+def _wazuh_answers(monkeypatch, token=None, token_exc=None, status=None, status_exc=None):
+    def _token(timeout):
+        assert timeout <= ih.SERVICE_PROBE_TIMEOUT_S
+        if token_exc is not None:
+            raise token_exc
+        return token
+
+    def _status(tok, timeout):
+        assert tok == token
+        assert timeout <= ih.SERVICE_PROBE_TIMEOUT_S
+        if status_exc is not None:
+            raise status_exc
+        return status
+
+    monkeypatch.setattr("wazuh_client.get_wazuh_token", _token)
+    monkeypatch.setattr("wazuh_client.get_manager_agent_status", _status)
+
+
+def test_wazuh_healthy_when_manager_active(monkeypatch, wazuh_configured):
+    _wazuh_answers(monkeypatch, token="tok", status="active")
+    row = real_check_wazuh()
+    assert row["name"] == "Wazuh"
+    assert row["status"] == "Healthy"
+
+
+@pytest.mark.parametrize("status", ["disconnected", "never_connected", "pending", None, "weird"])
+def test_wazuh_manager_not_active_is_degraded(monkeypatch, wazuh_configured, status):
+    _wazuh_answers(monkeypatch, token="tok", status=status)
+    row = real_check_wazuh()
+    assert row["status"] == "Degraded"
+    assert "weird" not in row["detail"]
+
+
+@pytest.mark.parametrize(
+    "kwargs,expected",
+    [
+        ({"token_exc": requests.ConnectTimeout("t")}, "Unavailable"),
+        ({"token": "tok", "status_exc": requests.ReadTimeout("t")}, "Unavailable"),
+        ({"token_exc": requests.ConnectionError("refused")}, "Unavailable"),
+        ({"token_exc": requests.exceptions.SSLError("bad cert")}, "Degraded"),
+        ({"token_exc": _http_error(401)}, "Degraded"),
+        ({"token_exc": _http_error(500)}, "Degraded"),
+        ({"token_exc": _http_error(503)}, "Unavailable"),
+        ({"token": "tok", "status_exc": _http_error(403)}, "Degraded"),
+        ({"token": "tok", "status_exc": _http_error(502)}, "Unavailable"),
+    ],
+)
+def test_wazuh_failures_are_never_healthy(monkeypatch, wazuh_configured, kwargs, expected):
+    _wazuh_answers(monkeypatch, **kwargs)
+    assert real_check_wazuh()["status"] == expected
+
+
+@pytest.mark.parametrize("attr", ["wazuh_client.WAZUH_USER", "wazuh_client.WAZUH_PASS"])
+@pytest.mark.parametrize(
+    "ping,expected",
+    [
+        (401, "Degraded"),
+        (requests.exceptions.SSLError("self-signed"), "Degraded"),
+        (requests.ConnectionError("refused"), "Unavailable"),
+        (requests.ConnectTimeout("t"), "Unavailable"),
+    ],
+)
+def test_wazuh_unconfigured_never_logs_in_and_is_never_healthy(
+    monkeypatch, wazuh_configured, attr, ping, expected
+):
+    """Live host finding: manager up, API has no scoring creds. That is
+    Degraded (reachable, not wired), not Unavailable -- and never Healthy."""
+    monkeypatch.setattr(attr, "")
+    _wazuh_answers(monkeypatch, token_exc=AssertionError("must not log in to Wazuh"))
+
+    def _ping(timeout):
+        assert timeout <= ih.SERVICE_PROBE_TIMEOUT_S
+        if isinstance(ping, Exception):
+            raise ping
+        return ping
+
+    monkeypatch.setattr("wazuh_client.ping_manager_api", _ping)
+    row = real_check_wazuh()
+    assert row["status"] == expected
+    assert "not configured" in row["detail"]
+
+
+# --- ADM-SYS-02 (#55): endpoint wiring --------------------------------------
+
+
+def _admin_get():
+    app.dependency_overrides[verify_token] = lambda: admin_claims()
+    client = TestClient(app)
+    res = client.get("/admin/infra-health", headers={"Authorization": "Bearer mock"})
+    assert res.status_code == 200
+    return {s["name"]: s for s in res.json()["services"]}
+
+
+def test_endpoint_hung_probes_are_unavailable_and_bounded(monkeypatch):
+    import threading
+    import time
+
+    release = threading.Event()
+
+    def _hang():
+        release.wait(timeout=5)
+        return ih._row("x", "Healthy", "late")
+
+    monkeypatch.setattr(ih, "available_ram_mb", lambda: 8192)
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, False))
+    monkeypatch.setattr(ih, "SERVICE_PROBE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(ih, "check_keycloak", _hang)
+    monkeypatch.setattr(ih, "check_wazuh", _hang)
+    try:
+        started = time.monotonic()
+        rows = _admin_get()
+        elapsed = time.monotonic() - started
+        # Shared deadline: two hung probes cost one timeout, not two.
+        assert elapsed < 0.2 * 2
+        assert rows["Keycloak"]["status"] == "Unavailable"
+        assert rows["Wazuh"]["status"] == "Unavailable"
+        assert "timed out" in rows["Keycloak"]["detail"]
+        assert rows["LXD"]["status"] == "Healthy"
+    finally:
+        release.set()
+
+
+def test_endpoint_probe_crash_is_unavailable(monkeypatch):
+    def _boom():
+        raise RuntimeError(SECRET)
+
+    monkeypatch.setattr(ih, "available_ram_mb", lambda: 8192)
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, False))
+    monkeypatch.setattr(ih, "check_keycloak", _boom)
+    monkeypatch.setattr(ih, "check_wazuh", _boom)
+    rows = _admin_get()
+    assert rows["Keycloak"]["status"] == "Unavailable"
+    assert rows["Wazuh"]["status"] == "Unavailable"
+
+
+def test_endpoint_real_checks_never_leak_secrets(monkeypatch, keycloak_configured, wazuh_configured):
+    """Real check_* functions end to end with failing dependencies: no secret,
+    URL or exception text may reach the response."""
+    monkeypatch.setattr(ih, "available_ram_mb", lambda: 8192)
+    monkeypatch.setattr(ih, "probe_lxd_free_mb", lambda: (20000.0, False))
+    monkeypatch.setattr(ih, "check_keycloak", real_check_keycloak)
+    monkeypatch.setattr(ih, "check_wazuh", real_check_wazuh)
+    _kc_answers(monkeypatch, exc=requests.ConnectionError(f"https://kc.internal {SECRET}"))
+    _wazuh_answers(monkeypatch, token_exc=requests.ConnectionError(f"https://scoring:{SECRET}@wazuh.internal"))
+
+    app.dependency_overrides[verify_token] = lambda: admin_claims()
+    res = TestClient(app).get("/admin/infra-health", headers={"Authorization": "Bearer mock"})
+    assert res.status_code == 200
+    assert SECRET not in res.text
+    assert ".internal" not in res.text
+    rows = {s["name"]: s for s in res.json()["services"]}
+    assert rows["Keycloak"]["status"] == "Unavailable"
+    assert rows["Wazuh"]["status"] == "Unavailable"
+    assert {s["status"] for s in rows.values()} <= STATUSES
+
+
+def test_endpoint_still_admin_only_with_new_rows(monkeypatch):
+    calls = {"n": 0}
+
+    def _count():
+        calls["n"] += 1
+        return ih._row("Keycloak", "Healthy", "stub")
+
+    monkeypatch.setattr(ih, "check_keycloak", _count)
+    monkeypatch.setattr(ih, "check_wazuh", _count)
+    for claims in (student_claims(), instructor_claims()):
+        app.dependency_overrides[verify_token] = lambda c=claims: c
+        res = TestClient(app).get("/admin/infra-health", headers={"Authorization": "Bearer mock"})
+        assert res.status_code == 403
+    # Forbidden callers must not trigger outbound Keycloak/Wazuh probes.
+    assert calls["n"] == 0
+
+
+def test_single_flight_shares_a_hung_probe():
+    import threading
+
+    release = threading.Event()
+    calls = {"n": 0}
+
+    def _hang():
+        calls["n"] += 1
+        release.wait(timeout=5)
+        return {}
+
+    flight = ih._SingleFlight()
+    f1 = flight.start(_hang)
+    f2 = flight.start(_hang)
+    assert f1 is f2
+    release.set()
+    f1.result(timeout=2)
+    assert calls["n"] == 1
+    f3 = flight.start(lambda: {})
+    assert f3 is not f1
+
+
+def test_keycloak_down_returns_the_503_the_admin_ui_recognizes(monkeypatch):
+    """portal/src/lib/infraHealth.ts matches this exact detail to show Keycloak
+    (not the API) as Unavailable when Keycloak is down. Keep them in sync."""
+    import auth as auth_mod
+
+    def _down(*a, **kw):
+        raise requests.ConnectionError("keycloak down")
+
+    monkeypatch.setattr(auth_mod.requests, "post", _down)
+    monkeypatch.setattr(auth_mod, "KEYCLOAK_INTROSPECT", "https://kc.internal/introspect")
+    app.dependency_overrides.pop(verify_token, None)
+    res = TestClient(app).get(
+        "/admin/infra-health", headers={"Authorization": "Bearer not-in-cache-55"}
+    )
+    assert res.status_code == 503
+    assert res.json() == {"detail": "Auth service unavailable"}

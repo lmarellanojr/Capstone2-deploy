@@ -25,6 +25,20 @@ else:
     _SECRETS_LOADER_ERROR = None
 
 
+def probe_introspection(timeout: float) -> requests.Response:
+    """POST a throwaway token to the introspection endpoint with the API's own
+    client credentials. Keycloak answers 200 {"active": false} when the realm
+    and client are healthy, 401 when the client credentials are rejected.
+    Shared by the startup check and Admin infra-health (#55). Raises
+    requests.RequestException on network failure or timeout."""
+    return requests.post(
+        KEYCLOAK_INTROSPECT,
+        auth=(KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET),
+        data={"token": "health-probe"},
+        timeout=timeout,
+    )
+
+
 def validate_auth_config() -> None:
     if not AUTH_ENABLED:
         # caller_identity() falls back to the client-supplied identity when
@@ -53,12 +67,7 @@ def validate_auth_config() -> None:
         # a config error that previously ran silently for 11 days into a CRITICAL
         # log line at second zero, without making startup depend on the dependency.
         try:
-            probe = requests.post(
-                KEYCLOAK_INTROSPECT,
-                auth=(KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET),
-                data={"token": "startup-probe"},
-                timeout=6,
-            )
+            probe = probe_introspection(timeout=6)
             if probe.status_code not in (200, 401):
                 logger.critical(
                     "Introspect endpoint %s answered HTTP %s (expect 200/401)",

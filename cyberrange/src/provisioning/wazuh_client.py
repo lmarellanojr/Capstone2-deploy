@@ -43,7 +43,7 @@ def _wazuh_verify():
     return True
 
 
-def get_wazuh_token():
+def get_wazuh_token(timeout=None):
     # Fail closed rather than sending empty or half-configured credentials.
     # Both callers (provision.py's enrolment block, deregister_agents) already
     # catch Exception and continue, so an unconfigured host logs
@@ -58,6 +58,7 @@ def get_wazuh_token():
         f"{WAZUH_URL}/security/user/authenticate",
         auth=(WAZUH_USER, WAZUH_PASS),
         verify=_wazuh_verify(),
+        timeout=timeout,
     )
     r.raise_for_status()
     return r.json()["data"]["token"]
@@ -77,6 +78,27 @@ def get_agent_id_by_name(token: str, name: str):
     r.raise_for_status()
     items = r.json().get("data", {}).get("affected_items", [])
     return items[0]["id"] if items else None
+
+
+def ping_manager_api(timeout: float = 10) -> int:
+    """Unauthenticated GET / -- no credentials sent. Any HTTP answer (normally
+    401) means the manager API is up. Raises requests.RequestException."""
+    return requests.get(f"{WAZUH_URL}/", verify=_wazuh_verify(), timeout=timeout).status_code
+
+
+def get_manager_agent_status(token: str, timeout: float = 10):
+    """Status of agent 000 (the manager itself), readable by the `readonly`
+    scoring role. 'active' means wazuh-manager is running (#55)."""
+    r = requests.get(
+        f"{WAZUH_URL}/agents",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"agents_list": "000", "select": "status"},
+        verify=_wazuh_verify(),
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    items = r.json().get("data", {}).get("affected_items", [])
+    return items[0].get("status") if items else None
 
 
 def delete_wazuh_agent(token: str, agent_id: str):
