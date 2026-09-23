@@ -9,19 +9,28 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-import auth
 import db
 from auth import verify_token
 from export_knowledge_gain import export_knowledge_gain_cli
 from knowledge_gain import (
+    TelemetrySaltConfigError,
     anonymize_student_id,
     compute_knowledge_gain_summary,
     extract_knowledge_gain_records,
     format_records_csv,
-    parse_timestamp,
     sanitize_csv_cell,
 )
 from provision_api_fastapi import app
+
+# Test-only salt (≥16 bytes). Never used as a production default.
+TEST_TELEMETRY_SALT = b"unit-test-telemetry-salt-key"
+TEST_TELEMETRY_SALT_ENV = "unit-test-telemetry-salt-key"
+
+
+@pytest.fixture(autouse=True)
+def _telemetry_salt_env(monkeypatch: pytest.MonkeyPatch):
+    """Provide a non-public salt for default-anonymize API paths; tests may override."""
+    monkeypatch.setenv("TELEMETRY_ANONYMIZATION_SALT", TEST_TELEMETRY_SALT_ENV)
 
 
 def _instructor_claims(username: str = "instructor1") -> dict:
@@ -320,13 +329,15 @@ def test_sanitization_and_field_minimization():
 
 
 def test_salted_hmac_anonymization():
-    """Verify deterministic salted HMAC pseudonymization across records."""
+    """Verify deterministic full-length salted HMAC pseudonymization across records."""
     _insert_pod("ivan", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
     _insert_verification("ivan", 1, scenario_id=1, milestone_id=1, status="PASS", verified_at="2026-09-24 00:01:00")
     _insert_verification("ivan", 1, scenario_id=1, milestone_id=2, status="PASS", verified_at="2026-09-24 00:03:00")
 
     conn = db.get_db_connection()
-    records = extract_knowledge_gain_records(conn, anonymize=True)
+    records = extract_knowledge_gain_records(
+        conn, anonymize=True, salt=TEST_TELEMETRY_SALT
+    )
     conn.close()
 
     assert len(records) == 2
@@ -334,34 +345,57 @@ def test_salted_hmac_anonymization():
     anon_id_2 = records[1]["student_id"]
 
     assert anon_id_1.startswith("student_")
+    assert len(anon_id_1.removeprefix("student_")) == 64
     assert "ivan" not in anon_id_1
     assert anon_id_1 == anon_id_2
 
-    # Different student produces different pseudonym
-    other_anon = anonymize_student_id("judy")
+    other_anon = anonymize_student_id("judy", TEST_TELEMETRY_SALT)
+    assert len(other_anon.removeprefix("student_")) == 64
     assert other_anon != anon_id_1
 
 
+def test_no_public_default_salt_literal_in_source():
+    """Production module must not ship a public fallback salt string."""
+    src = Path(__file__).with_name("knowledge_gain.py").read_text(encoding="utf-8")
+    assert "cyberrange-d5-telemetry-salt" not in src
+
+
+def test_anonymize_without_salt_raises():
+    """Missing/blank/short salt must fail closed when anonymize=True."""
+    _insert_pod("ivan", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
+    _insert_verification("ivan", 1, scenario_id=1, milestone_id=1, status="PASS")
+
+    conn = db.get_db_connection()
+    with pytest.raises(TelemetrySaltConfigError):
+        extract_knowledge_gain_records(conn, anonymize=True, salt=b"short")
+    with pytest.raises(TelemetrySaltConfigError):
+        extract_knowledge_gain_records(conn, anonymize=True, salt=b"")
+    conn.close()
+
+
 def test_csv_formula_injection_defense():
-    """Verify that potential formula injection prefixes (=, +, -, @, \\t, \\r) are sanitized."""
+    """Verify formula injection prefixes are sanitized, including whitespace/NBSP."""
     assert sanitize_csv_cell("=1+1") == "'=1+1"
     assert sanitize_csv_cell("+cmd") == "'+cmd"
     assert sanitize_csv_cell("-calc") == "'-calc"
     assert sanitize_csv_cell("@eval") == "'@eval"
+    assert sanitize_csv_cell(" =1+1") == "' =1+1"
+    assert sanitize_csv_cell("\u00a0=1+1") == "'\u00a0=1+1"
     assert sanitize_csv_cell("student1") == "student1"
     assert sanitize_csv_cell(123) == 123
 
 
 def test_api_endpoint_json_and_csv():
-    """Verify GET /instructor/export/knowledge-gain serves both JSON and RFC 4180 CSV."""
+    """Verify export defaults to anonymized JSON/CSV; cleartext needs anonymize=false."""
     app.dependency_overrides[verify_token] = lambda: _instructor_claims()
 
     _insert_pod("karen", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
     _insert_verification("karen", 1, scenario_id=1, milestone_id=1, status="PASS", verified_at="2026-09-24 00:02:00")
 
     client = TestClient(app)
+    expected_anon = anonymize_student_id("karen", TEST_TELEMETRY_SALT)
 
-    # 1. JSON Export
+    # 1. Default JSON export is anonymized
     res_json = client.get("/instructor/export/knowledge-gain?format=json")
     assert res_json.status_code == 200
     data = res_json.json()
@@ -370,9 +404,10 @@ def test_api_endpoint_json_and_csv():
     assert data["summary"]["total_records"] == 1
     assert data["summary"]["total_passes"] == 1
     assert data["summary"]["completion_rate"] == 1.0
-    assert data["records"][0]["student_id"] == "karen"
+    assert data["records"][0]["student_id"] == expected_anon
+    assert "karen" not in data["records"][0]["student_id"]
 
-    # 2. CSV Export
+    # 2. Default CSV export is anonymized
     res_csv = client.get("/instructor/export/knowledge-gain?format=csv")
     assert res_csv.status_code == 200
     assert "text/csv" in res_csv.headers["content-type"]
@@ -380,7 +415,12 @@ def test_api_endpoint_json_and_csv():
     reader = list(csv.reader(res_csv.text.splitlines()))
     assert len(reader) == 2
     assert reader[0][0] == "student_id"
-    assert reader[1][0] == "karen"
+    assert reader[1][0] == expected_anon
+
+    # 3. Explicit cleartext opt-out
+    res_clear = client.get("/instructor/export/knowledge-gain?anonymize=false")
+    assert res_clear.status_code == 200
+    assert res_clear.json()["records"][0]["student_id"] == "karen"
 
 
 def test_api_case_insensitivity_and_invalid_filters():
@@ -411,11 +451,33 @@ def test_api_case_insensitivity_and_invalid_filters():
     assert r_bad_st.status_code == 400
 
 
+def test_api_missing_salt_returns_503(monkeypatch: pytest.MonkeyPatch):
+    """Default anonymized export fails closed with 503 when salt is unset."""
+    monkeypatch.delenv("TELEMETRY_ANONYMIZATION_SALT", raising=False)
+    app.dependency_overrides[verify_token] = lambda: _instructor_claims()
+    client = TestClient(app)
+    res = client.get("/instructor/export/knowledge-gain")
+    assert res.status_code == 503
+    assert "TELEMETRY_ANONYMIZATION_SALT" in res.json()["detail"]
+
+
+def test_api_cleartext_works_without_salt(monkeypatch: pytest.MonkeyPatch):
+    """Explicit anonymize=false works even when salt is unset."""
+    monkeypatch.delenv("TELEMETRY_ANONYMIZATION_SALT", raising=False)
+    app.dependency_overrides[verify_token] = lambda: _instructor_claims()
+    _insert_pod("neo", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
+    _insert_verification("neo", 1, scenario_id=1, milestone_id=1, status="PASS")
+    client = TestClient(app)
+    res = client.get("/instructor/export/knowledge-gain?anonymize=false")
+    assert res.status_code == 200
+    assert res.json()["records"][0]["student_id"] == "neo"
+
+
 def test_api_rbac_authorization():
     """Verify RBAC boundaries: unauthenticated (401), student (403), instructor (200), admin (200)."""
     client = TestClient(app)
 
-    # 1. Unauthenticated -> 401
+    # 1. Unauthenticated -> 401 (before salt oracle)
     app.dependency_overrides.pop(verify_token, None)
     r_unauth = client.get("/instructor/export/knowledge-gain")
     assert r_unauth.status_code == 401
@@ -425,7 +487,7 @@ def test_api_rbac_authorization():
     r_student = client.get("/instructor/export/knowledge-gain")
     assert r_student.status_code == 403
 
-    # 3. Instructor -> 200 OK
+    # 3. Instructor -> 200 OK (salt provided by autouse fixture)
     app.dependency_overrides[verify_token] = lambda: _instructor_claims()
     r_inst = client.get("/instructor/export/knowledge-gain")
     assert r_inst.status_code == 200
@@ -436,8 +498,9 @@ def test_api_rbac_authorization():
     assert r_admin.status_code == 200
 
 
-def test_cli_export_tool(tmp_path: Path):
-    """Verify standalone CLI tool exports CSV and JSON to file and filters by status."""
+def test_cli_export_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Verify CLI exports under allowlisted output dir; default anonymize; cleartext opt-out."""
+    monkeypatch.setenv("TELEMETRY_EXPORT_OUTPUT_DIR", str(tmp_path))
     _insert_pod("mallory", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
     _insert_verification("mallory", 1, scenario_id=1, milestone_id=1, status="PASS", verified_at="2026-09-24 00:02:00")
     _insert_verification("mallory", 1, scenario_id=1, milestone_id=2, status="FAIL", verified_at="2026-09-24 00:03:00")
@@ -445,7 +508,6 @@ def test_cli_export_tool(tmp_path: Path):
     csv_file = tmp_path / "export.csv"
     json_file = tmp_path / "export.json"
 
-    # Export CSV with status=PASS filter and anonymize
     rc = export_knowledge_gain_cli(
         db_path=db.DB_PATH,
         export_format="csv",
@@ -460,18 +522,60 @@ def test_cli_export_tool(tmp_path: Path):
     assert "mallory" not in csv_content
     rows = list(csv.reader(csv_content.strip().splitlines()))
     assert len(rows) == 2  # header + 1 pass row
+    assert len(rows[1][0].removeprefix("student_")) == 64
 
-    # Export JSON
     rc = export_knowledge_gain_cli(
         db_path=db.DB_PATH,
         export_format="json",
         output_file=str(json_file),
+        anonymize=False,
     )
     assert rc == 0
     assert json_file.exists()
     data = json.loads(json_file.read_text(encoding="utf-8"))
     assert data["summary"]["total_records"] == 2
     assert data["summary"]["total_passes"] == 1
+    assert data["records"][0]["student_id"] == "mallory"
+
+
+def test_cli_refuses_outside_output_allowlist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """CLI must refuse --output outside cwd / TELEMETRY_EXPORT_OUTPUT_DIR / DB parent."""
+    import config
+
+    allow = tmp_path / "allow"
+    forbid = tmp_path / "forbid"
+    allow.mkdir()
+    forbid.mkdir()
+    db_file = allow / "pod_mgmt.db"
+    db_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(config, "DB_PATH", str(db_file))
+    monkeypatch.setenv("TELEMETRY_EXPORT_OUTPUT_DIR", str(allow))
+    monkeypatch.chdir(allow)
+
+    outside = forbid / "leak.csv"
+    rc = export_knowledge_gain_cli(
+        db_path=str(db_file),
+        export_format="csv",
+        output_file=str(outside),
+        anonymize=False,
+    )
+    assert rc == 1
+    assert not outside.exists()
+
+
+def test_cli_missing_salt_exits_before_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """CLI anonymized export exits 1 without writing when salt is missing."""
+    monkeypatch.delenv("TELEMETRY_ANONYMIZATION_SALT", raising=False)
+    monkeypatch.setenv("TELEMETRY_EXPORT_OUTPUT_DIR", str(tmp_path))
+    out = tmp_path / "nope.csv"
+    rc = export_knowledge_gain_cli(
+        db_path=db.DB_PATH,
+        export_format="csv",
+        output_file=str(out),
+        anonymize=True,
+    )
+    assert rc == 1
+    assert not out.exists()
 
 
 def test_legacy_schema_without_review_cases(tmp_path: Path):

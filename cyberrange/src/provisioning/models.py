@@ -106,4 +106,3 @@ class KnowledgeGainSummary(BaseModel):
 class KnowledgeGainExportResponse(BaseModel):
     summary: KnowledgeGainSummary
     records: List[KnowledgeGainRecord]
-

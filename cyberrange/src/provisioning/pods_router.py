@@ -15,6 +15,7 @@ from capacity import available_ram_mb, can_provision_ram, count_active_pods, ram
 from config import MAX_PODS, POD_STORAGE_MB, STORAGE_LIMIT_MB
 from db import get_db_connection, log_event
 from knowledge_gain import (
+    TelemetrySaltConfigError,
     compute_knowledge_gain_summary,
     extract_knowledge_gain_records,
     format_records_csv,
@@ -651,20 +652,23 @@ def instructor_get_student_progress(student_id: str, claims: dict = Depends(veri
                 "application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeGainExportResponse"}},
                 "text/csv": {"schema": {"type": "string"}},
             },
-        }
+        },
+        503: {
+            "description": "Anonymized export requested but TELEMETRY_ANONYMIZATION_SALT is not configured",
+        },
     },
 )
 def export_knowledge_gain(
     format: str = Query("json"),
     scenario_id: Optional[int] = Query(None, ge=1),
     status_filter: Optional[str] = Query(None),
-    anonymize: bool = Query(False),
+    anonymize: bool = Query(True),
     claims: dict = Depends(verify_token),
 ):
-    """Export sanitized Section D.5 / PAPER-16 knowledge-gain scoring records for research evaluation.
+    """Export Section D.5 / PAPER-16 knowledge-gain scoring records.
 
-    Includes student completion telemetry, time-to-milestone (pod created_at to first PASS),
-    and Wazuh detection scores. Accessible to Instructors and Admins only.
+    Defaults to anonymized student IDs (requires TELEMETRY_ANONYMIZATION_SALT).
+    Pass anonymize=false for cleartext instructor dumps. Instructor/Admin only.
     """
     auth.require_role(["instructor", "admin"], claims)
 
@@ -684,12 +688,18 @@ def export_knowledge_gain(
 
     conn = get_db_connection()
     try:
-        records = extract_knowledge_gain_records(
-            conn,
-            scenario_id=scenario_id,
-            status_filter=clean_status,
-            anonymize=anonymize,
-        )
+        try:
+            records = extract_knowledge_gain_records(
+                conn,
+                scenario_id=scenario_id,
+                status_filter=clean_status,
+                anonymize=anonymize,
+            )
+        except TelemetrySaltConfigError:
+            raise HTTPException(
+                status_code=503,
+                detail="TELEMETRY_ANONYMIZATION_SALT is not configured",
+            )
     finally:
         conn.close()
 

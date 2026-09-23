@@ -10,16 +10,31 @@ import csv
 import hashlib
 import hmac
 import io
-import os
 import sqlite3
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
-DEFAULT_ANONYMIZATION_SALT = os.getenv(
-    "TELEMETRY_ANONYMIZATION_SALT", "cyberrange-d5-telemetry-salt"
-).encode("utf-8")
+from secrets_loader import get_secret
 
-FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+MIN_TELEMETRY_SALT_BYTES = 16
+FORMULA_PREFIXES = ("=", "+", "-", "@")
+# Leading characters stripped before formula detection (ASCII ws + NBSP + BOM).
+_LEADING_STRIP = "".join(
+    [
+        " ",
+        "\t",
+        "\r",
+        "\n",
+        "\v",
+        "\f",
+        "\u00a0",
+        "\ufeff",
+    ]
+)
+
+
+class TelemetrySaltConfigError(Exception):
+    """Raised when anonymization is requested but the telemetry salt is unusable."""
 
 
 def parse_timestamp(ts: Any) -> Optional[datetime]:
@@ -48,22 +63,52 @@ def parse_timestamp(ts: Any) -> Optional[datetime]:
     return None
 
 
-def anonymize_student_id(
-    student_id: str, salt: bytes = DEFAULT_ANONYMIZATION_SALT
-) -> str:
-    """Deterministically map a student ID to a pseudonym resistant to dictionary attacks."""
+def _validate_salt_bytes(salt: bytes) -> bytes:
+    if not isinstance(salt, (bytes, bytearray)) or len(salt) < MIN_TELEMETRY_SALT_BYTES:
+        raise TelemetrySaltConfigError(
+            "TELEMETRY_ANONYMIZATION_SALT must be at least "
+            f"{MIN_TELEMETRY_SALT_BYTES} bytes"
+        )
+    return bytes(salt)
+
+
+def resolve_telemetry_salt(explicit: bytes | None = None) -> bytes:
+    """Resolve a deployment-specific telemetry salt; fail closed if unusable."""
+    if explicit is not None:
+        return _validate_salt_bytes(explicit)
+
+    raw = get_secret("TELEMETRY_ANONYMIZATION_SALT", required=False, default=None)
+    if raw is None:
+        raise TelemetrySaltConfigError(
+            "TELEMETRY_ANONYMIZATION_SALT is not configured"
+        )
+    cleaned = raw.strip()
+    if not cleaned:
+        raise TelemetrySaltConfigError(
+            "TELEMETRY_ANONYMIZATION_SALT is not configured"
+        )
+    return _validate_salt_bytes(cleaned.encode("utf-8"))
+
+
+def anonymize_student_id(student_id: str, salt: bytes) -> str:
+    """Map a student ID to a salted HMAC-SHA256 pseudonym (full 64-hex digest)."""
+    salt = _validate_salt_bytes(salt)
     if not student_id:
         return "anonymous"
-    h = hmac.new(salt, student_id.encode("utf-8"), hashlib.sha256).hexdigest()[:8]
+    h = hmac.new(salt, student_id.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"student_{h}"
 
 
 def sanitize_csv_cell(value: Any) -> Any:
-    """Prevent CSV Formula Injection (CWE-1236) by escaping leading formula characters."""
-    if isinstance(value, str) and value.startswith(FORMULA_PREFIXES):
+    """Prevent CSV formula injection (CWE-1236), including whitespace/NBSP prefixes."""
+    if not isinstance(value, str):
+        return value
+    if value.startswith(("\t", "\r")):
+        return f"'{value}"
+    normalized = value.lstrip(_LEADING_STRIP)
+    if normalized.startswith(FORMULA_PREFIXES):
         return f"'{value}"
     return value
-
 
 def _has_table(conn: sqlite3.Connection, table_name: str) -> bool:
     """Check whether a table exists in the SQLite database."""
@@ -78,13 +123,17 @@ def extract_knowledge_gain_records(
     scenario_id: Optional[int] = None,
     status_filter: Optional[str] = None,
     anonymize: bool = False,
-    salt: bytes = DEFAULT_ANONYMIZATION_SALT,
+    salt: bytes | None = None,
 ) -> list[dict]:
-    """Extract sanitized scoring records and calculate time-to-milestone telemetry.
+    """Extract scoring records and calculate time-to-milestone telemetry.
 
-    Applies cross-tenant slot reuse defense, type casting for scenario_id,
-    and deduplication for multiple review cases.
+    Library default keeps cleartext IDs (`anonymize=False`). When anonymize is
+    True, a configured telemetry salt is required (explicit `salt=` or env).
     """
+    resolved_salt: bytes | None = None
+    if anonymize:
+        resolved_salt = resolve_telemetry_salt(salt)
+
     # 1. Fetch milestone verification records
     query = (
         "SELECT id, pod_id, student_id, scenario_id, milestone_id, "
@@ -195,7 +244,9 @@ def extract_knowledge_gain_records(
         if rubric_score is None:
             rubric_score = rubric_map.get((sid, scen, None))
 
-        out_student_id = anonymize_student_id(sid, salt) if anonymize else sid
+        out_student_id = (
+            anonymize_student_id(sid, resolved_salt) if anonymize else sid
+        )
 
         records.append(
             {
