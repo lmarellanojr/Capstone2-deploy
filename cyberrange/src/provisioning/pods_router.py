@@ -7,13 +7,18 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 
 import auth
 from auth import caller_identity, require_owner, verify_token
 from capacity import available_ram_mb, can_provision_ram, count_active_pods, ram_required_mb
 from config import MAX_PODS, POD_STORAGE_MB, STORAGE_LIMIT_MB
 from db import get_db_connection, log_event
+from knowledge_gain import (
+    compute_knowledge_gain_summary,
+    extract_knowledge_gain_records,
+    format_records_csv,
+)
 from models import (
     PodResponse,
     ProvisionRequest,
@@ -634,6 +639,72 @@ def instructor_get_student_progress(student_id: str, claims: dict = Depends(veri
         "active_pod": active_pod,
         "milestones": [dict(m) for m in milestone_rows],
         "reviews": [dict(r) for r in review_rows],
+    }
+
+
+@router.get(
+    "/instructor/export/knowledge-gain",
+    responses={
+        200: {
+            "description": "Exported knowledge gain metrics in JSON or CSV format",
+            "content": {
+                "application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeGainExportResponse"}},
+                "text/csv": {"schema": {"type": "string"}},
+            },
+        }
+    },
+)
+def export_knowledge_gain(
+    format: str = Query("json"),
+    scenario_id: Optional[int] = Query(None, ge=1),
+    status_filter: Optional[str] = Query(None),
+    anonymize: bool = Query(False),
+    claims: dict = Depends(verify_token),
+):
+    """Export sanitized Section D.5 / PAPER-16 knowledge-gain scoring records for research evaluation.
+
+    Includes student completion telemetry, time-to-milestone (pod created_at to first PASS),
+    and Wazuh detection scores. Accessible to Instructors and Admins only.
+    """
+    auth.require_role(["instructor", "admin"], claims)
+
+    fmt = (format or "json").strip().lower()
+    if fmt not in ("json", "csv"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid format: must be 'json' or 'csv'",
+        )
+
+    clean_status = status_filter.strip().upper() if status_filter else None
+    if clean_status and clean_status not in ("PASS", "FAIL", "ERROR", "UNKNOWN"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid status_filter: must be PASS, FAIL, ERROR, or UNKNOWN",
+        )
+
+    conn = get_db_connection()
+    try:
+        records = extract_knowledge_gain_records(
+            conn,
+            scenario_id=scenario_id,
+            status_filter=clean_status,
+            anonymize=anonymize,
+        )
+    finally:
+        conn.close()
+
+    if fmt == "csv":
+        csv_text = format_records_csv(records)
+        return Response(
+            content=csv_text,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=knowledge_gain_metrics.csv"},
+        )
+
+    summary = compute_knowledge_gain_summary(records)
+    return {
+        "summary": summary,
+        "records": records,
     }
 
 

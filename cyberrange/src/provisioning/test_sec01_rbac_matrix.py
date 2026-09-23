@@ -87,6 +87,7 @@ ROUTE_POLICY = {
     ("GET", "/instructor/reviews"): (INSTRUCTOR, "/instructor/reviews", None),
     ("GET", "/instructor/reviews/{review_id}"): (INSTRUCTOR, "/instructor/reviews/1", None),
     ("POST", "/instructor/reviews/{review_id}/resolve"): (INSTRUCTOR, "/instructor/reviews/1/resolve", {"status": "APPROVED"}),
+    ("GET", "/instructor/export/knowledge-gain"): (INSTRUCTOR, "/instructor/export/knowledge-gain", None),
     ("DELETE", "/admin/pods/{pod_id}/force-destroy"): (ADMIN, f"/admin/pods/{POD}/force-destroy", None),
     ("GET", "/admin/infra-health"): (ADMIN, "/admin/infra-health", None),
     ("GET", "/admin/users"): (ADMIN, "/admin/users", None),
