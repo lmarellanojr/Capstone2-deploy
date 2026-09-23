@@ -11,11 +11,9 @@ from auth import require_app_role, validate_auth_config
 from auth import verify_token as real_verify_token
 import alerts_endpoint as ae
 from capacity import (
-    POD_RAM_MB,
-    RAM_BUFFER_MB,
     available_ram_mb,
-    can_provision_ram,
-    ram_required_mb,
+    build_capacity_payload,
+    count_active_pods,
     validate_capacity_config,
 )
 from config import API_BIND_HOST, API_BIND_PORT, MAX_PODS, POD_TTL_HOURS, REAP_INTERVAL_SECONDS, SCORE_POLL_INTERVAL_SECONDS, PROFILE_NAME
@@ -23,6 +21,7 @@ from db import get_db_connection, init_db
 from logging_config import configure_logging
 from pods_router import router as pods_router
 from users_router import router as users_router
+from infra_health import router as infra_health_router
 from reaper import pod_ttl_reaper
 from score_poller import score_poller
 from scoring_imports import load_scoring_modules
@@ -50,6 +49,7 @@ if _score_mod is None or _wazuh_mod is None:
 app = FastAPI(title="Cyber Range Pod Provisioning API (LXD Version)", version="1.2.0")
 app.include_router(pods_router)
 app.include_router(users_router)
+app.include_router(infra_health_router)
 # alerts_endpoint.py keeps its own stub-friendly verify_token_dep, so the
 # app-role guard (SEC-01 #36) is attached here rather than in that module.
 app.include_router(ae.alerts_router, dependencies=[Depends(require_app_role)])
@@ -115,22 +115,10 @@ def health():
 @app.get("/capacity")
 def capacity_status():
     conn = get_db_connection()
-    active = conn.execute(
-        "SELECT COUNT(*) FROM pods WHERE status NOT IN ('DESTROYED', 'FAILED_ROLLBACK_COMPLETE')"
-    ).fetchone()[0]
+    active = count_active_pods(conn)
     conn.close()
     avail = available_ram_mb()
-    return {
-        "available_mb": avail,
-        "active_pods": active,
-        "max_pods": MAX_PODS,
-        "pod_ram_mb": POD_RAM_MB,
-        "ram_buffer_mb": RAM_BUFFER_MB,
-        "profile": PROFILE_NAME,
-        # Free headroom needed to admit ONE more pod -- not a fleet total.
-        "ram_required_mb": ram_required_mb(),
-        "can_provision": active < MAX_PODS and can_provision_ram(avail),
-    }
+    return build_capacity_payload(active, avail, MAX_PODS, PROFILE_NAME)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 import auth
 from auth import caller_identity, require_owner, verify_token
-from capacity import available_ram_mb, can_provision_ram, ram_required_mb
+from capacity import available_ram_mb, can_provision_ram, count_active_pods, ram_required_mb
 from config import MAX_PODS, POD_STORAGE_MB, STORAGE_LIMIT_MB
 from db import get_db_connection, log_event
 from models import (
@@ -142,9 +142,7 @@ async def provision_pod(
                 detail={"error": "ALREADY_PROVISIONED", "pod_id": existing["pod_id"]},
             )
 
-        active_pods = conn.execute(
-            "SELECT COUNT(*) FROM pods WHERE status NOT IN ('DESTROYED', 'FAILED_ROLLBACK_COMPLETE')"
-        ).fetchone()[0]
+        active_pods = count_active_pods(conn)
         # MAX_PODS is the concurrency policy; the 1..6 slot pool below is only
         # the fixed pod-id/IP address space and must not be relied on alone
         # to enforce it (it was previously unenforced here). Detail stays a

@@ -123,3 +123,33 @@ def validate_capacity_config(max_pods: int, meminfo: Optional[str] = None) -> No
             f"real interlock. Set MAX_PODS=1 in the API .env "
             f"(see Docs/superpowers/specs/2026-07-30-oci-12gib-stability-design.md)."
         )
+
+
+ACTIVE_PODS_SQL = (
+    "SELECT COUNT(*) FROM pods WHERE status NOT IN "
+    "('DESTROYED', 'FAILED_ROLLBACK_COMPLETE')"
+)
+
+
+def count_active_pods(conn) -> int:
+    """Host-wide live pod count used by /capacity and /admin/infra-health."""
+    return int(conn.execute(ACTIVE_PODS_SQL).fetchone()[0])
+
+
+def build_capacity_payload(
+    active_pods: int,
+    avail_mb: Optional[int],
+    max_pods: int,
+    profile_name: str,
+) -> dict:
+    """Same JSON object GET /capacity already returns. Keep keys stable."""
+    return {
+        "available_mb": avail_mb,
+        "active_pods": active_pods,
+        "max_pods": max_pods,
+        "pod_ram_mb": POD_RAM_MB,
+        "ram_buffer_mb": RAM_BUFFER_MB,
+        "profile": profile_name,
+        "ram_required_mb": ram_required_mb(),
+        "can_provision": active_pods < max_pods and can_provision_ram(avail_mb),
+    }

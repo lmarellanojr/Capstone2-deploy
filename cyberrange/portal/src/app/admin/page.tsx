@@ -2,35 +2,36 @@
 
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { Badge, LoadingSpinner } from "@/components/ui";
+import { Badge, Button, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
-import { useAdminPods } from "@/hooks/useAdminPods";
-import { mockServiceStatus } from "@/lib/mock/adminMock";
-
-const SERVICE_BADGE: Record<string, "success" | "warning" | "danger"> = {
-  healthy: "success",
-  degraded: "warning",
-  down: "danger",
-};
+import { useAdminInfraHealth } from "@/hooks/useAdminInfraHealth";
+import { badgeVariantForStatus, formatCheckedAt } from "@/lib/infraHealth";
 
 export default function AdminDashboardPage() {
-  const { pods, capacity, loading, error, capacityError } = useAdminPods();
+  const { data: infra, loading, error, refresh, checkedAt } = useAdminInfraHealth();
+  const capacity = infra?.capacity ?? null;
 
-  const activePodsCount = capacity?.active_pods !== undefined
+  const snapshotReady = !loading || infra !== null;
+  const capacityUnavailable = snapshotReady && capacity === null;
+
+  const activePodsCount = capacity
     ? capacity.active_pods
-    : pods.filter((p) => p.status === "ACTIVE" || p.status === "PROVISIONING").length;
+    : capacityUnavailable
+      ? "Unavailable"
+      : "-";
 
   const podCapacityStr = capacity
     ? `${capacity.active_pods} / ${capacity.max_pods}`
-    : capacityError
-    ? "Unavailable"
-    : "-";
+    : capacityUnavailable
+      ? "Unavailable"
+      : "-";
 
-  const availableRamStr = capacity?.available_mb !== null && capacity?.available_mb !== undefined
-    ? `${Math.round(capacity.available_mb / 1024)} GB free`
-    : capacityError
-    ? "Unavailable"
-    : "-";
+  const availableRamStr =
+    capacity?.available_mb !== null && capacity?.available_mb !== undefined
+      ? `${Math.round(capacity.available_mb / 1024)} GB free`
+      : capacityUnavailable
+        ? "Unavailable"
+        : "-";
 
   return (
     <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
@@ -47,7 +48,7 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {loading ? (
+      {loading && !infra ? (
         <div className="flex justify-center py-12">
           <LoadingSpinner message="Loading admin overview..." />
         </div>
@@ -68,34 +69,48 @@ export default function AdminDashboardPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 card-surface p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex flex-wrap items-baseline gap-3">
               <h2 className="text-lg font-bold text-text-main">Service Status</h2>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-muted text-text-muted border border-border">
-                Fixture data
-              </span>
+              {checkedAt && (
+                <span className="text-xs text-text-muted">
+                  checked {formatCheckedAt(checkedAt)}
+                </span>
+              )}
             </div>
-            <Link href="/admin/system" className="text-sm text-brand font-semibold hover:underline">
-              View system health →
-            </Link>
+            <div className="flex items-center gap-3">
+              <Button type="button" variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+                Refresh
+              </Button>
+              <Link href="/admin/system" className="text-sm text-brand font-semibold hover:underline">
+                View system health →
+              </Link>
+            </div>
           </div>
-          <div className="space-y-3">
-            {mockServiceStatus.map((svc) => (
-              <div key={svc.name} className="flex items-center justify-between p-3 rounded-lg border border-border">
-                <div>
-                  <p className="font-semibold text-text-main text-sm">{svc.name}</p>
-                  <p className="text-xs text-text-muted mt-0.5">{svc.detail}</p>
+          {loading && !infra ? (
+            <LoadingSpinner message="Loading service health..." />
+          ) : (
+            <div className="space-y-3">
+              {(infra?.services ?? []).map((svc) => (
+                <div key={svc.name} className="flex items-center justify-between p-3 rounded-lg border border-border">
+                  <div>
+                    <p className="font-semibold text-text-main text-sm">{svc.name}</p>
+                    <p className="text-xs text-text-muted mt-0.5">{svc.detail}</p>
+                  </div>
+                  <Badge variant={badgeVariantForStatus(svc.status)}>{svc.status}</Badge>
                 </div>
-                <Badge variant={SERVICE_BADGE[svc.status]}>{svc.status}</Badge>
-              </div>
-            ))}
-          </div>
+              ))}
+              {!loading && (infra?.services?.length ?? 0) === 0 && !error && (
+                <p className="text-sm text-text-muted">No service rows to display.</p>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
           <Link href="/admin/users" className="card-surface p-6 hover:shadow-card-hover transition block">
             <h3 className="text-lg font-bold text-text-main mb-1">Users</h3>
-            <p className="text-sm text-text-muted">Accounts and Keycloak role assignment.</p>
+            <p className="text-sm text-text-muted">Accounts and role assignment.</p>
           </Link>
           <Link href="/admin/pods" className="card-surface p-6 hover:shadow-card-hover transition block">
             <h3 className="text-lg font-bold text-text-main mb-1">Pods</h3>

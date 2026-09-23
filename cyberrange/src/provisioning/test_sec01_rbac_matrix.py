@@ -88,6 +88,7 @@ ROUTE_POLICY = {
     ("GET", "/instructor/reviews/{review_id}"): (INSTRUCTOR, "/instructor/reviews/1", None),
     ("POST", "/instructor/reviews/{review_id}/resolve"): (INSTRUCTOR, "/instructor/reviews/1/resolve", {"status": "APPROVED"}),
     ("DELETE", "/admin/pods/{pod_id}/force-destroy"): (ADMIN, f"/admin/pods/{POD}/force-destroy", None),
+    ("GET", "/admin/infra-health"): (ADMIN, "/admin/infra-health", None),
     ("GET", "/admin/users"): (ADMIN, "/admin/users", None),
     ("POST", "/admin/users"): (ADMIN, "/admin/users", {"username": "matrix_probe", "role": "student", "password": "Probe!12345"}),
     ("PATCH", "/admin/users/{user_id}/enabled"): (ADMIN, f"/admin/users/{ANY_UUID}/enabled", {"enabled": True}),

@@ -35,26 +35,3 @@ export const mockPods: MockPod[] = [
   { id: "pod-c003", student: "Maria Santos", scenario: "01 - Network Recon", status: "provisioning", created: "2026-09-15 15:05" },
   { id: "pod-9e41", student: "Ana Lopez", scenario: "11 - Vulnerability Hardening", status: "failed", created: "2026-09-12 18:55" },
 ];
-
-export type ServiceState = "healthy" | "degraded" | "down";
-
-export interface MockService {
-  name: string;
-  status: ServiceState;
-  detail: string;
-}
-
-export const mockServiceStatus: MockService[] = [
-  { name: "FastAPI provisioning", status: "healthy", detail: "All endpoints responding" },
-  { name: "Keycloak", status: "healthy", detail: "Realm cyber-range online" },
-  { name: "LXD / OVN", status: "healthy", detail: "Host capacity nominal" },
-  { name: "Wazuh", status: "degraded", detail: "Alert ingestion delayed ~2m" },
-  { name: "Xterm.js / WebSocket terminal", status: "healthy", detail: "Guac tunnel healthy" },
-];
-
-export const mockCapacity = {
-  podsInUse: 3,
-  podsCapacity: 8,
-  storageUsedGb: 21,
-  storageCapacityGb: 64,
-};
