@@ -21,14 +21,20 @@ from knowledge_gain import (
     format_records_csv,
 )
 from models import (
+    FlagSubmissionRequest,
+    FlagSubmissionResponse,
+    MilestoneRubricResponse,
     PodResponse,
     ProvisionRequest,
     ReviewResolveRequest,
     ReviewResolveResponse,
     ReviewResubmitRequest,
     ReviewResubmitResponse,
+    ScenarioRubricsResponse,
     VerificationResponse,
 )
+from hybrid_scoring import evaluate_hybrid_submission
+from rubrics import CATALOG_SCENARIO_IDS, list_rubrics
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
 from scoring import verify_milestone
 from ttl import ttl_payload
@@ -487,6 +493,117 @@ def reset_scenario_progress(scenario_id: int, claims: dict = Depends(verify_toke
     return {"student_id": student_id, "scenario_id": scenario_id, "deleted": deleted}
 
 
+@router.post(
+    "/progress/{scenario_id}/flag",
+    response_model=FlagSubmissionResponse,
+)
+async def submit_milestone_flag(
+    scenario_id: str,
+    body: FlagSubmissionRequest,
+    claims: dict = Depends(verify_token),
+):
+    """Submit a milestone flag for hybrid scoring correlation (SCORE-HYBRID).
+
+    Evaluates the 3-outcome state machine:
+    - Flag + State agree -> PASS
+    - Flag without State -> ESCALATE (to review_cases)
+    - State without Flag -> ESCALATE (to review_cases)
+    - Neither -> INCOMPLETE
+    """
+    student_id = caller_identity(claims, None)
+    if not student_id:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    try:
+        scen_id_int = int(scenario_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"Invalid scenario_id: {scenario_id}")
+
+    if scen_id_int not in CATALOG_SCENARIO_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Scenario {scen_id_int} is not an active catalog scenario {CATALOG_SCENARIO_IDS}",
+        )
+
+    clean_flag = body.flag.strip() if body.flag else ""
+    if not clean_flag:
+        raise HTTPException(status_code=400, detail="Flag cannot be empty")
+
+    conn = get_db_connection()
+    try:
+        result = await evaluate_hybrid_submission(
+            conn,
+            student_id=student_id,
+            scenario_id=scen_id_int,
+            milestone_id=body.milestone_id,
+            submitted_flag=clean_flag,
+        )
+        return FlagSubmissionResponse(
+            outcome=result.outcome,
+            status=result.status,
+            scenario_id=result.scenario_id,
+            milestone_id=result.milestone_id,
+            message=result.message,
+            review_id=result.review_id,
+            verified_at=result.verified_at,
+            rubric_criteria=result.rubric_criteria,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    finally:
+        conn.close()
+
+
+@router.get(
+    "/progress/{scenario_id}/rubrics",
+    response_model=ScenarioRubricsResponse,
+)
+def get_scenario_rubrics(
+    scenario_id: str,
+    claims: dict = Depends(verify_token),
+):
+    """Retrieve rubric criteria for all milestones in a scenario.
+
+    Excludes expected_flag to prevent answer-key leakage (Anti Agent invariant).
+    """
+    student_id = caller_identity(claims, None)
+    if not student_id:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    try:
+        scen_id_int = int(scenario_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"Invalid scenario_id: {scenario_id}")
+
+    if scen_id_int not in CATALOG_SCENARIO_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Scenario {scen_id_int} is not an active catalog scenario {CATALOG_SCENARIO_IDS}",
+        )
+
+    conn = get_db_connection()
+    try:
+        rubrics_list = list_rubrics(conn, scen_id_int)
+        clean_rubrics = [
+            MilestoneRubricResponse(
+                scenario_id=r["scenario_id"],
+                milestone_id=r["milestone_id"],
+                name=r["name"],
+                criteria=r["criteria"],
+                points=r.get("points", 50),
+                mitre_technique=r.get("mitre_technique"),
+                nist_phase=r.get("nist_phase"),
+            )
+            for r in rubrics_list
+        ]
+        return ScenarioRubricsResponse(
+            scenario_id=scen_id_int,
+            rubrics=clean_rubrics,
+        )
+    finally:
+        conn.close()
+
+
 @router.get("/pods/{pod_id}/milestones")
 def get_pod_milestones(pod_id: int, claims: dict = Depends(verify_token)):
     conn = get_db_connection()
@@ -902,6 +1019,8 @@ def resolve_student_review(
                 raise HTTPException(status_code=404, detail="Review case not found")
 
             student_id = row["student_id"]
+            scenario_id = row["scenario_id"]
+            milestone_id = row["milestone_id"]
             cur = conn.execute(
                 "UPDATE review_cases "
                 "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
@@ -910,6 +1029,30 @@ def resolve_student_review(
             )
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Review case not found")
+
+            case_row = conn.execute(
+                "SELECT case_type FROM review_cases WHERE review_id=?",
+                (review_id,),
+            ).fetchone()
+            case_type = case_row["case_type"] if case_row and "case_type" in case_row.keys() else "WRITTEN_REPORT"
+
+            if case_type == "SCORING_CONFLICT" and clean_status == "APPROVED" and milestone_id is not None:
+                pod_row = conn.execute(
+                    "SELECT pod_id FROM pods WHERE student_id=? ORDER BY id DESC LIMIT 1",
+                    (student_id,),
+                ).fetchone()
+                target_pod_id = pod_row["pod_id"] if pod_row and pod_row["pod_id"] else 0
+                exists = conn.execute(
+                    "SELECT id FROM milestone_verification WHERE student_id=? AND scenario_id=? AND milestone_id=? AND status='PASS' LIMIT 1",
+                    (student_id, scenario_id, milestone_id),
+                ).fetchone()
+                if not exists:
+                    conn.execute(
+                        "INSERT INTO milestone_verification "
+                        "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
+                        "VALUES (?, ?, ?, ?, 'PASS', 0, 'instructor_approved_conflict')",
+                        (target_pod_id, student_id, scenario_id, milestone_id),
+                    )
     finally:
         conn.close()
 

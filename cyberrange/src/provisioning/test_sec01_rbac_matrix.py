@@ -77,6 +77,8 @@ ROUTE_POLICY = {
     ("GET", "/pods/{pod_id}/alerts"): (ANY_APP_ROLE, f"/pods/{POD}/alerts", None),
     ("GET", "/progress"): (ANY_APP_ROLE, "/progress", None),
     ("DELETE", "/progress/{scenario_id}"): (ANY_APP_ROLE, "/progress/1", None),
+    ("POST", "/progress/{scenario_id}/flag"): (ANY_APP_ROLE, "/progress/1/flag", {"milestone_id": 1, "flag": "FLAG{S01_M1_HOST_DISCOVERY}"}),
+    ("GET", "/progress/{scenario_id}/rubrics"): (ANY_APP_ROLE, "/progress/1/rubrics", None),
     ("POST", "/reviews/submit"): (ANY_APP_ROLE, "/reviews/submit", {"scenario_id": 1, "report_text": "matrix probe"}),
     # INST-03 (#86): owner-or-staff read, owner-only resubmit (see IDOR tests below).
     ("GET", "/reviews/{review_id}"): (ANY_APP_ROLE, "/reviews/1", None),

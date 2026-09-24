@@ -1,0 +1,582 @@
+"""SCORE-HYBRID: Automated tests for Flag Submission API, Rubrics & Conflict State Machine.
+
+Validates:
+- G-01: Automated scoring produces correct PASS/FAIL/INCOMPLETE per milestone
+- G-03: Milestone verification and review records correctly persist per student
+- G-09: Hybrid scoring 3-outcome state machine and automatic routing into INST-03 review queue
+- TC-S12-06: Scenario 1 Reconnaissance and exploitation hybrid milestone completion
+- TC-S12-10: Automated scoring correlation, persistence, and conflicting evidence escalation
+
+Owner: Shekinah Jabez Florentino
+Reviewer: Lenie Joice Mendoza
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import tempfile
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+import pytest
+from fastapi.testclient import TestClient
+
+import auth
+import db
+import keycloak_admin
+import migrate
+from provision_api_fastapi import app
+from rubrics import (
+    CATALOG_SCENARIO_IDS,
+    DEFAULT_RUBRICS,
+    get_rubric,
+    list_rubrics,
+    validate_flag,
+)
+import scoring_state
+
+
+# ---------------------------------------------------------------------------
+# Fixtures & Test Setup
+# ---------------------------------------------------------------------------
+
+class FakeKeycloak:
+    def __init__(self):
+        self.users = {}
+
+    def add(self, username, *roles):
+        self.users[username] = list(roles)
+
+
+def _claims(username: str, *roles: str) -> dict:
+    return {
+        "preferred_username": username,
+        "sub": f"sub-{username}",
+        "realm_access": {"roles": list(roles)},
+    }
+
+
+@pytest.fixture
+def hybrid_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Hermetic SQLite database initialized with all migrations up to v5."""
+    db_file = tmp_path / "test_hybrid.db"
+    monkeypatch.setattr(db, "DB_PATH", str(db_file))
+    migrate.apply(str(db_file))
+    return str(db_file)
+
+
+@pytest.fixture
+def client(hybrid_db: str, monkeypatch: pytest.MonkeyPatch):
+    """TestClient with mocked infrastructure dependencies."""
+    monkeypatch.setattr("pods_router.available_ram_mb", lambda: 10**6)
+    monkeypatch.setattr("pods_router.get_lxd_free_mb", lambda: 10**6)
+    monkeypatch.setattr("pods_router.perform_provisioning", lambda *a, **k: None)
+    monkeypatch.setattr("pods_router.perform_destruction", lambda *a, **k: None)
+
+    kc = FakeKeycloak()
+    kc.add("student_shekinah", "student")
+    kc.add("student_victim", "student")
+    kc.add("instructor_lenie", "instructor")
+    kc.add("admin_demo", "admin")
+    kc.add("norole_user")
+    monkeypatch.setattr(keycloak_admin, "get_client", lambda: kc)
+
+    # Disable live LXD/SSH verifier during unit tests by default
+    monkeypatch.setattr(scoring_state, "SCORING_ENABLED", False)
+
+    return TestClient(app)
+
+
+def set_caller(app_instance, username: str, *roles: str):
+    """Set the authenticated caller claims on the FastAPI application."""
+    if not username:
+        app_instance.dependency_overrides.pop(auth.verify_token, None)
+        return None
+    else:
+        claims = _claims(username, *roles)
+        app_instance.dependency_overrides[auth.verify_token] = lambda: claims
+        return claims
+
+
+def insert_test_pod(db_path: str, student_id: str, scenario_id: int = 1, pod_id: int = 101, status: str = "ACTIVE"):
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    with conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO pods (id, student_id, pod_id, scenario_id, status)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (pod_id, student_id, pod_id, str(scenario_id).zfill(2), status),
+        )
+    conn.close()
+
+
+def insert_milestone_pass(db_path: str, student_id: str, scenario_id: int, milestone_id: int, pod_id: int = 101):
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO milestone_verification
+            (pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data)
+            VALUES (?, ?, ?, ?, 'PASS', 0, 'test_fixture_pass')
+            """,
+            (pod_id, student_id, scenario_id, milestone_id),
+        )
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 1. Schema & Migration Tests
+# ---------------------------------------------------------------------------
+
+def test_migration_v5_creates_table_and_indexes(hybrid_db: str):
+    """Verify v5.sql creates milestone_rubrics table, checks, and conflict index."""
+    conn = sqlite3.connect(hybrid_db)
+    conn.row_factory = sqlite3.Row
+
+    # Check migration version
+    ver = migrate.current_version(conn)
+    assert ver >= 5
+
+    # Check table existence and columns
+    cols = {r["name"]: r for r in conn.execute("PRAGMA table_info(milestone_rubrics)").fetchall()}
+    assert "scenario_id" in cols
+    assert "milestone_id" in cols
+    assert "name" in cols
+    assert "criteria" in cols
+    assert "expected_flag" in cols
+    assert "points" in cols
+
+    # Check index on review_cases
+    indexes = {r["name"] for r in conn.execute("PRAGMA index_list(review_cases)").fetchall()}
+    assert "idx_conflict_cases_lookup" in indexes
+
+    # Verify seed count (13 catalog milestones across 4 scenarios)
+    count = conn.execute("SELECT COUNT(*) FROM milestone_rubrics").fetchone()[0]
+    assert count == 13
+    conn.close()
+
+
+def test_migration_v5_is_idempotent(hybrid_db: str):
+    """Running migrate.apply repeatedly must not throw constraint or syntax errors."""
+    applied_ver = migrate.apply(hybrid_db)
+    assert applied_ver >= 5
+    conn = sqlite3.connect(hybrid_db)
+    count = conn.execute("SELECT COUNT(*) FROM milestone_rubrics").fetchone()[0]
+    assert count == 13
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 2. Rubrics & Constant-Time Validation Unit Tests
+# ---------------------------------------------------------------------------
+
+def test_rubrics_validate_flag_constant_time(hybrid_db: str):
+    """Verify validate_flag matches correct flags and rejects incorrect ones."""
+    conn = sqlite3.connect(hybrid_db)
+    conn.row_factory = sqlite3.Row
+
+    # Scenario 1, Milestone 1: expected FLAG{S01_M1_HOST_DISCOVERY}
+    valid, rubric = validate_flag(conn, 1, 1, "FLAG{S01_M1_HOST_DISCOVERY}")
+    assert valid is True
+    assert rubric["name"] == "Host Discovery"
+
+    # Whitespace and case tolerance
+    valid, _ = validate_flag(conn, 1, 1, "  flag{s01_m1_host_discovery} \n")
+    assert valid is True
+
+    # Incorrect flag
+    valid, rubric = validate_flag(conn, 1, 1, "FLAG{WRONG_FLAG}")
+    assert valid is False
+    assert rubric is not None
+
+    # Empty flag
+    valid, _ = validate_flag(conn, 1, 1, "")
+    assert valid is False
+
+    # Nonexistent milestone
+    valid, rubric = validate_flag(conn, 1, 99, "FLAG{TEST}")
+    assert valid is False
+    assert rubric is None
+
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 3. The 3-Outcome State Machine Tests (G-09)
+# ---------------------------------------------------------------------------
+
+def test_state_machine_outcome_pass(client, hybrid_db: str):
+    """Outcome 1 (PASS): Flag + State agree -> PASS. Records milestone_verification."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    # State is PASS
+    insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
+
+    # Submit authentic flag
+    res = client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S01_M1_HOST_DISCOVERY}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["outcome"] == "PASS"
+    assert data["status"] == "PASS"
+    assert data["scenario_id"] == 1
+    assert data["milestone_id"] == 1
+    assert data["review_id"] is None
+    assert "corroborated" in data["message"].lower()
+
+    # Verify persistent state in milestone_verification
+    conn = sqlite3.connect(hybrid_db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT * FROM milestone_verification WHERE student_id=? AND scenario_id=? AND milestone_id=?",
+        (student, 1, 1),
+    ).fetchone()
+    assert row is not None
+    assert row["status"] == "PASS"
+    conn.close()
+
+
+def test_state_machine_outcome_escalate_flag_without_state(client, hybrid_db: str):
+    """Outcome 2 (ESCALATE): Flag valid but state NOT pass -> routes to review_cases."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    # NOTE: No milestone_verification PASS record inserted
+
+    # Student submits valid flag without doing the container work
+    res = client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S01_M1_HOST_DISCOVERY}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["outcome"] == "ESCALATED"
+    assert data["status"] == "ESCALATED"
+    assert data["review_id"] is not None
+
+    # Verify review_cases record was created with case_type='SCORING_CONFLICT'
+    conn = sqlite3.connect(hybrid_db)
+    conn.row_factory = sqlite3.Row
+    rev = conn.execute("SELECT * FROM review_cases WHERE review_id=?", (data["review_id"],)).fetchone()
+    assert rev is not None
+    assert rev["student_id"] == student
+    assert rev["scenario_id"] == 1
+    assert rev["milestone_id"] == 1
+    assert rev["case_type"] == "SCORING_CONFLICT"
+    assert rev["status"] == "PENDING"
+    assert "flag valid" in rev["conflict_reason"].lower()
+
+    # Zero-leakage check: evidence_data must NOT leak expected_flag
+    ev_data = json.loads(rev["evidence_data"])
+    assert "expected_flag" not in ev_data
+    assert "FLAG{S01_M1_HOST_DISCOVERY}" not in rev["evidence_data"]
+    conn.close()
+
+
+def test_state_machine_outcome_escalate_state_without_flag(client, hybrid_db: str):
+    """Outcome 3 (ESCALATE): State PASS but invalid flag -> routes to review_cases."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    # Container state passes
+    insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
+
+    # Student submits incorrect flag
+    res = client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{INCORRECT_FLAG_VALUE}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["outcome"] == "ESCALATED"
+    assert data["status"] == "ESCALATED"
+    assert data["review_id"] is not None
+
+    conn = sqlite3.connect(hybrid_db)
+    conn.row_factory = sqlite3.Row
+    rev = conn.execute("SELECT * FROM review_cases WHERE review_id=?", (data["review_id"],)).fetchone()
+    assert rev is not None
+    assert rev["case_type"] == "SCORING_CONFLICT"
+    assert rev["status"] == "PENDING"
+    assert "container state passed" in rev["conflict_reason"].lower()
+    conn.close()
+
+
+def test_state_machine_outcome_neither_incomplete(client, hybrid_db: str):
+    """Outcome 4 (INCOMPLETE): Invalid flag AND state NOT pass -> INCOMPLETE, no review case."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+
+    # Neither signal is satisfied
+    res = client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{BOGUS_ATTEMPT}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["outcome"] == "INCOMPLETE"
+    assert data["status"] == "INCOMPLETE"
+    assert data["review_id"] is None
+
+    # Confirm NO review case was created
+    conn = sqlite3.connect(hybrid_db)
+    count = conn.execute("SELECT COUNT(*) FROM review_cases").fetchone()[0]
+    assert count == 0
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 4. TC-S12-06 & TC-S12-10 Specification Tests
+# ---------------------------------------------------------------------------
+
+def test_tc_s12_06_scenario_1_recon_and_exploitation(client, hybrid_db: str):
+    """TC-S12-06: Scenario 1 - recon and exploitation end-to-end milestone progression.
+
+    Validates all 4 milestones of Scenario 01 with flag submission and state corroboration.
+    """
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+
+    s1_milestones = [
+        (1, "FLAG{S01_M1_HOST_DISCOVERY}", "Host Discovery"),
+        (2, "FLAG{S01_M2_PORT_ENUM}", "Port Enumeration"),
+        (3, "FLAG{S01_M3_SERVICE_VERSION}", "Service Version Detection"),
+        (4, "FLAG{S01_M4_TOMCAT_EXPLOITED}", "Tomcat Manager Exploitation"),
+    ]
+
+    for m_id, flag, name in s1_milestones:
+        # Pre-seed container state pass for that milestone
+        insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=m_id, pod_id=101)
+
+        res = client.post(
+            "/progress/01/flag",  # Test leading zero formatting support
+            json={"milestone_id": m_id, "flag": flag},
+        )
+        assert res.status_code == 200, f"Milestone {m_id} ({name}) submission failed: {res.text}"
+        data = res.json()
+        assert data["outcome"] == "PASS"
+        assert data["scenario_id"] == 1
+        assert data["milestone_id"] == m_id
+
+    # Verify GET /progress shows all 4 milestones passed
+    prog_res = client.get("/progress")
+    assert prog_res.status_code == 200
+    prog_data = prog_res.json()
+    passed_mids = {m["milestone_id"] for m in prog_data["milestones"] if m["status"] == "PASS"}
+    assert {1, 2, 3, 4}.issubset(passed_mids)
+
+
+def test_tc_s12_10_conflict_routed_to_inst_03_queue_and_resolved(client, hybrid_db: str):
+    """TC-S12-10: Automated scoring and persistence with conflicting evidence routing and instructor resolution.
+
+    1. Student triggers conflict (flag without state).
+    2. Conflict automatically routed to INST-03 review queue.
+    3. Instructor reviews case via GET /instructor/reviews/{id}.
+    4. Instructor approves case via POST /instructor/reviews/{id}/resolve.
+    5. milestone_verification is synchronized with status='PASS'.
+    """
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=6, pod_id=202, status="ACTIVE")
+
+    # Step 1: Submit valid flag for Scenario 6 M1 without state pass -> Escalated
+    res = client.post(
+        "/progress/6/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S06_M1_INJECTION_POINT}"},
+    )
+    assert res.status_code == 200
+    sub_data = res.json()
+    assert sub_data["outcome"] == "ESCALATED"
+    review_id = sub_data["review_id"]
+    assert review_id is not None
+
+    # Step 2: Instructor logs in and queries the INST-03 review queue
+    set_caller(app, "instructor_lenie", "instructor")
+    queue_res = client.get("/instructor/reviews?status_filter=PENDING")
+    assert queue_res.status_code == 200
+    queue_items = queue_res.json()["reviews"]
+    matching = [q for q in queue_items if q["review_id"] == review_id]
+    assert len(matching) == 1
+    assert matching[0]["case_type"] == "SCORING_CONFLICT"
+
+    # Step 3: Instructor inspects review case detail
+    detail_res = client.get(f"/instructor/reviews/{review_id}")
+    assert detail_res.status_code == 200
+    detail = detail_res.json()
+    assert detail["student_id"] == student
+    assert detail["scenario_id"] == 6
+    assert detail["milestone_id"] == 1
+
+    # Step 4: Instructor approves the conflict case
+    resolve_res = client.post(
+        f"/instructor/reviews/{review_id}/resolve",
+        json={"status": "APPROVED", "score": 100, "feedback": "Verified exploit in student logs."},
+    )
+    assert resolve_res.status_code == 200
+    assert resolve_res.json()["decision"] == "APPROVED"
+
+    # Step 5: Verify synchronization loop (milestone_verification now records PASS)
+    set_caller(app, student, "student")
+    prog_res = client.get("/progress")
+    assert prog_res.status_code == 200
+    milestones = prog_res.json()["milestones"]
+    s6_m1 = [m for m in milestones if m["scenario_id"] == 6 and m["milestone_id"] == 1 and m["status"] == "PASS"]
+    assert len(s6_m1) >= 1
+
+
+# ---------------------------------------------------------------------------
+# 5. Security, Anti-Leak & IDOR Defense Tests
+# ---------------------------------------------------------------------------
+
+def test_flag_submit_cannot_impersonate_another_student(client, hybrid_db: str):
+    """Anti Agent Defense: Smuggling student_id in body must be ignored."""
+    set_caller(app, "student_shekinah", "student")
+    insert_test_pod(hybrid_db, "student_shekinah", scenario_id=1, pod_id=101)
+    insert_test_pod(hybrid_db, "student_victim", scenario_id=1, pod_id=999)
+
+    # Attacker tries to submit a flag on behalf of 'student_victim'
+    res = client.post(
+        "/progress/1/flag",
+        json={
+            "student_id": "student_victim",  # Smuggled parameter
+            "milestone_id": 1,
+            "flag": "FLAG{S01_M1_HOST_DISCOVERY}",
+        },
+    )
+    assert res.status_code == 200
+
+    # Ensure review or verification row belongs to caller 'student_shekinah', NEVER 'student_victim'
+    conn = sqlite3.connect(hybrid_db)
+    victim_rev = conn.execute("SELECT * FROM review_cases WHERE student_id='student_victim'").fetchall()
+    assert len(victim_rev) == 0
+    victim_mv = conn.execute("SELECT * FROM milestone_verification WHERE student_id='student_victim'").fetchall()
+    assert len(victim_mv) == 0
+    conn.close()
+
+
+def test_conflict_escalation_does_not_leak_expected_flag(client, hybrid_db: str):
+    """Anti Agent Zero-Leakage: Student reading GET /reviews/{id} must NOT see expected_flag."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101)
+
+    # Submit incorrect flag to trigger conflict
+    res = client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{WRONG_ATTEMPT}"},
+    )
+    # Give student a state pass so it's a conflict
+    insert_milestone_pass(hybrid_db, student, 1, 1, 101)
+    res = client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{WRONG_ATTEMPT}"},
+    )
+    rev_id = res.json()["review_id"]
+    assert rev_id is not None
+
+    # Student reads the review detail
+    rev_res = client.get(f"/reviews/{rev_id}")
+    assert rev_res.status_code == 200
+    rev_body = rev_res.text
+    # Canonical flag must NEVER appear in the response payload
+    assert "FLAG{S01_M1_HOST_DISCOVERY}" not in rev_body
+
+
+def test_rubrics_endpoint_strips_expected_flag(client, hybrid_db: str):
+    """Anti Agent Field Minimization: GET /progress/{id}/rubrics must omit expected_flag."""
+    set_caller(app, "student_shekinah", "student")
+    res = client.get("/progress/1/rubrics")
+    assert res.status_code == 200
+    data = res.json()
+    assert "rubrics" in data
+    assert len(data["rubrics"]) == 4
+
+    for r in data["rubrics"]:
+        assert "expected_flag" not in r
+        assert "FLAG{" not in json.dumps(r)
+        assert "criteria" in r
+        assert "points" in r
+        assert "name" in r
+
+
+def test_conflict_deduplication(client, hybrid_db: str):
+    """Codex Agent Queue Hygiene: Repeated conflict submissions update single PENDING row."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=9, pod_id=303)
+
+    # First conflict attempt
+    res1 = client.post(
+        "/progress/9/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S09_M1_START_TRIAGE}"},
+    )
+    rev_id_1 = res1.json()["review_id"]
+
+    # Second conflict attempt for same milestone
+    res2 = client.post(
+        "/progress/9/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S09_M1_START_TRIAGE}"},
+    )
+    rev_id_2 = res2.json()["review_id"]
+
+    assert rev_id_1 == rev_id_2
+
+    conn = sqlite3.connect(hybrid_db)
+    count = conn.execute(
+        "SELECT COUNT(*) FROM review_cases WHERE student_id=? AND scenario_id=9 AND milestone_id=1",
+        (student,),
+    ).fetchone()[0]
+    assert count == 1
+    conn.close()
+
+
+def test_rbac_auth_guards(client, hybrid_db: str):
+    """Codex Agent RBAC Compliance: Verify 401 unauthenticated and 403 no-role."""
+    # Unauthenticated
+    set_caller(app, None)
+    res = client.post("/progress/1/flag", json={"milestone_id": 1, "flag": "FLAG{TEST}"})
+    assert res.status_code == 401
+
+    res = client.get("/progress/1/rubrics")
+    assert res.status_code == 401
+
+    # Role-less user
+    set_caller(app, "norole_user")
+    res = client.post("/progress/1/flag", json={"milestone_id": 1, "flag": "FLAG{TEST}"})
+    assert res.status_code == 403
+
+    res = client.get("/progress/1/rubrics")
+    assert res.status_code == 403
+
+
+def test_input_boundary_validations(client, hybrid_db: str):
+    """Codex Agent Boundary Testing: invalid scenarios, milestones, and flags."""
+    set_caller(app, "student_shekinah", "student")
+
+    # Invalid scenario
+    res = client.post("/progress/99/flag", json={"milestone_id": 1, "flag": "FLAG{TEST}"})
+    assert res.status_code == 400
+
+    # Non-integer scenario string
+    res = client.post("/progress/invalid/flag", json={"milestone_id": 1, "flag": "FLAG{TEST}"})
+    assert res.status_code == 400
+
+    # Invalid milestone id out of Pydantic bounds (le=10)
+    res = client.post("/progress/1/flag", json={"milestone_id": 99, "flag": "FLAG{TEST}"})
+    assert res.status_code == 422
+
+    # Milestone id exceeding scenario milestone count (e.g. Milestone 5 for Scenario 1)
+    res = client.post("/progress/1/flag", json={"milestone_id": 5, "flag": "FLAG{TEST}"})
+    assert res.status_code == 400
+
+    # Empty flag
+    res = client.post("/progress/1/flag", json={"milestone_id": 1, "flag": "   "})
+    assert res.status_code == 400
