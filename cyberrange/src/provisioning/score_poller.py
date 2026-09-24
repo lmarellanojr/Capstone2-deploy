@@ -27,7 +27,7 @@ logger = logging.getLogger("provision_api")
 # scenario's checks run against.
 SCENARIO_MILESTONE_COUNTS = {
     1: 4,
-    6: 3,
+    6: 4,
     9: 3,
     11: 3,
 }

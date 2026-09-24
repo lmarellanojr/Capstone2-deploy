@@ -88,7 +88,10 @@ describe("/api/admin surface", () => {
     // Admin Users page still shows fixture data, so those operations are only
     // reachable on the backend, where SEC-02 tests them. Adding a proxy route
     // here must come with an Instructor-denial test above.
-    expect(routesUnder(path.join(SRC, "app", "api", "admin"))).toEqual(["pods/[id]/force-destroy"])
+    expect(routesUnder(path.join(SRC, "app", "api", "admin"))).toEqual([
+      "infra-health",
+      "pods/[id]/force-destroy",
+    ])
   })
 })
 

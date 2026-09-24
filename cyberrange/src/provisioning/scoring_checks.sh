@@ -347,6 +347,25 @@ check_scenario_6() {
             fi
             echo "FAIL"
             ;;
+        4)
+            # M4: Reflected XSS executed against DVWA XSS module
+            # Behavioral check: command history / curl targeting DVWA xss_r or typical XSS payloads
+            if check_behavior "(<[sS][cC][rR][iI][pP][tT].*alert|<script|<SCRIPT|alert\(['\"0-9]|vulnerabilities/xss_r|curl.*xss_r)"; then echo "PASS"; return; fi
+            # Artifact check: payload or reflection artifact written to /tmp
+            if [[ -f /tmp/xss_reflected.txt ]] && [[ -s /tmp/xss_reflected.txt ]]; then
+                echo "PASS"
+                return
+            fi
+            if [[ -f /tmp/xss_payload.txt ]] && [[ -s /tmp/xss_payload.txt ]]; then
+                echo "PASS"
+                return
+            fi
+            if [[ -f /tmp/xss_proof.txt ]] && [[ -s /tmp/xss_proof.txt ]]; then
+                echo "PASS"
+                return
+            fi
+            echo "FAIL"
+            ;;
     esac
 }
 
