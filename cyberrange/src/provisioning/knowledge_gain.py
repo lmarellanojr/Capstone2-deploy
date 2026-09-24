@@ -195,23 +195,29 @@ def extract_knowledge_gain_records(
         except Exception:
             pass
 
-        # 2. Match slot and student
         s_id = row_dict_or_obj["student_id"] or ""
         p_id = row_dict_or_obj["pod_id"]
-        if (p_id, s_id) in pod_by_slot_and_student:
-            return pod_by_slot_and_student[(p_id, s_id)]
-
-        # 3. Match student and scenario (closest created_at <= verified_at)
         sc_id = int(row_dict_or_obj["scenario_id"]) if row_dict_or_obj["scenario_id"] is not None else None
         ver_time = row_dict_or_obj["verified_at"] or ""
+        v_dt = parse_timestamp(ver_time)
+
+        # 2. Match slot and student (ONLY IF pod was created <= verified_at)
+        if (p_id, s_id) in pod_by_slot_and_student:
+            slot_cat = pod_by_slot_and_student[(p_id, s_id)]
+            slot_dt = parse_timestamp(slot_cat)
+            if v_dt and slot_dt and slot_dt <= v_dt:
+                return slot_cat
+            elif not v_dt:
+                return slot_cat
+
+        # 3. Match student and scenario (closest created_at <= verified_at)
         if sc_id is not None and (s_id, sc_id) in pods_by_student_scen:
-            v_dt = parse_timestamp(ver_time)
             candidates = pods_by_student_scen[(s_id, sc_id)]
             if v_dt:
                 valid_candidates = [c for c in candidates if c[0] <= v_dt]
                 if valid_candidates:
                     return valid_candidates[-1][1]
-                return candidates[0][1]
+                return None
             return candidates[0][1]
         return None
 
@@ -300,7 +306,22 @@ def extract_knowledge_gain_records(
 
 
 def compute_knowledge_gain_summary(records: list[dict]) -> dict:
-    """Calculate aggregate knowledge-gain indicators with zero-division safeguards."""
+    """Calculate aggregate knowledge-gain indicators with zero-division safeguards.
+
+    `completion_rate`: distinct curriculum milestone completion rate
+    (distinct_milestones_passed / distinct_milestones_attempted) across unique
+    (student_id, scenario_id, milestone_id) tuples.
+
+    `attempt_pass_rate`: raw verification-row pass ratio (total_passes / total_records),
+    which reflects attempt frequency and includes background poller ticks and manual retries.
+
+    `avg_time_to_milestone_seconds`: mean duration from pod creation to first PASS,
+    evaluated using exactly one sample per completed distinct milestone.
+
+    `avg_detection_score`: mean detection indicator across completed distinct milestones,
+    evaluated using the detection score from each milestone's first PASS row to prevent
+    background poller FAIL ticks from diluting student detection rates.
+    """
     total_records = len(records)
     if total_records == 0:
         return {
@@ -338,22 +359,22 @@ def compute_knowledge_gain_summary(records: list[dict]) -> dict:
 
     # One first-pass sample per distinct completed milestone
     distinct_milestone_times: dict[tuple[Any, Any, Any], float] = {}
+    distinct_detection_scores: dict[tuple[Any, Any, Any], int] = {}
     for r in records:
         if r.get("status") == "PASS":
             key = (r.get("student_id"), r.get("scenario_id"), r.get("milestone_id"))
             t = r.get("time_to_milestone_seconds")
             if t is not None and key not in distinct_milestone_times:
                 distinct_milestone_times[key] = t
+            det = r.get("detection_score")
+            if det is not None and key not in distinct_detection_scores:
+                distinct_detection_scores[key] = det
 
     time_samples = list(distinct_milestone_times.values())
     avg_time = round(sum(time_samples) / len(time_samples), 2) if time_samples else None
 
-    det_scores = [
-        r["detection_score"]
-        for r in records
-        if r.get("detection_score") is not None
-    ]
-    avg_det = round(sum(det_scores) / len(det_scores), 4) if det_scores else None
+    det_samples = list(distinct_detection_scores.values())
+    avg_det = round(sum(det_samples) / len(det_samples), 4) if det_samples else None
 
     return {
         "total_records": total_records,

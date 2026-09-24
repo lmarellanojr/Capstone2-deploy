@@ -689,10 +689,10 @@ def export_knowledge_gain(
     conn = get_db_connection()
     try:
         try:
-            records = extract_knowledge_gain_records(
+            all_records = extract_knowledge_gain_records(
                 conn,
                 scenario_id=scenario_id,
-                status_filter=clean_status,
+                status_filter=None,
                 anonymize=anonymize,
             )
         except TelemetrySaltConfigError:
@@ -703,6 +703,12 @@ def export_knowledge_gain(
     finally:
         conn.close()
 
+    summary = compute_knowledge_gain_summary(all_records)
+    if clean_status:
+        records = [r for r in all_records if r.get("status") == clean_status]
+    else:
+        records = all_records
+
     if fmt == "csv":
         csv_text = format_records_csv(records)
         return Response(
@@ -711,7 +717,6 @@ def export_knowledge_gain(
             headers={"Content-Disposition": "attachment; filename=knowledge_gain_metrics.csv"},
         )
 
-    summary = compute_knowledge_gain_summary(records)
     return {
         "summary": summary,
         "records": records,

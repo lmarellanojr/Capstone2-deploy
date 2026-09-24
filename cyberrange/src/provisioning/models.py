@@ -102,9 +102,15 @@ class KnowledgeGainSummary(BaseModel):
     distinct_milestones_attempted: int
     distinct_milestones_passed: int
     completion_rate: float
-    attempt_pass_rate: Optional[float] = None
+    attempt_pass_rate: Optional[float] = Field(
+        None,
+        description="Raw verification-row pass ratio (total_passes / total_records), reflecting attempt frequency including poller ticks",
+    )
     avg_time_to_milestone_seconds: Optional[float] = None
-    avg_detection_score: Optional[float] = None
+    avg_detection_score: Optional[float] = Field(
+        None,
+        description="Mean detection score across distinct completed milestones, evaluated from each milestone's first PASS row",
+    )
 
 
 class KnowledgeGainExportResponse(BaseModel):

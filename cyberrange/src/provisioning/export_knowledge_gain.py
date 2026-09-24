@@ -41,8 +41,21 @@ def _validate_db_path(db_path: str) -> Path:
     )
 
 
-def _validate_output_path(output_file: str) -> Path:
+def _validate_output_path(output_file: str, resolved_db: Path) -> Path:
     resolved = Path(output_file).expanduser().resolve()
+
+    # Forbid overwriting the database file itself or its SQLite journal / WAL files
+    forbidden_exact = {
+        resolved_db,
+        resolved_db.with_name(resolved_db.name + "-wal"),
+        resolved_db.with_name(resolved_db.name + "-shm"),
+        resolved_db.with_name(resolved_db.name + "-journal"),
+    }
+    if resolved in forbidden_exact:
+        raise ValueError(
+            f"Refusing --output path targeting database file: {resolved}"
+        )
+
     roots: list[Path] = [Path.cwd().resolve()]
     out_dir = os.getenv("TELEMETRY_EXPORT_OUTPUT_DIR", "").strip()
     if out_dir:
@@ -95,23 +108,25 @@ def export_knowledge_gain_cli(
     resolved_out: Path | None = None
     if output_file:
         try:
-            resolved_out = _validate_output_path(output_file)
+            resolved_out = _validate_output_path(output_file, resolved_db)
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
 
     try:
-        conn = sqlite3.connect(str(resolved_db))
+        # Open source database in read-only URI mode to prevent write locks or accidental corruption
+        db_uri = f"file:{resolved_db.as_posix()}?mode=ro"
+        conn = sqlite3.connect(db_uri, uri=True)
     except Exception as exc:
         print(f"Error connecting to database '{resolved_db}': {exc}", file=sys.stderr)
         return 1
 
     try:
         try:
-            records = extract_knowledge_gain_records(
+            all_records = extract_knowledge_gain_records(
                 conn,
                 scenario_id=scenario_id,
-                status_filter=status,
+                status_filter=None,
                 anonymize=anonymize,
             )
         except TelemetrySaltConfigError as exc:
@@ -120,10 +135,15 @@ def export_knowledge_gain_cli(
     finally:
         conn.close()
 
+    summary = compute_knowledge_gain_summary(all_records)
+    if status:
+        records = [r for r in all_records if r.get("status") == status]
+    else:
+        records = all_records
+
     if fmt == "csv":
         content = format_records_csv(records)
     else:
-        summary = compute_knowledge_gain_summary(records)
         content = json.dumps({"summary": summary, "records": records}, indent=2)
 
     if resolved_out is not None:

@@ -731,3 +731,239 @@ def test_legacy_schema_without_review_cases(tmp_path: Path):
     assert records[0]["rubric_score"] is None
     assert records[0]["scenario_rubric_score"] is None
     assert records[0]["time_to_milestone_seconds"] == 120.0
+
+
+def test_poller_ticks_do_not_dilute_detection_score():
+    """Verify that background poller FAIL ticks do not dilute avg_detection_score."""
+    _insert_pod("poller_user", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
+    # Simulate poller running 100 ticks (FAIL every 3s, detection_score 0)
+    for i in range(1, 101):
+        secs = i * 3
+        mins = secs // 60
+        rem_s = secs % 60
+        _insert_verification(
+            "poller_user",
+            1,
+            scenario_id=1,
+            milestone_id=1,
+            status="FAIL",
+            verified_at=f"2026-09-24 00:{mins:02d}:{rem_s:02d}",
+            detection_score=0,
+            pod_created_at="2026-09-24 00:00:00",
+        )
+    # Student completes milestone 1 with detection (score 1)
+    _insert_verification(
+        "poller_user",
+        1,
+        scenario_id=1,
+        milestone_id=1,
+        status="PASS",
+        verified_at="2026-09-24 00:05:05",
+        detection_score=1,
+        pod_created_at="2026-09-24 00:00:00",
+    )
+
+    conn = db.get_db_connection()
+    records = extract_knowledge_gain_records(conn)
+    summary = compute_knowledge_gain_summary(records)
+    conn.close()
+
+    assert summary["total_records"] == 101
+    assert summary["total_passes"] == 1
+    assert summary["distinct_milestones_attempted"] == 1
+    assert summary["distinct_milestones_passed"] == 1
+    assert summary["completion_rate"] == 1.0
+    # avg_detection_score must be 1.0, NOT 1 / 101 ~= 0.0099
+    assert summary["avg_detection_score"] == 1.0
+    # attempt_pass_rate reflects total passes over verification rows (including poller ticks)
+    assert summary["attempt_pass_rate"] == round(1 / 101, 4)
+
+
+def test_status_filter_preserves_cohort_summary_metrics():
+    """Verify that status_filter filters records but preserves headline cohort summary metrics."""
+    app.dependency_overrides[verify_token] = lambda: _instructor_claims()
+    _insert_pod("cohort_student", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
+    # Milestone 1: PASS
+    _insert_verification("cohort_student", 1, scenario_id=1, milestone_id=1, status="PASS", verified_at="2026-09-24 00:02:00")
+    # Milestone 2: FAIL
+    _insert_verification("cohort_student", 1, scenario_id=1, milestone_id=2, status="FAIL", verified_at="2026-09-24 00:03:00")
+
+    client = TestClient(app)
+
+    # 1. Unfiltered export
+    res_all = client.get("/instructor/export/knowledge-gain?format=json")
+    assert res_all.status_code == 200
+    data_all = res_all.json()
+    assert data_all["summary"]["completion_rate"] == 0.5
+    assert len(data_all["records"]) == 2
+
+    # 2. Filtered to PASS
+    res_pass = client.get("/instructor/export/knowledge-gain?format=json&status_filter=PASS")
+    assert res_pass.status_code == 200
+    data_pass = res_pass.json()
+    # Completion rate must remain cohort-level (0.5), not artificial 1.0
+    assert data_pass["summary"]["completion_rate"] == 0.5
+    assert len(data_pass["records"]) == 1
+    assert data_pass["records"][0]["status"] == "PASS"
+
+    # 3. Filtered to FAIL
+    res_fail = client.get("/instructor/export/knowledge-gain?format=json&status_filter=FAIL")
+    assert res_fail.status_code == 200
+    data_fail = res_fail.json()
+    assert data_fail["summary"]["completion_rate"] == 0.5
+    assert len(data_fail["records"]) == 1
+    assert data_fail["records"][0]["status"] == "FAIL"
+
+
+def test_legacy_null_pod_created_at_temporal_guard():
+    """Verify legacy rows with NULL pod_created_at do not claim a newer session pod created in the future."""
+    # Session 1 at 00:00. Legacy verification at 00:05 has pod_created_at NULL
+    _insert_verification(
+        "temp_student",
+        1,
+        scenario_id=1,
+        milestone_id=1,
+        status="PASS",
+        verified_at="2026-09-24 00:05:00",
+        pod_created_at=None,
+    )
+
+    # Student re-provisions slot 1 at 01:00:00 (pods row deleted and replaced)
+    _insert_pod("temp_student", 1, scenario_id=1, created_at="2026-09-24 01:00:00")
+    # Session 2 PASS at 01:10:00
+    _insert_verification(
+        "temp_student",
+        1,
+        scenario_id=1,
+        milestone_id=1,
+        status="PASS",
+        verified_at="2026-09-24 01:10:00",
+        pod_created_at="2026-09-24 01:00:00",
+    )
+
+    conn = db.get_db_connection()
+    records = extract_knowledge_gain_records(conn)
+    conn.close()
+
+    assert len(records) == 2
+    # The legacy 00:05 row cannot match the 01:00 pod (01:00 > 00:05), so its time is None
+    assert records[0]["time_to_milestone_seconds"] is None
+    # Session 2 properly gets its 600s time (01:10 - 01:00), not None or skewed by session 1
+    assert records[1]["time_to_milestone_seconds"] == 600.0
+
+
+@pytest.mark.anyio
+async def test_scoring_verify_milestone_stores_pod_created_at_integration():
+    """Integration test verifying real scoring.verify_milestone stores pod_created_at in milestone_verification."""
+    from scoring import verify_milestone
+
+    class StubVerifier:
+        async def verify_milestone(self, student_id: str, scenario_id: int, milestone_id: int):
+            return ("PASS", "milestone verified successfully")
+
+    pod_record = {
+        "pod_id": 99,
+        "student_id": "real_score_student",
+        "scenario_id": "01",
+        "created_at": "2026-09-24 05:00:00",
+        "wazuh_agent_id": None,
+    }
+    _insert_pod(
+        pod_record["student_id"],
+        pod_record["pod_id"],
+        scenario_id=pod_record["scenario_id"],
+        created_at=pod_record["created_at"],
+    )
+
+    resp = await verify_milestone(
+        pod_record,
+        scenario_id=1,
+        milestone_id=1,
+        scoring_enabled=True,
+        ssh_verifier_cls=StubVerifier,
+        detection_enabled=False,
+        detection_for=None,
+        verify_siem_alert=None,
+    )
+    assert resp.status == "PASS"
+
+    conn = db.get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM milestone_verification WHERE student_id = 'real_score_student'"
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+    assert row["status"] == "PASS"
+    assert row["pod_created_at"] == "2026-09-24 05:00:00"
+
+
+def test_migrate_backfills_telemetry_columns(tmp_path: Path):
+    """Verify migrate backfills pod_created_at on milestone_verification from matching pods."""
+    import migrate
+
+    test_db = tmp_path / "backfill_test.db"
+    conn = sqlite3.connect(test_db)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE pods ("
+        "id INTEGER PRIMARY KEY, student_id TEXT, pod_id INTEGER, "
+        "status TEXT, created_at TIMESTAMP, scenario_id TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE milestone_verification ("
+        "id INTEGER PRIMARY KEY, pod_id INTEGER, student_id TEXT, "
+        "scenario_id INTEGER, milestone_id INTEGER, status TEXT, "
+        "detection_score INTEGER, verified_at TIMESTAMP)"
+    )
+    conn.execute(
+        "INSERT INTO pods (student_id, pod_id, scenario_id, created_at, status) "
+        "VALUES ('bf_user', 5, '01', '2026-09-24 01:00:00', 'ACTIVE')"
+    )
+    conn.execute(
+        "INSERT INTO milestone_verification "
+        "(student_id, pod_id, scenario_id, milestone_id, status, verified_at, detection_score) "
+        "VALUES ('bf_user', 5, 1, 1, 'PASS', '2026-09-24 01:10:00', 1)"
+    )
+    conn.commit()
+
+    # Apply telemetry column migration
+    migrate._ensure_telemetry_columns(conn)
+
+    row = conn.execute("SELECT * FROM milestone_verification WHERE student_id='bf_user'").fetchone()
+    conn.close()
+
+    # Assert column added and backfilled from pods
+    assert row["pod_created_at"] == "2026-09-24 01:00:00"
+
+
+def test_cli_refuses_to_overwrite_database_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """CLI must refuse --output targeting the database file itself or WAL/journal siblings."""
+    import config
+
+    allow = tmp_path / "allow"
+    allow.mkdir()
+    db_file = allow / "pod_mgmt.db"
+    db_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(config, "DB_PATH", str(db_file))
+    monkeypatch.setenv("TELEMETRY_EXPORT_OUTPUT_DIR", str(allow))
+    monkeypatch.chdir(allow)
+
+    # 1. Overwriting the db file itself
+    rc_db = export_knowledge_gain_cli(
+        db_path=str(db_file),
+        export_format="csv",
+        output_file=str(db_file),
+        anonymize=False,
+    )
+    assert rc_db == 1
+
+    # 2. Overwriting the WAL sibling
+    wal_file = allow / "pod_mgmt.db-wal"
+    rc_wal = export_knowledge_gain_cli(
+        db_path=str(db_file),
+        export_format="csv",
+        output_file=str(wal_file),
+        anonymize=False,
+    )
+    assert rc_wal == 1
