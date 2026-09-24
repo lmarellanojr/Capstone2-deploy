@@ -12,6 +12,7 @@ function LoginContent() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const [isLoading, setIsLoading] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
   const explicitCallbackUrl = searchParams.get("callbackUrl");
   const error = searchParams.get("error");
   // Computed every render (cheap, pure) so the effect below can depend on
@@ -47,6 +48,7 @@ function LoginContent() {
   }, [status, router, explicitCallbackUrl, error, landingPath]);
 
   const handleSignIn = async () => {
+    setSignInError(null);
     setIsLoading(true);
     try {
       // Must redirect:true so browser navigates to Keycloak after state/pkce cookies are set.
@@ -65,9 +67,15 @@ function LoginContent() {
         ? `/login?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
         : "/login";
       await signIn("keycloak", { callbackUrl: returnTo, redirect: true });
-    } catch {
-      // In case of client-side initiation failure, keep page usable
-    } finally {
+      // Review finding (Leo, PR #100): On the success path, signIn initiates browser
+      // navigation to Keycloak. Leaving isLoading true keeps the button disabled and
+      // displaying "Logging in..." until the browser unloads, preventing a brief flicker
+      // back to "Log in".
+    } catch (err) {
+      // Review finding (Leo, PR #100): Log dispatch errors so they are diagnosable in
+      // devtools, display an inline error alert, and reset loading state so the user can retry.
+      console.error("Login dispatch failed:", err);
+      setSignInError("Unable to connect to authentication service. Please try again.");
       setIsLoading(false);
     }
   };
@@ -105,6 +113,13 @@ function LoginContent() {
           <div className="mb-6 p-4 alert-error text-sm">
             <p className="font-semibold mb-1">Session Expired</p>
             <p>Your authentication token has expired. Please sign in again.</p>
+          </div>
+        )}
+
+        {signInError && (
+          <div className="mb-6 p-4 alert-error text-sm">
+            <p className="font-semibold mb-1">Sign In Failed</p>
+            <p>{signInError}</p>
           </div>
         )}
 

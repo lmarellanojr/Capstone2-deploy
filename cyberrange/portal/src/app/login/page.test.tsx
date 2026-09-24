@@ -113,7 +113,7 @@ describe("LoginPage (AUTH-06)", () => {
       })
     })
 
-    it("transitions button to disabled and displays 'Logging in...' during dispatch", async () => {
+    it("transitions button to disabled and displays 'Logging in...' during dispatch and stays loading on resolution", async () => {
       let resolveSignIn: () => void = () => {}
       mockSignIn.mockImplementation(
         () =>
@@ -135,18 +135,18 @@ describe("LoginPage (AUTH-06)", () => {
       fireEvent.click(button)
       expect(mockSignIn).toHaveBeenCalledTimes(1)
 
-      // Resolving signIn cleans up loading state via try...finally
+      // On happy path, signIn initiates browser redirect; button remains disabled/loading
+      // to avoid visual flicker before browser unloads (Leo review PR #100)
       await act(async () => {
         resolveSignIn()
       })
 
-      await waitFor(() => {
-        expect(button).not.toBeDisabled()
-        expect(screen.getByRole("button", { name: "Log in" })).toBeInTheDocument()
-      })
+      expect(button).toBeDisabled()
+      expect(screen.getByText("Logging in...")).toBeInTheDocument()
     })
 
-    it("resets loading state when signIn rejects via try...finally", async () => {
+    it("resets loading state, logs error to console, and renders alert when signIn rejects", async () => {
+      const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {})
       mockSignIn.mockRejectedValueOnce(new Error("Network failure"))
 
       render(<LoginPage />)
@@ -157,7 +157,14 @@ describe("LoginPage (AUTH-06)", () => {
       await waitFor(() => {
         expect(mockSignIn).toHaveBeenCalledTimes(1)
         expect(button).not.toBeDisabled()
+        expect(screen.getByText("Sign In Failed")).toBeInTheDocument()
+        expect(
+          screen.getByText("Unable to connect to authentication service. Please try again.")
+        ).toBeInTheDocument()
+        expect(consoleSpy).toHaveBeenCalledWith("Login dispatch failed:", expect.any(Error))
       })
+
+      consoleSpy.mockRestore()
     })
   })
 
