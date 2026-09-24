@@ -1,27 +1,47 @@
 'use client'
 
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { provisioning, type SiemAlert } from '@/lib/api'
 import { Button } from '@/components/ui'
 import { copyToClipboard } from '@/lib/copyToClipboard'
 import { useToastContext } from '@/context/ToastContext'
 import {
   alertsQuery,
+  describeFilters,
   emptyAlertsCopy,
+  filterAlerts,
+  filteredEmptyCopy,
+  filterOptions,
   formatAlertTime,
   groupAlertsByRule,
+  hasActiveFilters,
+  NO_FILTERS,
+  POLL_MS,
+  SEVERITY_OPTIONS,
+  severityBand,
   SIEM_TABLE_CLASS,
   SIEM_TABLE_VIEWPORT_CLASS,
   SIEM_TD,
   SIEM_TH_CLASS,
+  type AlertFilters,
+  type SeverityBand,
 } from '@/components/scenario/siemAlertQuery'
 
-const POLL_MS = 30_000
+const SEVERITY_CLASS: Record<SeverityBand, string> = {
+  high: 'text-red-600',
+  medium: 'text-yellow-600',
+  low: 'text-blue-600',
+}
 
 function levelClass(level: number): string {
-  if (level >= 7) return 'text-red-600'
-  if (level >= 5) return 'text-yellow-600'
-  return 'text-blue-600'
+  return SEVERITY_CLASS[severityBand(level)]
+}
+
+const FILTER_SELECT_CLASS =
+  'text-xs bg-secondary border border-border rounded px-1.5 py-1 text-text-main max-w-[14rem] disabled:opacity-60'
+
+function isTabHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden'
 }
 
 export function SiemAlertViewer({ podId }: { podId: number }) {
@@ -33,11 +53,22 @@ export function SiemAlertViewer({ podId }: { podId: number }) {
   const [rawEvents, setRawEvents] = useState(false)
   const [expandedRule, setExpandedRule] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [filters, setFilters] = useState<AlertFilters>(NO_FILTERS)
+  const [paused, setPaused] = useState(false)
+
+  // Latest request wins: a filter/pod change mid-fetch must not be overwritten by the
+  // older response. Interval ticks skip while a request is still in flight.
+  const reqSeq = useRef(0)
+  const inFlight = useRef(false)
+  const lastFetchMs = useRef(0)
 
   const load = useCallback(async () => {
+    const seq = ++reqSeq.current
+    inFlight.current = true
     setLoading(true)
     try {
       const data = await provisioning.getAlerts(podId, alertsQuery(only5710))
+      if (seq !== reqSeq.current) return
       if (data.error === 'manager_unavailable') {
         setError('manager')
         setAlerts([])
@@ -45,22 +76,51 @@ export function SiemAlertViewer({ podId }: { podId: number }) {
         setError(null)
         setAlerts(data.alerts || [])
       }
-      setFetchedAt(new Date())
     } catch {
+      if (seq !== reqSeq.current) return
       // 503 manager_unavailable or network/auth failure — student can still use templates
       setError('manager')
       setAlerts([])
-      setFetchedAt(new Date())
     } finally {
-      setLoading(false)
+      if (seq === reqSeq.current) {
+        lastFetchMs.current = Date.now()
+        setFetchedAt(new Date())
+        inFlight.current = false
+        setLoading(false)
+      }
     }
   }, [podId, only5710])
 
   useEffect(() => {
     load()
-    const t = setInterval(load, POLL_MS)
-    return () => clearInterval(t)
+    const t = setInterval(() => {
+      if (isTabHidden() || inFlight.current) return
+      load()
+    }, POLL_MS)
+    const onVisibility = () => {
+      const hidden = isTabHidden()
+      setPaused(hidden)
+      // Catch up once on return instead of waiting up to a full interval.
+      if (!hidden && !inFlight.current && Date.now() - lastFetchMs.current >= POLL_MS) load()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [load])
+
+  // The 5710 shortcut is applied server-side, so the rule dropdown is moot while it is on.
+  const effectiveFilters = useMemo(
+    () => (only5710 ? { ...filters, ruleId: '' } : filters),
+    [filters, only5710]
+  )
+  const visible = useMemo(() => filterAlerts(alerts, effectiveFilters), [alerts, effectiveFilters])
+  const options = useMemo(() => filterOptions(alerts, effectiveFilters), [alerts, effectiveFilters])
+  const filtersActive = hasActiveFilters(effectiveFilters)
+
+  const setFilter = <K extends keyof AlertFilters>(key: K, value: AlertFilters[K]) =>
+    setFilters((cur) => ({ ...cur, [key]: value }))
 
   const copyEvent = useCallback(
     async (timestamp: string, ruleId: string) => {
@@ -71,6 +131,13 @@ export function SiemAlertViewer({ podId }: { podId: number }) {
     [success, warning]
   )
 
+  const status = fetchedAt && (
+    <span className="text-xs text-text-muted" data-testid="siem-status">
+      Updated {fetchedAt.toLocaleTimeString()} ·{' '}
+      {paused ? 'auto-refresh paused (tab hidden)' : `auto-refresh every ${POLL_MS / 1000}s`}
+    </span>
+  )
+
   if (error === 'manager') {
     return (
       <div className="text-sm">
@@ -78,9 +145,7 @@ export function SiemAlertViewer({ podId }: { podId: number }) {
           <Button size="sm" variant="secondary" onClick={() => load()} disabled={loading}>
             Refresh
           </Button>
-          {fetchedAt && (
-            <span className="text-xs text-text-muted">Updated {fetchedAt.toLocaleTimeString()}</span>
-          )}
+          {status}
         </div>
         <p className="text-text-secondary">
           Manager unavailable. Continue using the template files on meta; scoring accepts them.
@@ -111,27 +176,91 @@ export function SiemAlertViewer({ podId }: { podId: number }) {
           />
           Raw events
         </label>
-        {fetchedAt && (
-          <span className="text-xs text-text-muted">Updated {fetchedAt.toLocaleTimeString()}</span>
+        {status}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <select
+          aria-label="Filter by rule"
+          className={FILTER_SELECT_CLASS}
+          value={only5710 ? '5710' : filters.ruleId}
+          disabled={only5710}
+          onChange={(e) => setFilter('ruleId', e.target.value)}
+        >
+          {only5710 ? (
+            <option value="5710">Rule 5710 (shortcut on)</option>
+          ) : (
+            <>
+              <option value="">All rules</option>
+              {options.rules.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.description ? `${r.id} — ${r.description}` : r.id}
+                </option>
+              ))}
+            </>
+          )}
+        </select>
+        <select
+          aria-label="Filter by agent"
+          className={FILTER_SELECT_CLASS}
+          value={filters.agent}
+          onChange={(e) => setFilter('agent', e.target.value)}
+        >
+          <option value="">All agents</option>
+          {options.agents.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Filter by severity"
+          className={FILTER_SELECT_CLASS}
+          value={filters.severity}
+          onChange={(e) => setFilter('severity', e.target.value as AlertFilters['severity'])}
+        >
+          <option value="">All severities</option>
+          {SEVERITY_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        {filtersActive && (
+          <>
+            <span className="text-xs text-text-muted" data-testid="siem-filter-summary">
+              Showing {visible.length} of {alerts.length} · {describeFilters(effectiveFilters)}
+            </span>
+            <Button size="sm" variant="secondary" onClick={() => setFilters(NO_FILTERS)}>
+              Clear filters
+            </Button>
+          </>
         )}
       </div>
       <div className={SIEM_TABLE_VIEWPORT_CLASS}>
         {alerts.length === 0 ? (
           <p className="text-text-secondary p-2">{emptyAlertsCopy(only5710)}</p>
+        ) : visible.length === 0 ? (
+          <p className="text-text-secondary p-2">
+            {filteredEmptyCopy(effectiveFilters, alerts.length)}
+          </p>
         ) : rawEvents ? (
           <EventTable
-            rows={alerts}
+            rows={visible}
             onCopy={copyEvent}
           />
         ) : (
           <GroupedTable
-            groups={groupAlertsByRule(alerts)}
+            groups={groupAlertsByRule(visible)}
             expandedRule={expandedRule}
             onToggle={(ruleId) => setExpandedRule((cur) => (cur === ruleId ? null : ruleId))}
             onCopy={copyEvent}
           />
         )}
       </div>
+      <p className="text-xs text-text-muted mt-1">
+        Manager-only mode: alerts are read from the Wazuh manager&apos;s alert log. The Wazuh
+        Indexer and Dashboard are not deployed on the 12 GiB host profile.
+      </p>
     </div>
   )
 }
