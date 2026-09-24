@@ -61,7 +61,7 @@ async def _check_container_state(
             """
             SELECT * FROM pods
             WHERE student_id=? AND (scenario_id=? OR scenario_id=?)
-              AND status NOT IN ('DESTROYED', 'FAILED_ROLLBACK_COMPLETE')
+              AND status = 'ACTIVE'
             ORDER BY id DESC LIMIT 1
             """,
             (student_id, s_id_str, s_id_pad),
@@ -70,7 +70,7 @@ async def _check_container_state(
             pod = dict(pod_row)
 
     if pod and scoring_state.SCORING_ENABLED:
-        ssh_cls = scoring_state.get_ssh_verifier_cls()
+        ssh_cls = getattr(scoring_state, "SSHVerifier", None)
         if ssh_cls:
             try:
                 verifier = ssh_cls()
@@ -97,7 +97,10 @@ async def _check_container_state(
 
 
 def _resolve_pod_id_for_student(conn: sqlite3.Connection, student_id: str, scenario_id: int) -> int:
-    """Safely find a pod_id for milestone_verification, avoiding NOT NULL integrity violations."""
+    """Safely find a pod_id for milestone_verification strictly scoped to this scenario.
+
+    Never borrows another scenario's pod to prevent corrupting time-to-milestone metrics.
+    """
     s_id_str = str(scenario_id)
     s_id_pad = str(scenario_id).zfill(2)
     row = conn.execute(
@@ -111,15 +114,7 @@ def _resolve_pod_id_for_student(conn: sqlite3.Connection, student_id: str, scena
     if row and row["pod_id"]:
         return row["pod_id"]
 
-    # Fallback to any latest pod for this student
-    fallback = conn.execute(
-        "SELECT pod_id FROM pods WHERE student_id=? ORDER BY id DESC LIMIT 1",
-        (student_id,),
-    ).fetchone()
-    if fallback and fallback["pod_id"]:
-        return fallback["pod_id"]
-
-    # Final fallback if student has never provisioned any pod
+    # Explicit fallback if student has no pod record for this scenario
     return 0
 
 
@@ -194,8 +189,33 @@ async def evaluate_hybrid_submission(
     if not rubric:
         raise ValueError(f"Rubric not found for scenario {scenario_id}, milestone {milestone_id}")
 
+    now_iso = datetime.now(timezone.utc).isoformat()
     rubric_criteria = rubric.get("criteria", "")
     rubric_name = rubric.get("name", f"Milestone {milestone_id}")
+
+    # Check if milestone is already passed in milestone_verification (Finding #2)
+    already_passed_row = conn.execute(
+        """
+        SELECT pod_id FROM milestone_verification
+        WHERE student_id=? AND scenario_id=? AND milestone_id=? AND status='PASS'
+        ORDER BY id DESC LIMIT 1
+        """,
+        (student_id, scenario_id, milestone_id),
+    ).fetchone()
+
+    if already_passed_row and not flag_valid:
+        # Finding #2: If the milestone is already completed, submitting an invalid flag
+        # or typo does NOT open a conflict case for instructors to review.
+        return HybridScoreResult(
+            outcome="INCOMPLETE",
+            status="INCOMPLETE",
+            scenario_id=scenario_id,
+            milestone_id=milestone_id,
+            message="Milestone already verified, but submitted flag did not match rubric criteria.",
+            review_id=None,
+            verified_at=now_iso,
+            rubric_criteria=rubric_criteria,
+        )
 
     state_pass, pod_id = await _check_container_state(
         conn, student_id, scenario_id, milestone_id, active_pod=active_pod
@@ -211,6 +231,7 @@ async def evaluate_hybrid_submission(
     # Case 1: Flag + State agree -> PASS
     if flag_valid and state_pass:
         target_pod_id = pod_id or _resolve_pod_id_for_student(conn, student_id, scenario_id)
+        auto_resolved_review_ids = []
         with conn:
             # Ensure a PASS record exists in milestone_verification
             exists = conn.execute(
@@ -231,18 +252,29 @@ async def evaluate_hybrid_submission(
                     (target_pod_id, student_id, scenario_id, milestone_id),
                 )
 
-            # If there was a pending conflict case, auto-resolve it
-            conn.execute(
+            # If there was a pending conflict case, collect IDs and auto-resolve it
+            pending_rows = conn.execute(
                 """
-                UPDATE review_cases
-                SET status='APPROVED', score=100, graded_by='SYSTEM_HYBRID',
-                    feedback='Corroborated by automated flag and container state agreement',
-                    updated_at=CURRENT_TIMESTAMP
+                SELECT review_id FROM review_cases
                 WHERE student_id=? AND scenario_id=? AND milestone_id=?
                   AND case_type='SCORING_CONFLICT' AND status='PENDING'
                 """,
                 (student_id, scenario_id, milestone_id),
-            )
+            ).fetchall()
+            auto_resolved_review_ids = [r["review_id"] for r in pending_rows]
+
+            if auto_resolved_review_ids:
+                conn.execute(
+                    """
+                    UPDATE review_cases
+                    SET status='APPROVED', score=100, graded_by='SYSTEM_HYBRID',
+                        feedback='Corroborated by automated flag and container state agreement',
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE student_id=? AND scenario_id=? AND milestone_id=?
+                      AND case_type='SCORING_CONFLICT' AND status='PENDING'
+                    """,
+                    (student_id, scenario_id, milestone_id),
+                )
 
         log_event(
             "HYBRID_SCORE_PASS",
@@ -250,6 +282,23 @@ async def evaluate_hybrid_submission(
             result="PASS",
             detail=f"Scenario {scenario_id}, Milestone {milestone_id}: Flag and state corroborated.",
         )
+
+        # Finding #4: Log REVIEW_CASE_RESOLVED event for each auto-resolved review case
+        for r_id in auto_resolved_review_ids:
+            try:
+                log_event(
+                    "REVIEW_CASE_RESOLVED",
+                    student_id=student_id,
+                    result="APPROVED",
+                    detail=f"review_id={r_id}, score=100, graded_by=SYSTEM_HYBRID",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to record REVIEW_CASE_RESOLVED audit log for review_id=%s: %s",
+                    r_id,
+                    exc,
+                    exc_info=True,
+                )
 
         return HybridScoreResult(
             outcome="PASS",
@@ -262,7 +311,7 @@ async def evaluate_hybrid_submission(
             rubric_criteria=rubric_criteria,
         )
 
-    # Case 2: Flag without State -> ESCALATE
+    # Case 2: Flag without State -> ESCALATE (server-side conflict, opaque to student)
     if flag_valid and not state_pass:
         conflict_reason = "Flag valid but automated container state check failed or was not corroborated."
         evidence = {
@@ -283,13 +332,15 @@ async def evaluate_hybrid_submission(
             detail=f"Scenario {scenario_id}, Milestone {milestone_id}: Flag valid without container state (review_id={review_id}).",
         )
 
+        # Finding #1: The student response must be indistinguishable from INCOMPLETE
+        # so this endpoint cannot be used as an oracle to confirm guessed flags.
         return HybridScoreResult(
-            outcome="ESCALATED",
-            status="ESCALATED",
+            outcome="INCOMPLETE",
+            status="INCOMPLETE",
             scenario_id=scenario_id,
             milestone_id=milestone_id,
-            message="Scoring conflict: Flag is valid but container state was not corroborated. Escalated to instructor review queue.",
-            review_id=review_id,
+            message="Milestone incomplete: Neither the submitted flag nor container state satisfied rubric criteria.",
+            review_id=None,
             verified_at=now_iso,
             rubric_criteria=rubric_criteria,
         )
@@ -344,3 +395,4 @@ async def evaluate_hybrid_submission(
         verified_at=now_iso,
         rubric_criteria=rubric_criteria,
     )
+

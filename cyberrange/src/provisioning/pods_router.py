@@ -1024,11 +1024,20 @@ def resolve_student_review(
             cur = conn.execute(
                 "UPDATE review_cases "
                 "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE review_id = ?",
+                "WHERE review_id = ? AND status IN ('PENDING', 'RETRY')",
                 (clean_status, final_score, clean_feedback, grader, review_id),
             )
             if cur.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Review case not found")
+                check_row = conn.execute(
+                    "SELECT status FROM review_cases WHERE review_id = ?",
+                    (review_id,),
+                ).fetchone()
+                if not check_row:
+                    raise HTTPException(status_code=404, detail="Review case not found")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Review case was modified concurrently or is no longer in PENDING status (current status: {check_row['status']})",
+                )
 
             case_row = conn.execute(
                 "SELECT case_type FROM review_cases WHERE review_id=?",
@@ -1037,9 +1046,11 @@ def resolve_student_review(
             case_type = case_row["case_type"] if case_row and "case_type" in case_row.keys() else "WRITTEN_REPORT"
 
             if case_type == "SCORING_CONFLICT" and clean_status == "APPROVED" and milestone_id is not None:
+                s_id_str = str(scenario_id)
+                s_id_pad = str(scenario_id).zfill(2)
                 pod_row = conn.execute(
-                    "SELECT pod_id FROM pods WHERE student_id=? ORDER BY id DESC LIMIT 1",
-                    (student_id,),
+                    "SELECT pod_id FROM pods WHERE student_id=? AND (scenario_id=? OR scenario_id=?) ORDER BY id DESC LIMIT 1",
+                    (student_id, s_id_str, s_id_pad),
                 ).fetchone()
                 target_pod_id = pod_row["pod_id"] if pod_row and pod_row["pod_id"] else 0
                 exists = conn.execute(
