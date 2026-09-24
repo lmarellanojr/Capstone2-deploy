@@ -86,7 +86,7 @@ This confirms the exact mechanism `portal/src/lib/auth.ts`'s `doRefresh()` depen
 
 ### `session.user.roles` — confirmed via live portal login
 
-Owner (Lenie) manually logged in as all three demo accounts through the actual portal Sign In → "Continue with school SSO" flow at https://cyberrange.cyberlaboratory.online/ (real NextAuth PKCE flow, not the token-grant probe) and confirmed `session.user.roles` matches this contract for each account.
+Owner (Lenie) manually logged in as all three demo accounts through the actual portal Sign In → "Log in" flow at https://cyberrange.cyberlaboratory.online/ (real NextAuth PKCE flow, not the token-grant probe) and confirmed `session.user.roles` matches this contract for each account.
 
 ## Known open items (not yet closed)
 

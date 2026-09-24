@@ -262,7 +262,7 @@ Manual later:
 In a **private** browser window:
 
 1. Open `https://<your-host>/login` in a **private** window (**Ctrl+Shift+R** if you already had the unstyled page).  
-2. You should see a **centred card**, MMDC mark, maroon **Continue with school SSO** — not a blank white document.  
+2. You should see a **centred card**, MMDC mark, maroon **Log in** — not a blank white document.  
 3. Sign in with Keycloak as **student** (password is in `~/cyberrange-data/student.env` on the VM — copy it over SSH, do not paste it into the agent chat).  
 4. You should land on **`/dashboard`**.  
 5. Optional: Create one scenario pod, Open DVWA should be `/lab/dvwa/...` on the **same** hostname, Connect terminal `whoami` → `student`. Then **End Session** (destroys the pod).
