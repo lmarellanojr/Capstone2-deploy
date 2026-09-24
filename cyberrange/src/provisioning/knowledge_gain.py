@@ -110,12 +110,19 @@ def sanitize_csv_cell(value: Any) -> Any:
         return f"'{value}"
     return value
 
+
 def _has_table(conn: sqlite3.Connection, table_name: str) -> bool:
     """Check whether a table exists in the SQLite database."""
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
     ).fetchone()
     return bool(row)
+
+
+def _has_column(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+    """Check whether a column exists in the SQLite table."""
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table_name})").fetchall()]
+    return column_name in cols
 
 
 def extract_knowledge_gain_records(
@@ -134,11 +141,14 @@ def extract_knowledge_gain_records(
     if anonymize:
         resolved_salt = resolve_telemetry_salt(salt)
 
+    has_pod_cat = _has_column(conn, "milestone_verification", "pod_created_at")
+
     # 1. Fetch milestone verification records
+    pod_cat_col = ", pod_created_at" if has_pod_cat else ", NULL as pod_created_at"
     query = (
-        "SELECT id, pod_id, student_id, scenario_id, milestone_id, "
-        "status, detection_score, verified_at "
-        "FROM milestone_verification WHERE 1=1"
+        f"SELECT id, pod_id, student_id, scenario_id, milestone_id, "
+        f"status, detection_score, verified_at{pod_cat_col} "
+        f"FROM milestone_verification WHERE 1=1"
     )
     params: list[Any] = []
     if scenario_id is not None:
@@ -155,39 +165,74 @@ def extract_knowledge_gain_records(
     if not mv_rows:
         return []
 
-    # 2. Pre-calculate first PASS timestamp per (student_id, scenario_id, milestone_id)
-    pass_query = (
-        "SELECT student_id, scenario_id, milestone_id, MIN(verified_at) as first_pass_at "
-        "FROM milestone_verification "
-        "WHERE status = 'PASS' "
-        "GROUP BY student_id, scenario_id, milestone_id"
-    )
-    first_pass_map: dict[tuple[str, int, int], str] = {}
-    for r in conn.execute(pass_query).fetchall():
-        first_pass_map[(r["student_id"], r["scenario_id"], r["milestone_id"])] = r[
-            "first_pass_at"
-        ]
-
-    # 3. Pre-fetch pods to resolve pod created_at with tenant isolation
+    # 2. Pre-fetch pods to resolve pod created_at with tenant isolation
     # Join on pod_id AND student_id to prevent cross-tenant slot reuse contamination
-    pod_query = (
-        "SELECT pod_id, student_id, CAST(scenario_id AS INTEGER) as scen_int, created_at "
-        "FROM pods ORDER BY created_at ASC"
-    )
     pod_by_slot_and_student: dict[tuple[int, str], str] = {}
     pods_by_student_scen: dict[tuple[str, int], list[tuple[datetime, str]]] = {}
 
-    for p in conn.execute(pod_query).fetchall():
-        pid = p["pod_id"]
-        sid = p["student_id"]
-        scen = p["scen_int"]
-        cat = p["created_at"]
-        if pid is not None and sid:
-            pod_by_slot_and_student[(pid, sid)] = cat
-        if sid and scen is not None and cat:
-            cdt = parse_timestamp(cat)
-            if cdt:
-                pods_by_student_scen.setdefault((sid, scen), []).append((cdt, cat))
+    if _has_table(conn, "pods"):
+        pod_query = (
+            "SELECT pod_id, student_id, CAST(scenario_id AS INTEGER) as scen_int, created_at "
+            "FROM pods ORDER BY created_at ASC"
+        )
+        for p in conn.execute(pod_query).fetchall():
+            pid = p["pod_id"]
+            sid = p["student_id"]
+            scen = p["scen_int"]
+            cat = p["created_at"]
+            if pid is not None and sid:
+                pod_by_slot_and_student[(pid, sid)] = cat
+            if sid and scen is not None and cat:
+                cdt = parse_timestamp(cat)
+                if cdt:
+                    pods_by_student_scen.setdefault((sid, scen), []).append((cdt, cat))
+
+    def _resolve_pod_created_at(row_dict_or_obj: Any) -> Optional[str]:
+        # 1. Primary: persisted on milestone_verification
+        try:
+            if "pod_created_at" in row_dict_or_obj.keys() and row_dict_or_obj["pod_created_at"]:
+                return str(row_dict_or_obj["pod_created_at"])
+        except Exception:
+            pass
+
+        # 2. Match slot and student
+        s_id = row_dict_or_obj["student_id"] or ""
+        p_id = row_dict_or_obj["pod_id"]
+        if (p_id, s_id) in pod_by_slot_and_student:
+            return pod_by_slot_and_student[(p_id, s_id)]
+
+        # 3. Match student and scenario (closest created_at <= verified_at)
+        sc_id = int(row_dict_or_obj["scenario_id"]) if row_dict_or_obj["scenario_id"] is not None else None
+        ver_time = row_dict_or_obj["verified_at"] or ""
+        if sc_id is not None and (s_id, sc_id) in pods_by_student_scen:
+            v_dt = parse_timestamp(ver_time)
+            candidates = pods_by_student_scen[(s_id, sc_id)]
+            if v_dt:
+                valid_candidates = [c for c in candidates if c[0] <= v_dt]
+                if valid_candidates:
+                    return valid_candidates[-1][1]
+                return candidates[0][1]
+            return candidates[0][1]
+        return None
+
+    # 3. Pre-calculate first PASS timestamp per session:
+    # Key: (student_id, scenario_id, milestone_id, pod_created_at) -> first PASS verified_at
+    pass_query = (
+        f"SELECT id, pod_id, student_id, scenario_id, milestone_id, "
+        f"status, detection_score, verified_at{pod_cat_col} "
+        f"FROM milestone_verification "
+        f"WHERE UPPER(status) = 'PASS' "
+        f"ORDER BY verified_at ASC"
+    )
+    first_pass_map: dict[tuple[str, int, int, Optional[str]], str] = {}
+    for r in conn.execute(pass_query).fetchall():
+        r_sid = r["student_id"] or ""
+        r_scen = int(r["scenario_id"])
+        r_mid = int(r["milestone_id"])
+        r_pcat = _resolve_pod_created_at(r)
+        key = (r_sid, r_scen, r_mid, r_pcat)
+        if key not in first_pass_map:
+            first_pass_map[key] = r["verified_at"]
 
     # 4. Pre-fetch latest approved rubric scores from review_cases if table exists
     rubric_map: dict[tuple[str, int, Optional[int]], int] = {}
@@ -213,36 +258,25 @@ def extract_knowledge_gain_records(
         ver_at = row["verified_at"] or ""
         det_score = int(row["detection_score"]) if row["detection_score"] is not None else 0
 
-        # Resolve pod created_at for this student and scenario
-        pod_cat_str = pod_by_slot_and_student.get((row["pod_id"], sid))
-        if not pod_cat_str and (sid, scen) in pods_by_student_scen:
-            # Fallback to closest pod created prior to or at verification time
-            v_dt = parse_timestamp(ver_at)
-            candidates = pods_by_student_scen[(sid, scen)]
-            if v_dt:
-                valid_candidates = [c for c in candidates if c[0] <= v_dt]
-                if valid_candidates:
-                    pod_cat_str = valid_candidates[-1][1]
-                else:
-                    pod_cat_str = candidates[0][1]
-            else:
-                pod_cat_str = candidates[0][1]
+        # Resolve pod created_at for this session
+        pod_cat_str = _resolve_pod_created_at(row)
 
-        # Calculate time-to-milestone: pod created_at to first PASS timestamp
+        # Calculate time-to-milestone: pod created_at to first PASS timestamp of this session
         time_to_milestone: Optional[float] = None
         if st == "PASS":
-            first_pass_str = first_pass_map.get((sid, scen, mid)) or ver_at
+            first_pass_str = first_pass_map.get((sid, scen, mid, pod_cat_str)) or ver_at
             p_dt = parse_timestamp(pod_cat_str)
             fp_dt = parse_timestamp(first_pass_str)
             if p_dt and fp_dt:
                 diff = (fp_dt - p_dt).total_seconds()
-                # Defend against negative duration caused by clock drift or synthetic data
-                time_to_milestone = max(0.0, round(diff, 2))
+                if diff >= 0:
+                    time_to_milestone = round(diff, 2)
+                else:
+                    time_to_milestone = None
 
-        # Resolve rubric score
+        # Resolve rubric scores: per-milestone score and scenario-level score separately
         rubric_score = rubric_map.get((sid, scen, mid))
-        if rubric_score is None:
-            rubric_score = rubric_map.get((sid, scen, None))
+        scenario_rubric_score = rubric_map.get((sid, scen, None))
 
         out_student_id = (
             anonymize_student_id(sid, resolved_salt) if anonymize else sid
@@ -258,6 +292,7 @@ def extract_knowledge_gain_records(
                 "detection_score": det_score,
                 "time_to_milestone_seconds": time_to_milestone,
                 "rubric_score": rubric_score,
+                "scenario_rubric_score": scenario_rubric_score,
             }
         )
 
@@ -271,21 +306,47 @@ def compute_knowledge_gain_summary(records: list[dict]) -> dict:
         return {
             "total_records": 0,
             "total_passes": 0,
+            "distinct_milestones_attempted": 0,
+            "distinct_milestones_passed": 0,
             "completion_rate": 0.0,
+            "attempt_pass_rate": None,
             "avg_time_to_milestone_seconds": None,
             "avg_detection_score": None,
         }
 
     passes = [r for r in records if r.get("status") == "PASS"]
     total_passes = len(passes)
-    completion_rate = round(total_passes / total_records, 4)
+    attempt_pass_rate = round(total_passes / total_records, 4)
 
-    times = [
-        r["time_to_milestone_seconds"]
+    distinct_attempted = {
+        (r.get("student_id"), r.get("scenario_id"), r.get("milestone_id"))
         for r in records
-        if r.get("time_to_milestone_seconds") is not None
-    ]
-    avg_time = round(sum(times) / len(times), 2) if times else None
+    }
+    distinct_passed = {
+        (r.get("student_id"), r.get("scenario_id"), r.get("milestone_id"))
+        for r in passes
+    }
+    distinct_milestones_attempted = len(distinct_attempted)
+    distinct_milestones_passed = len(distinct_passed)
+
+    if distinct_milestones_attempted > 0:
+        completion_rate = round(
+            distinct_milestones_passed / distinct_milestones_attempted, 4
+        )
+    else:
+        completion_rate = 0.0
+
+    # One first-pass sample per distinct completed milestone
+    distinct_milestone_times: dict[tuple[Any, Any, Any], float] = {}
+    for r in records:
+        if r.get("status") == "PASS":
+            key = (r.get("student_id"), r.get("scenario_id"), r.get("milestone_id"))
+            t = r.get("time_to_milestone_seconds")
+            if t is not None and key not in distinct_milestone_times:
+                distinct_milestone_times[key] = t
+
+    time_samples = list(distinct_milestone_times.values())
+    avg_time = round(sum(time_samples) / len(time_samples), 2) if time_samples else None
 
     det_scores = [
         r["detection_score"]
@@ -297,7 +358,10 @@ def compute_knowledge_gain_summary(records: list[dict]) -> dict:
     return {
         "total_records": total_records,
         "total_passes": total_passes,
+        "distinct_milestones_attempted": distinct_milestones_attempted,
+        "distinct_milestones_passed": distinct_milestones_passed,
         "completion_rate": completion_rate,
+        "attempt_pass_rate": attempt_pass_rate,
         "avg_time_to_milestone_seconds": avg_time,
         "avg_detection_score": avg_det,
     }
@@ -315,6 +379,7 @@ def format_records_csv(records: list[dict]) -> str:
         "detection_score",
         "time_to_milestone_seconds",
         "rubric_score",
+        "scenario_rubric_score",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
     writer.writeheader()

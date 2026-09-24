@@ -93,12 +93,16 @@ class KnowledgeGainRecord(BaseModel):
     detection_score: Optional[int] = 0
     time_to_milestone_seconds: Optional[float] = None
     rubric_score: Optional[int] = None
+    scenario_rubric_score: Optional[int] = None
 
 
 class KnowledgeGainSummary(BaseModel):
     total_records: int
     total_passes: int
+    distinct_milestones_attempted: int
+    distinct_milestones_passed: int
     completion_rate: float
+    attempt_pass_rate: Optional[float] = None
     avg_time_to_milestone_seconds: Optional[float] = None
     avg_detection_score: Optional[float] = None
 

@@ -79,24 +79,44 @@ def _insert_verification(
     verified_at: str = "2026-09-24 00:02:00",
     detection_score: int = 1,
     detection_data: str = "rule 100001",
+    pod_created_at: str | None = None,
 ) -> None:
     conn = db.get_db_connection()
     with conn:
-        conn.execute(
-            "INSERT INTO milestone_verification "
-            "(student_id, pod_id, scenario_id, milestone_id, status, verified_at, detection_score, detection_data) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (
-                student_id,
-                pod_id,
-                scenario_id,
-                milestone_id,
-                status,
-                verified_at,
-                detection_score,
-                detection_data,
-            ),
-        )
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(milestone_verification)").fetchall()}
+        if "pod_created_at" in cols:
+            conn.execute(
+                "INSERT INTO milestone_verification "
+                "(student_id, pod_id, scenario_id, milestone_id, status, verified_at, detection_score, detection_data, pod_created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    student_id,
+                    pod_id,
+                    scenario_id,
+                    milestone_id,
+                    status,
+                    verified_at,
+                    detection_score,
+                    detection_data,
+                    pod_created_at,
+                ),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO milestone_verification "
+                "(student_id, pod_id, scenario_id, milestone_id, status, verified_at, detection_score, detection_data) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    student_id,
+                    pod_id,
+                    scenario_id,
+                    milestone_id,
+                    status,
+                    verified_at,
+                    detection_score,
+                    detection_data,
+                ),
+            )
     conn.close()
 
 
@@ -185,8 +205,8 @@ def test_time_to_milestone_non_pass():
     assert records[0]["time_to_milestone_seconds"] is None
 
 
-def test_time_to_milestone_clock_skew_clamped():
-    """Verify negative duration resulting from clock skew or synthetic data clamps to 0.0."""
+def test_time_to_milestone_clock_skew_returns_none():
+    """Verify negative duration resulting from clock skew or synthetic data returns None, not 0.0."""
     _insert_pod("dave", 4, scenario_id=1, created_at="2026-09-24 00:05:00")
     _insert_verification("dave", 4, scenario_id=1, milestone_id=1, status="PASS", verified_at="2026-09-24 00:01:00")
 
@@ -195,7 +215,103 @@ def test_time_to_milestone_clock_skew_clamped():
     conn.close()
 
     assert len(records) == 1
-    assert records[0]["time_to_milestone_seconds"] == 0.0
+    assert records[0]["time_to_milestone_seconds"] is None
+
+
+def test_same_slot_reprovision_by_same_student():
+    """Verify reprovisioning the same slot by the same student computes accurate session time-to-milestone."""
+    # Session 1: slot 1 created at 00:00:00, verified PASS at 00:05:00 (300s)
+    _insert_pod("student_reprov", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
+    _insert_verification(
+        "student_reprov",
+        1,
+        scenario_id=1,
+        milestone_id=1,
+        status="PASS",
+        verified_at="2026-09-24 00:05:00",
+        pod_created_at="2026-09-24 00:00:00",
+    )
+
+    # Slot reuse / reprovision: pods table has row deleted and recreated at 01:00:00
+    conn = db.get_db_connection()
+    with conn:
+        conn.execute("DELETE FROM pods WHERE pod_id = 1")
+    conn.close()
+
+    # Session 2: slot 1 recreated at 01:00:00, verified PASS at 01:10:00 (600s)
+    _insert_pod("student_reprov", 1, scenario_id=1, created_at="2026-09-24 01:00:00")
+    _insert_verification(
+        "student_reprov",
+        1,
+        scenario_id=1,
+        milestone_id=1,
+        status="PASS",
+        verified_at="2026-09-24 01:10:00",
+        pod_created_at="2026-09-24 01:00:00",
+    )
+
+    conn = db.get_db_connection()
+    records = extract_knowledge_gain_records(conn)
+    conn.close()
+
+    assert len(records) == 2
+    # Neither session should be 0.0 or negative
+    assert records[0]["time_to_milestone_seconds"] == 300.0
+    assert records[1]["time_to_milestone_seconds"] == 600.0
+
+
+def test_distinct_milestone_completion_rate():
+    """Verify completion_rate evaluates distinct milestones, and attempt_pass_rate tracks retries."""
+    _insert_pod("eval_student", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
+    # Retries for milestone 1
+    _insert_verification("eval_student", 1, scenario_id=1, milestone_id=1, status="FAIL", verified_at="2026-09-24 00:01:00", pod_created_at="2026-09-24 00:00:00")
+    _insert_verification("eval_student", 1, scenario_id=1, milestone_id=1, status="FAIL", verified_at="2026-09-24 00:02:00", pod_created_at="2026-09-24 00:00:00")
+    _insert_verification("eval_student", 1, scenario_id=1, milestone_id=1, status="PASS", verified_at="2026-09-24 00:05:00", pod_created_at="2026-09-24 00:00:00")
+    # Repeated PASS verification for milestone 1
+    _insert_verification("eval_student", 1, scenario_id=1, milestone_id=1, status="PASS", verified_at="2026-09-24 00:06:00", pod_created_at="2026-09-24 00:00:00")
+
+    conn = db.get_db_connection()
+    records = extract_knowledge_gain_records(conn)
+    summary = compute_knowledge_gain_summary(records)
+    conn.close()
+
+    assert summary["total_records"] == 4
+    assert summary["total_passes"] == 2
+    assert summary["distinct_milestones_attempted"] == 1
+    assert summary["distinct_milestones_passed"] == 1
+    # 1 distinct milestone attempted and passed -> completion rate = 1.0 (not 0.5)
+    assert summary["completion_rate"] == 1.0
+    # Attempt pass rate reflects 2 passes out of 4 attempts -> 0.5
+    assert summary["attempt_pass_rate"] == 0.5
+    # avg_time_to_milestone_seconds evaluated on 1 distinct completed milestone sample (300s)
+    assert summary["avg_time_to_milestone_seconds"] == 300.0
+
+
+def test_scenario_level_rubric_separation():
+    """Verify milestone-specific rubric scores and scenario-level scores are kept distinct."""
+    _insert_pod("frank_rubric", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
+    _insert_verification("frank_rubric", 1, scenario_id=1, milestone_id=1, status="PASS", verified_at="2026-09-24 00:02:00")
+    _insert_verification("frank_rubric", 1, scenario_id=1, milestone_id=2, status="PASS", verified_at="2026-09-24 00:04:00")
+
+    # Milestone 1 specific review: score 90
+    _insert_review_case("frank_rubric", scenario_id=1, milestone_id=1, score=90, status="APPROVED")
+    # Scenario-level review (milestone_id is None): score 85
+    _insert_review_case("frank_rubric", scenario_id=1, milestone_id=None, score=85, status="APPROVED")
+
+    conn = db.get_db_connection()
+    records = extract_knowledge_gain_records(conn)
+    conn.close()
+
+    assert len(records) == 2
+    rec_m1 = next(r for r in records if r["milestone_id"] == 1)
+    rec_m2 = next(r for r in records if r["milestone_id"] == 2)
+
+    assert rec_m1["rubric_score"] == 90
+    assert rec_m1["scenario_rubric_score"] == 85
+
+    # Milestone 2 was not individually reviewed: rubric_score is None, scenario_rubric_score is 85
+    assert rec_m2["rubric_score"] is None
+    assert rec_m2["scenario_rubric_score"] == 85
 
 
 def test_cross_tenant_slot_reuse_isolation():
@@ -236,7 +352,6 @@ def test_slot_reuse_without_any_prior_pod_returns_none():
     charlie_rec = next(r for r in records if r["student_id"] == "charlie")
     # Dave's 03:00:00 timestamp must NEVER be leaked to Charlie
     assert charlie_rec["time_to_milestone_seconds"] is None
-
 
 
 def test_type_mismatch_resilience():
@@ -296,13 +411,17 @@ def test_empty_database_export_json_and_csv():
     assert records == []
     assert summary["total_records"] == 0
     assert summary["total_passes"] == 0
+    assert summary["distinct_milestones_attempted"] == 0
+    assert summary["distinct_milestones_passed"] == 0
     assert summary["completion_rate"] == 0.0
+    assert summary["attempt_pass_rate"] is None
     assert summary["avg_time_to_milestone_seconds"] is None
     assert summary["avg_detection_score"] is None
 
     lines = csv_text.strip().splitlines()
     assert len(lines) == 1
     assert "student_id,scenario_id,milestone_id,status" in lines[0]
+    assert "scenario_rubric_score" in lines[0]
 
 
 def test_sanitization_and_field_minimization():
@@ -610,4 +729,5 @@ def test_legacy_schema_without_review_cases(tmp_path: Path):
     assert len(records) == 1
     assert records[0]["student_id"] == "oscar"
     assert records[0]["rubric_score"] is None
+    assert records[0]["scenario_rubric_score"] is None
     assert records[0]["time_to_milestone_seconds"] == 120.0
