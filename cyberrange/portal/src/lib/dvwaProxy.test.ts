@@ -1,5 +1,7 @@
 import {
   isAllowedDvwaLabPath,
+  isVulnerableDvwaLabPath,
+  dvwaContentSecurityPolicy,
   stripDisallowedDvwaMenu,
   DVWA_PREFIX,
 } from './dvwaProxy'
@@ -63,6 +65,47 @@ describe('dvwaProxy access control', () => {
       expect(stripped).not.toContain('vulnerabilities/xss_s/')
       expect(stripped).not.toContain('vulnerabilities/exec/')
       expect(stripped).not.toContain('vulnerabilities/csrf/')
+    })
+  })
+
+  describe('dvwaContentSecurityPolicy & isVulnerableDvwaLabPath', () => {
+    const EXPECTED_CSP = 'sandbox allow-scripts allow-forms allow-modals'
+
+    it('identifies SQL injection and Reflected XSS paths as vulnerable', () => {
+      expect(isVulnerableDvwaLabPath('/vulnerabilities/sqli')).toBe(true)
+      expect(isVulnerableDvwaLabPath('/vulnerabilities/sqli/')).toBe(true)
+      expect(isVulnerableDvwaLabPath('/vulnerabilities/sqli/?id=1&Submit=Submit')).toBe(true)
+      expect(isVulnerableDvwaLabPath(`${DVWA_PREFIX}/vulnerabilities/sqli/`)).toBe(true)
+
+      expect(isVulnerableDvwaLabPath('/vulnerabilities/xss_r')).toBe(true)
+      expect(isVulnerableDvwaLabPath('/vulnerabilities/xss_r/')).toBe(true)
+      expect(isVulnerableDvwaLabPath('/vulnerabilities/xss_r/?name=%3Cscript%3Ealert(1)%3C/script%3E')).toBe(true)
+      expect(isVulnerableDvwaLabPath(`${DVWA_PREFIX}/vulnerabilities/xss_r/`)).toBe(true)
+    })
+
+    it('identifies non-vulnerable paths as not vulnerable', () => {
+      expect(isVulnerableDvwaLabPath('/')).toBe(false)
+      expect(isVulnerableDvwaLabPath('/index.php')).toBe(false)
+      expect(isVulnerableDvwaLabPath('/login.php')).toBe(false)
+      expect(isVulnerableDvwaLabPath('/security.php')).toBe(false)
+      expect(isVulnerableDvwaLabPath('/favicon.ico')).toBe(false)
+      expect(isVulnerableDvwaLabPath('/dvwa/css/main.css')).toBe(false)
+    })
+
+    it('returns sandbox CSP header for vulnerable modules', () => {
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r')).toBe(EXPECTED_CSP)
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r/')).toBe(EXPECTED_CSP)
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r/?name=<script>alert(1)</script>')).toBe(EXPECTED_CSP)
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli')).toBe(EXPECTED_CSP)
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(EXPECTED_CSP)
+    })
+
+    it('returns null CSP for safe pages so portal origin is preserved', () => {
+      expect(dvwaContentSecurityPolicy('/')).toBeNull()
+      expect(dvwaContentSecurityPolicy('/security.php')).toBeNull()
+      expect(dvwaContentSecurityPolicy('/login.php')).toBeNull()
+      expect(dvwaContentSecurityPolicy('/favicon.ico')).toBeNull()
+      expect(dvwaContentSecurityPolicy('/dvwa/css/main.css')).toBeNull()
     })
   })
 })

@@ -908,7 +908,7 @@ class TestScoringChecksDirectBashExecution:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 
     def test_direct_bash_scenario_06_m4_history_pass(self, tmp_path):
-        """Scenario 06 M4: seeded bash history with XSS payload produces PASS."""
+        """Scenario 06 M4: seeded bash history with curl XSS payload produces PASS."""
         history = tmp_path / ".bash_history"
         history.write_text("curl -s 'http://10.0.51.20/dvwa/vulnerabilities/xss_r/?name=<script>alert(1)</script>&Submit=Submit'\n")
         env = {"HOME": tmp_path.as_posix()}
@@ -917,9 +917,9 @@ class TestScoringChecksDirectBashExecution:
         assert token == "PASS"
 
     def test_direct_bash_scenario_06_m4_artifact_pass(self):
-        """Scenario 06 M4: /tmp/xss_reflected.txt artifact produces PASS."""
+        """Scenario 06 M4: /tmp/xss_reflected.txt artifact containing reflection produces PASS."""
         import subprocess
-        setup_cmd = 'mkdir -p /tmp && printf \'<script>alert("XSS")</script>\\n\' > /tmp/xss_reflected.txt'
+        setup_cmd = 'mkdir -p /tmp && printf \'<pre>Hello <script>alert("XSS")</script></pre>\\n\' > /tmp/xss_reflected.txt'
         cleanup_cmd = 'rm -f /tmp/xss_reflected.txt'
         try:
             subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
@@ -930,9 +930,9 @@ class TestScoringChecksDirectBashExecution:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 
     def test_direct_bash_scenario_06_m4_payload_artifact_pass(self):
-        """Scenario 06 M4: /tmp/xss_payload.txt artifact produces PASS."""
+        """Scenario 06 M4: /tmp/xss_payload.txt artifact containing reflection produces PASS."""
         import subprocess
-        setup_cmd = 'mkdir -p /tmp && printf \'<script>alert(document.cookie)</script>\\n\' > /tmp/xss_payload.txt'
+        setup_cmd = 'mkdir -p /tmp && printf \'Hello <script>alert(document.cookie)</script>\\n\' > /tmp/xss_payload.txt'
         cleanup_cmd = 'rm -f /tmp/xss_payload.txt'
         try:
             subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
@@ -955,6 +955,59 @@ class TestScoringChecksDirectBashExecution:
         finally:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 
+    def test_direct_bash_scenario_06_m4_echo_payload_fails_history(self, tmp_path):
+        """Scenario 06 M4 negative: bare echo payload does NOT pass without curl targeting xss_r."""
+        history = tmp_path / ".bash_history"
+        history.write_text("echo \"<script>alert('XSS')</script>\"\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(6, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_direct_bash_scenario_06_m4_curl_without_payload_fails_history(self, tmp_path):
+        """Scenario 06 M4 negative: curl targeting xss_r without script payload does NOT pass."""
+        history = tmp_path / ".bash_history"
+        history.write_text("curl -sI http://10.0.51.20/dvwa/vulnerabilities/xss_r/\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(6, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_direct_bash_scenario_06_m4_unrelated_alert_grep_fails_history(self, tmp_path):
+        """Scenario 06 M4 negative: unrelated alert grep does NOT pass."""
+        history = tmp_path / ".bash_history"
+        history.write_text("grep 'alert(1)' notes.txt\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(6, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_direct_bash_scenario_06_m4_artifact_without_reflection_fails(self):
+        """Scenario 06 M4 negative: artifact lacking DVWA reflection string fails."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && printf \'echo x > /tmp/xss_proof.txt\\n\' > /tmp/xss_proof.txt'
+        cleanup_cmd = 'rm -f /tmp/xss_proof.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(6, 4)
+            assert rc == 0
+            assert token == "FAIL"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_06_m1_artifact_pass(self):
+        """Scenario 06 M1: /tmp/sqli_probe.txt containing SQL error produces PASS."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && printf \'You have an error in your SQL syntax near 1\\n\' > /tmp/sqli_probe.txt'
+        cleanup_cmd = 'rm -f /tmp/sqli_probe.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(6, 1)
+            assert rc == 0
+            assert token == "PASS"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
     def test_direct_bash_scenario_06_sqli_evidence_fails_m4(self):
         """Scenario 06 M4: SQLi artifacts/history do NOT satisfy Milestone 4 (no collision)."""
         import subprocess
@@ -971,7 +1024,7 @@ class TestScoringChecksDirectBashExecution:
     def test_direct_bash_scenario_06_xss_evidence_fails_m1_m2_m3(self):
         """Scenario 06 M1-M3: XSS artifacts do NOT satisfy Milestones 1, 2, or 3 (no collision)."""
         import subprocess
-        setup_cmd = 'mkdir -p /tmp && printf \'<script>alert(1)</script>\\n\' > /tmp/xss_reflected.txt'
+        setup_cmd = 'mkdir -p /tmp && printf \'Hello <script>alert(1)</script>\\n\' > /tmp/xss_reflected.txt'
         cleanup_cmd = 'rm -f /tmp/xss_reflected.txt'
         try:
             subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)

@@ -217,3 +217,26 @@ export function shouldRewriteBody(contentType: string | null): boolean {
   const ct = contentType.toLowerCase()
   return ct.includes('text/html') || ct.includes('text/css') || ct.includes('application/javascript')
 }
+
+/**
+ * Security: Identifies vulnerable DVWA modules that execute untrusted student payloads.
+ */
+export function isVulnerableDvwaLabPath(path: string): boolean {
+  const p = normalizeLabPath(path)
+  if (p === '/vulnerabilities/sqli' || p.startsWith('/vulnerabilities/sqli/')) return true
+  if (p === '/vulnerabilities/xss_r' || p.startsWith('/vulnerabilities/xss_r/')) return true
+  return false
+}
+
+/**
+ * Security: Serves vulnerable module pages in an opaque origin (origin: null) via CSP sandbox.
+ * Prevents reflected XSS or SQLi payloads from accessing portal cookies, local storage,
+ * or calling authenticated portal APIs (e.g. /api/auth/session) while allowing script execution,
+ * modal dialogs (alert/confirm/prompt), and GET form submissions.
+ */
+export function dvwaContentSecurityPolicy(path: string): string | null {
+  if (isVulnerableDvwaLabPath(path)) {
+    return 'sandbox allow-scripts allow-forms allow-modals'
+  }
+  return null
+}
