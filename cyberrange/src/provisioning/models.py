@@ -82,3 +82,37 @@ class ReviewResubmitRequest(BaseModel):
 class ReviewResubmitResponse(BaseModel):
     status: str
     review_id: int
+
+
+class KnowledgeGainRecord(BaseModel):
+    student_id: str
+    scenario_id: int
+    milestone_id: int
+    status: Literal["PASS", "FAIL", "ERROR", "UNKNOWN"]
+    verified_at: str
+    detection_score: Optional[int] = 0
+    time_to_milestone_seconds: Optional[float] = None
+    rubric_score: Optional[int] = None
+    scenario_rubric_score: Optional[int] = None
+
+
+class KnowledgeGainSummary(BaseModel):
+    total_records: int
+    total_passes: int
+    distinct_milestones_attempted: int
+    distinct_milestones_passed: int
+    completion_rate: float
+    attempt_pass_rate: Optional[float] = Field(
+        None,
+        description="Raw verification-row pass ratio (total_passes / total_records), reflecting attempt frequency including poller ticks",
+    )
+    avg_time_to_milestone_seconds: Optional[float] = None
+    avg_detection_score: Optional[float] = Field(
+        None,
+        description="Mean detection score across distinct completed milestones, evaluated from each milestone's first PASS row",
+    )
+
+
+class KnowledgeGainExportResponse(BaseModel):
+    summary: KnowledgeGainSummary
+    records: List[KnowledgeGainRecord]

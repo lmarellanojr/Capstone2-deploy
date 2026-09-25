@@ -210,6 +210,29 @@ def _upgrade_review_cases_schema(conn: sqlite3.Connection) -> None:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_review_cases_case_type ON review_cases(case_type)")
 
 
+def _ensure_telemetry_columns(conn: sqlite3.Connection) -> None:
+    """Ensure Section D.5 knowledge-gain telemetry columns exist on milestone_verification."""
+    if _has_table(conn, "milestone_verification") and not _has_column(
+        conn, "milestone_verification", "pod_created_at"
+    ):
+        with conn:
+            conn.execute(
+                "ALTER TABLE milestone_verification ADD COLUMN pod_created_at TIMESTAMP"
+            )
+            if _has_table(conn, "pods"):
+                has_student_id = _has_column(conn, "milestone_verification", "student_id")
+                student_clause = " AND pods.student_id = milestone_verification.student_id " if has_student_id else ""
+                conn.execute(
+                    "UPDATE milestone_verification "
+                    "SET pod_created_at = ("
+                    "    SELECT created_at FROM pods "
+                    f"    WHERE pods.pod_id = milestone_verification.pod_id{student_clause}"
+                    "      AND pods.created_at <= milestone_verification.verified_at "
+                    "    ORDER BY pods.created_at DESC LIMIT 1"
+                    ") WHERE pod_created_at IS NULL"
+                )
+
+
 def apply(db_path: str | None = None) -> int:
     path = db_path or DB_PATH
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -235,6 +258,7 @@ def apply(db_path: str | None = None) -> int:
                     (version,),
                 )
         _upgrade_review_cases_schema(conn)
+        _ensure_telemetry_columns(conn)
         return current_version(conn)
     finally:
         conn.close()
