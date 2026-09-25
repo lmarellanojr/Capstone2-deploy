@@ -276,7 +276,8 @@ student pod (`MAX_PODS=1`) on this profile.
 1. Agents on `pod-<student>-meta` / `pod-<student>-dvwa` report to the manager
    at `10.0.40.10`.
 2. `GET /pods/{pod_id}/alerts` (`alerts_endpoint.py` → `alerts_reader.py`) tails
-   the manager's `alerts.json`, scoped to that student's agents.
+   the manager's `alerts.json`, scoped to that student's agents and to the
+   current pod's lifetime (nothing older than `pods.created_at`; SIEM-SCOPE #112).
 3. The portal's Scenario 09 SIEM pane polls that endpoint every **15 s**
    (`POLL_MS` in `siemAlertQuery.ts`), skips polling while the tab is hidden,
    and offers rule / agent / severity filters on the fetched rows.
@@ -293,6 +294,59 @@ student pod (`MAX_PODS=1`) on this profile.
 **Do not** install the Indexer or Dashboard on the 12 GiB profile. The
 `WAZUH_DASHBOARD_PUBLIC_URL` path in `lab_proxy.py` exists only for a larger
 host. Leave it unset here.
+
+---
+
+## Issue 14: Rule 5710 missing from the Scenario 09 SIEM pane (SIEM-SCOPE #112)
+
+**Symptom:** A student runs Task 0 (`ssh nosuchuser@$TARGET_META` from Kali),
+waits a couple of minutes, and the SIEM pane has no rule `5710` row. Or the
+pane shows 5710 and 510 rows on a pod that was created seconds ago.
+
+**Fixed in code (#112):**
+
+- **Alerts from a previous pod.** When a student re-provisions, the Wazuh agent
+  re-enrolls with a new ID but the same name (`pod-<student>-meta`). The alerts
+  endpoint matched on ID *or* name within a 240-minute window, so a fresh pod
+  showed the old pod's alerts, including an old 5710. The endpoint and the
+  advisory `detection_score` check now ignore anything older than
+  `pods.created_at`. A 5710 in the pane is now always from the current pod.
+- **`detection_score` stopped reading early.** `score_verifier.verify_siem_alert()`
+  read `alerts.json` from the **start** and gave up after 64 MiB. Once the file
+  grew past that (e.g. during the rule `1007` disk-full flood), the newest
+  alerts were never checked and 09 M1 detection stayed `0`. It now keeps the
+  newest 64 MiB, like the SIEM pane's reader already did. This was found by
+  reading the code, not seen on a live pod.
+
+**Still to confirm on a live pod.** Walk the chain in order and note where 5710
+stops appearing:
+
+```bash
+# 1. meta logged the attempt (sshd writes "Invalid user" before any password prompt)
+lxc exec pod-<student>-meta -- grep "Invalid user nosuchuser" /var/log/auth.log | tail -3
+#    empty? check sshd is up and rsyslog is writing auth.log:
+lxc exec pod-<student>-meta -- systemctl is-active ssh rsyslog
+
+# 2. the agent reads auth.log and is connected
+lxc exec pod-<student>-meta -- grep -A2 "<localfile>" /var/ossec/etc/ossec.conf | grep auth.log
+lxc exec pod-<student>-meta -- grep -i "connected to the server" /var/ossec/logs/ossec.log | tail -1
+
+# 3. the manager raised 5710 for that agent
+lxc exec wazuh-manager -- grep '"id":"5710"' /var/ossec/logs/alerts/alerts.json | grep "pod-<student>-meta" | tail -2
+
+# 4. the API returns it (Scenario 09 pod, owner's token)
+curl -s -H "Authorization: Bearer $TOKEN" "http://<api>/pods/<pod_id>/alerts?rule_id=5710" | head -c 400
+```
+
+| Stops at | Likely cause | Action |
+|---|---|---|
+| 1 | Task 0 never reached meta's sshd (wrong `$TARGET_META`, sshd down) or rsyslog not installed on the golden | Fix Task 0 target / add rsyslog to the meta golden |
+| 2 | Agent `ossec.conf` has no `auth.log` localfile (auth.log didn't exist when the agent was baked) or agent not enrolled | Add the localfile in `bake_wazuh_agent.sh`; see Issue 7 for enrolment |
+| 3 | Decoder/rule did not match this sshd's log line | Record the exact line; check it with `wazuh-logtest` on the manager |
+| 4 | Alert is older than the pod (expected after #112), or buried under more than 200 CIS/SCA rows | Tick **Rule 5710 only** (server-side filter) |
+
+**Root cause for the live case:** pending the Scenario 09 run by the review
+partner. Record the step where 5710 stops and the matching row above here.
 
 ---
 

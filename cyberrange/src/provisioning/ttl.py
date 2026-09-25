@@ -37,6 +37,31 @@ def _try_parse(created_at: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def created_at_utc(created_at: Optional[str]) -> Optional[datetime]:
+    """Parsed pods.created_at (UTC), or None when missing or unparseable."""
+    return _try_parse(created_at)
+
+
+def minutes_since_created(
+    created_at: Optional[str],
+    cap_minutes: int,
+    now: Optional[datetime] = None,
+) -> int:
+    """SIEM look-back for one pod: whole minutes since created_at, capped.
+
+    Rounds up so an alert raised in the pod's first seconds is never cut off.
+    Falls back to cap_minutes when created_at is missing or unparseable.
+    """
+    created = _try_parse(created_at)
+    if created is None:
+        return cap_minutes
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    elapsed = (now - created).total_seconds()
+    return max(1, min(cap_minutes, -(-int(elapsed) // 60)))
+
+
 def ttl_seconds_remaining(
     created_at: Optional[str],
     now: Optional[datetime] = None,
