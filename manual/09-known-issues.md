@@ -259,6 +259,43 @@ Chapter 01 path B. Operator HTML guide phase M has the steps.
 
 ---
 
+## Issue 13: No Wazuh Dashboard or Indexer (12 GiB manager-only)
+
+**Symptom:** There is no Wazuh Dashboard URL to open. The portal's SIEM access
+panel shows the in-portal alert table (`SiemAlertViewer`), not an "Open SIEM in
+new tab" button.
+
+**Root Cause:** Not a fault. It's a sizing constraint. The 12 GiB OCI host
+profile runs Wazuh **manager-only** (Chapter 02, Step 4): no Wazuh Indexer, no
+Wazuh Dashboard, no Filebeat. Those components are what make a Wazuh install
+large, and they do not fit alongside the gateway, Keycloak, the portal and a
+student pod (`MAX_PODS=1`) on this profile.
+
+**How alerts reach students instead:**
+
+1. Agents on `pod-<student>-meta` / `pod-<student>-dvwa` report to the manager
+   at `10.0.40.10`.
+2. `GET /pods/{pod_id}/alerts` (`alerts_endpoint.py` → `alerts_reader.py`) tails
+   the manager's `alerts.json`, scoped to that student's agents.
+3. The portal's Scenario 09 SIEM pane polls that endpoint every **15 s**
+   (`POLL_MS` in `siemAlertQuery.ts`), skips polling while the tab is hidden,
+   and offers rule / agent / severity filters on the fetched rows.
+
+**Limits that follow from this:**
+
+- No Dashboard search, saved queries, or visualisations. Filtering is limited
+  to rule ID, agent and severity over the most recent 200 alerts in the query
+  window.
+- Detection is mapped for Scenario 09 Milestone 1 only (rule `5710`). Apache
+  web-rule correlation for Scenario 06 is deferred (see `wazuh_rule_map.py`).
+- `detection_score` is advisory and never gates PASS/FAIL.
+
+**Do not** install the Indexer or Dashboard on the 12 GiB profile. The
+`WAZUH_DASHBOARD_PUBLIC_URL` path in `lab_proxy.py` exists only for a larger
+host. Leave it unset here.
+
+---
+
 ## Troubleshooting Workflow
 
 If a component fails:

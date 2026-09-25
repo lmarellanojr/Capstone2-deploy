@@ -19,7 +19,8 @@
 You create your own alert activity, then triage it. There is **no** required instructor “30-alert dump.”
 
 1. **Kali tab** — run the noise steps below.  
-2. **Open SIEM** — in-portal table showing live Wazuh events. After Task 0, wait 1–2 minutes and click **Refresh**. The table displays real events from Wazuh **grouped by rule** (Count, Last seen, Rule, Agent, Lvl, Description). Click a group to expand events; click an expanded row to copy its timestamp and rule ID.  
+2. **Open SIEM** — in-portal table showing live Wazuh events. It refreshes itself every 15 seconds (paused while the browser tab is hidden); **Refresh** fetches immediately. After Task 0, alerts usually appear within 1–2 minutes. The table displays real events from Wazuh **grouped by rule** (Count, Last seen, Rule, Agent, Lvl, Description). Click a group to expand events; click an expanded row to copy its timestamp and rule ID. Use the **rule**, **agent** and **severity** filters to narrow the table; **Clear filters** returns to all rows.  
+   The lab runs Wazuh in **manager-only** mode: there is no Wazuh Dashboard or Indexer on the 12 GiB host, so this table is the SIEM view.  
    Rule **5710** (failed SSH login) is optional. CIS/SCA rows (agent config scans: 19007, 19008, 19004) appear as noise. **Rule 510** (rootcheck, often LXD hidden files) may fire automatically. Rule **1007** (filesystem full) is API-hidden and won’t clutter the window.  
    If alerts don’t appear or manager is unavailable, use the **template files** on meta and triage from command output (scoring still PASSes).  
 3. **Meta tab** — write the scored artifact files (paths below). Scoring runs **on meta**.
@@ -39,9 +40,9 @@ nmap -sn $TARGET_META
 nmap -F $TARGET_META
 ```
 
-Wait 1–2 minutes. Click **Open SIEM** and **Refresh**. 
+Click **Open SIEM**. New alerts appear within about 15 seconds of reaching the manager (usually 1–2 minutes after the command). 
 
-The table is **grouped by rule** (count + last seen). **5710** (failed SSH) should appear and is your primary signal. CIS Ubuntu / SCA scans (rules 19007, 19008, 19004) appear as noise; **Rule 510** (rootcheck) may also fire. Click a group to expand events. Click an expanded row to copy timestamp + rule ID. **Raw events** shows the flat log view. If 5710 is missing, re-run the SSH command, wait 1–2 minutes, Refresh. nmap (`-sn` or `-F`) usually does **not** create a Wazuh detection row.
+The table is **grouped by rule** (count + last seen). **5710** (failed SSH) should appear and is your primary signal. CIS Ubuntu / SCA scans (rules 19007, 19008, 19004) appear as noise; **Rule 510** (rootcheck) may also fire. Click a group to expand events. Click an expanded row to copy timestamp + rule ID. **Raw events** shows the flat log view. Set the agent filter to your `pod-<you>-meta` agent to separate your events. If 5710 is missing, re-run the SSH command and wait 1–2 minutes. nmap (`-sn` or `-F`) usually does **not** create a Wazuh detection row.
 
 <details>
 <summary>Hint</summary>
@@ -150,7 +151,7 @@ Expand each section until the file is clearly longer than a tweet.
 | Symptom | Fix |
 |---|---|
 | Manual Check FAIL | Files written on **Kali** — move them to **meta** |
-| Empty SIEM table (no 5710) | Re-run Task 0 SSH; wait 1–2 min; click Refresh. If still empty, use templates (scoring PASSes). Rule 5710 is optional; CIS/SCA and Rule 510 may appear instead. |
+| Empty SIEM table (no 5710) | Re-run Task 0 SSH; wait 1–2 min (the table auto-refreshes every 15s). If it says "No alerts match …", click **Clear filters**. If still empty, use templates (scoring PASSes). Rule 5710 is optional; CIS/SCA and Rule 510 may appear instead. |
 | Seeing many CIS/SCA rows (19007, 19008, 19004) | These are agent config scans (noise to classify). Focus on **5710** (failed SSH) or **510** (rootcheck) as true positives. |
 | nmap is not creating alerts | Correct—nmap `-sn` / `-F` usually does **not** create Wazuh rows. It is not a primary detection signal. |
 | Shared SIEM (multi-student) | Only trust agents named with **your** student/pod id (e.g., `pod-alice-meta`). Manager IP is `10.0.40.10`. |
