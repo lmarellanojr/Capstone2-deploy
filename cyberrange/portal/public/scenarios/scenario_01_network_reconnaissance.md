@@ -126,8 +126,10 @@ whoami
 
 **Done when:** Shell context is `tomcat` (e.g. `uid=…(tomcat)`).
 
-**Then:** Run `exit` in the session - Manual Check reads Metasploit history,
-so it will fail on this milestone until this command is actually run.
+**Then:** Keep the session open and click **Manual Check** for Milestone 4.
+The check confirms that the Tomcat deployment module opened a live session to
+this pod's meta target. Selecting the module or running a failed exploit is not
+enough. Do not exit the session until the check passes.
 
 ```text
 exit
@@ -137,7 +139,9 @@ exit
 <summary>Hint</summary>
 
 Debian Tomcat uses **`/manager/text`** - without `set PATH /manager/text` the exploit fails.  
-If Manual Check fails after a working shell, run one more msf command or exit `msfconsole` cleanly, then re-check.
+If Manual Check fails, confirm that the session is still open and connected to
+the displayed Meta IP, then retry Manual Check. A command-history entry alone
+does not count as a successful exploit.
 
 </details>
 

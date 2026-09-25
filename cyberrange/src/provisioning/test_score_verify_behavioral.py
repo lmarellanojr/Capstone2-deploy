@@ -842,6 +842,117 @@ class TestScoringChecksDirectBashExecution:
             log_text = log_file.read_text()
             assert "WARN: no IPv4 on eth0" not in log_text
 
+    def _scenario_01_m4_env(self, tmp_path, pane_output, socket_output, pane_info="4100|ruby", msf_pid="4242"):
+        """Build isolated live-session fixtures; production evidence paths are not read."""
+        import subprocess
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub_ip = bin_dir / "ip"
+        stub_ip.write_text(
+            "#!/bin/bash\n"
+            "echo '2: eth0    inet 10.0.51.100/24 brd 10.0.51.255 scope global eth0'\n"
+        )
+        subprocess.run([_BASH_EXE, "-c", f"chmod +x '{stub_ip.as_posix()}'"], check=True)
+
+        pane_info_file = tmp_path / "pane-info.txt"
+        pane_output_file = tmp_path / "pane-output.txt"
+        socket_output_file = tmp_path / "socket-output.txt"
+        pane_info_file.write_text(pane_info)
+        pane_output_file.write_text(pane_output)
+        socket_output_file.write_text(socket_output)
+        return {
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "SCORING_TEST_MODE": "1",
+            "SCORING_TEST_PANE_INFO_FILE": pane_info_file.as_posix(),
+            "SCORING_TEST_PANE_OUTPUT_FILE": pane_output_file.as_posix(),
+            "SCORING_TEST_SOCKET_OUTPUT_FILE": socket_output_file.as_posix(),
+            "SCORING_TEST_MSF_PID": msf_pid,
+            "SCORING_TEST_MSF_CMDLINE": "/usr/bin/ruby /usr/bin/msfconsole -q",
+        }
+
+    def test_direct_bash_scenario_01_m4_history_only_fails(self, tmp_path):
+        """A failed exploit attempt/module history cannot satisfy M4."""
+        history = tmp_path / ".bash_history"
+        history.write_text("use exploit/multi/http/tomcat_mgr_deploy\nrun\n")
+        env = self._scenario_01_m4_env(tmp_path, "", "")
+        env["HOME"] = tmp_path.as_posix()
+        rc, token, stderr = self._run_script(1, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL", stderr
+
+    def test_direct_bash_scenario_01_m4_live_tomcat_session_passes(self, tmp_path):
+        pane = (
+            "msf6 exploit(multi/http/tomcat_mgr_deploy) > run\n"
+            "[*] Meterpreter session 1 opened (10.0.51.10:4444 -> 10.0.51.20:49152)\n"
+        )
+        sockets = 'ESTAB 0 0 10.0.51.10:4444 10.0.51.20:49152 users:(("ruby",pid=4242,fd=12))\n'
+        env = self._scenario_01_m4_env(tmp_path, pane, sockets)
+        rc, token, stderr = self._run_script(1, 4, env=env)
+        assert rc == 0
+        assert token == "PASS", stderr
+
+    @pytest.mark.parametrize(
+        "pane,sockets,pane_info",
+        [
+            pytest.param(
+                "msf6 exploit(multi/http/tomcat_mgr_deploy) > run\nExploit completed, but no session was created.\n",
+                'ESTAB 0 0 10.0.51.10:4444 10.0.51.20:49152 users:(("ruby",pid=4242,fd=12))\n',
+                "4100|ruby",
+                id="same-target-no-session",
+            ),
+            pytest.param(
+                "msf6 exploit/multi/handler > run\n[*] Meterpreter session 2 opened (10.0.51.10:4444 -> 10.0.51.20:49152)\n",
+                'ESTAB 0 0 10.0.51.10:4444 10.0.51.20:49152 users:(("ruby",pid=4242,fd=12))\n',
+                "4100|ruby",
+                id="different-module",
+            ),
+            pytest.param(
+                "msf6 exploit(multi/http/tomcat_mgr_deploy) > run\n[*] Meterpreter session 1 opened (10.0.51.10:4444 -> 10.0.52.20:49152)\n",
+                'ESTAB 0 0 10.0.51.10:4444 10.0.52.20:49152 users:(("ruby",pid=4242,fd=12))\n',
+                "4100|ruby",
+                id="unrelated-target",
+            ),
+            pytest.param(
+                "msf6 exploit(multi/http/tomcat_mgr_deploy) > run\n[*] Meterpreter session 1 opened (10.0.51.10:4444 -> 10.0.51.20:49152)\n",
+                'ESTAB 0 0 10.0.51.10:4444 10.0.51.20:8180 users:(("ruby",pid=4242,fd=12))\n',
+                "4100|ruby",
+                id="same-target-wrong-session-port",
+            ),
+            pytest.param(
+                "msf6 exploit(multi/http/tomcat_mgr_deploy) > run\n[*] Command shell session 3 opened (10.0.51.10:4444 -> 10.0.51.20:49152)\n",
+                'ESTAB 0 0 10.0.51.10:4444 10.0.51.20:49152 users:(("nc",pid=9999,fd=3))\n',
+                "4100|ruby",
+                id="wrong-process-owner",
+            ),
+            pytest.param(
+                "msf6 exploit(multi/http/tomcat_mgr_deploy) > run\n[*] Meterpreter session 1 opened (10.0.51.10:4444 -> 10.0.51.20:49152)\n",
+                'ESTAB 0 0 10.0.51.10:4444 10.0.51.20:49152 users:(("ruby",pid=4242,fd=12))\n',
+                "4100|bash",
+                id="pane-not-metasploit",
+            ),
+        ],
+    )
+    def test_direct_bash_scenario_01_m4_rejects_uncorrelated_evidence(
+        self, tmp_path, pane, sockets, pane_info
+    ):
+        env = self._scenario_01_m4_env(tmp_path, pane, sockets, pane_info=pane_info)
+        rc, token, stderr = self._run_script(1, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL", stderr
+
+    def test_direct_bash_scenario_01_m4_forged_transcript_file_fails(self, tmp_path):
+        """A standalone writable success string is not part of the evidence contract."""
+        (tmp_path / "msfconsole.log").write_text(
+            "msf6 exploit(multi/http/tomcat_mgr_deploy) > run\n"
+            "[*] Meterpreter session 9 opened (10.0.51.10:4444 -> 10.0.51.20:49152)\n"
+        )
+        env = self._scenario_01_m4_env(tmp_path, "", "")
+        env["HOME"] = tmp_path.as_posix()
+        rc, token, stderr = self._run_script(1, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL", stderr
+
     def test_direct_bash_scenario_11_m1_history_pass(self, tmp_path):
         """Scenario 11 M1: seeded history with tomcat-users inspect → PASS."""
         history = tmp_path / ".bash_history"
