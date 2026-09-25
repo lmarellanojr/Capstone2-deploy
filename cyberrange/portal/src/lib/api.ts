@@ -365,6 +365,7 @@ export const instructor = {
       status: 'APPROVED' | 'REJECTED' | 'RETRY'
       score?: number | null
       feedback?: string | null
+      expected_status?: string | null
     }
   ): Promise<{ status: string; review_id: number; decision: string }> => {
     const response = await apiClient.post(

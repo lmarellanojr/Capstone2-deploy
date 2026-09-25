@@ -65,6 +65,7 @@ class ReviewResolveRequest(BaseModel):
     status: str
     score: Optional[int] = None
     feedback: Optional[str] = None
+    expected_status: Optional[str] = None
 
 
 class ReviewResolveResponse(BaseModel):

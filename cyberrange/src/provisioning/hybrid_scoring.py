@@ -14,6 +14,11 @@ import scoring_state
 
 logger = logging.getLogger("provision_api")
 
+# Shared student-facing incomplete copy (Cases 2/3/4 + already-passed invalid flag).
+_INCOMPLETE_MESSAGE = (
+    "Milestone incomplete: Neither the submitted flag nor container state satisfied rubric criteria."
+)
+
 
 @dataclass
 class HybridScoreResult:
@@ -35,6 +40,10 @@ async def _check_container_state(
     active_pod: Optional[dict] = None,
 ) -> Tuple[bool, Optional[int]]:
     """Determine whether the milestone's container state is verified as PASS.
+
+    Live verifier PASS is an in-memory decision only — this helper does not INSERT
+    into milestone_verification. Durable PASS inserts remain in Case 1 and in
+    instructor APPROVE of SCORING_CONFLICT.
 
     Returns:
         (state_pass, pod_id)
@@ -79,16 +88,6 @@ async def _check_container_state(
                 )
                 if status_res == "PASS":
                     pod_id = pod.get("pod_id", 0)
-                    # Persist the newly corroborated pass in milestone_verification
-                    with conn:
-                        conn.execute(
-                            """
-                            INSERT INTO milestone_verification
-                            (pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data)
-                            VALUES (?, ?, ?, ?, 'PASS', 0, 'corroborated_live_check')
-                            """,
-                            (pod_id, student_id, scenario_id, milestone_id),
-                        )
                     return True, pod_id
             except Exception as e:
                 logger.warning(f"Error checking live container state for pod {pod.get('pod_id')}: {e}")
@@ -181,9 +180,12 @@ async def evaluate_hybrid_submission(
     """Execute the 3-outcome hybrid scoring state machine.
 
     1. Flag + State agree -> PASS (marks milestone_verification PASS)
-    2. Flag without State -> ESCALATE (routes to review_cases as SCORING_CONFLICT)
-    3. State without Flag -> ESCALATE (routes to review_cases as SCORING_CONFLICT)
+    2. Flag without State -> server-side escalate to SCORING_CONFLICT; student sees INCOMPLETE
+    3. State without Flag -> INCOMPLETE (no review case; state alone does not grant credit)
     4. Neither -> INCOMPLETE (no review case created)
+
+    HybridScoreResult.outcome retains Literal "ESCALATED" for compatibility; student-visible
+    ESCALATED is unused by Case 2/3. Case 2 still escalates server-side while returning INCOMPLETE.
     """
     flag_valid, rubric = validate_flag(conn, scenario_id, milestone_id, submitted_flag)
     if not rubric:
@@ -204,14 +206,14 @@ async def evaluate_hybrid_submission(
     ).fetchone()
 
     if already_passed_row and not flag_valid:
-        # Finding #2: If the milestone is already completed, submitting an invalid flag
-        # or typo does NOT open a conflict case for instructors to review.
+        # Finding #2: already-passed + invalid flag does not escalate; same incomplete copy
+        # as Case 4 so second typos after PASS are not a progress oracle.
         return HybridScoreResult(
             outcome="INCOMPLETE",
             status="INCOMPLETE",
             scenario_id=scenario_id,
             milestone_id=milestone_id,
-            message="Milestone already verified, but submitted flag did not match rubric criteria.",
+            message=_INCOMPLETE_MESSAGE,
             review_id=None,
             verified_at=now_iso,
             rubric_criteria=rubric_criteria,
@@ -252,29 +254,20 @@ async def evaluate_hybrid_submission(
                     (target_pod_id, student_id, scenario_id, milestone_id),
                 )
 
-            # If there was a pending conflict case, collect IDs and auto-resolve it
-            pending_rows = conn.execute(
+            # Auto-resolve pending conflicts; RETURNING only IDs actually updated
+            cur = conn.execute(
                 """
-                SELECT review_id FROM review_cases
+                UPDATE review_cases
+                SET status='APPROVED', score=100, graded_by='SYSTEM_HYBRID',
+                    feedback='Corroborated by automated flag and container state agreement',
+                    updated_at=CURRENT_TIMESTAMP
                 WHERE student_id=? AND scenario_id=? AND milestone_id=?
                   AND case_type='SCORING_CONFLICT' AND status='PENDING'
+                RETURNING review_id
                 """,
                 (student_id, scenario_id, milestone_id),
-            ).fetchall()
-            auto_resolved_review_ids = [r["review_id"] for r in pending_rows]
-
-            if auto_resolved_review_ids:
-                conn.execute(
-                    """
-                    UPDATE review_cases
-                    SET status='APPROVED', score=100, graded_by='SYSTEM_HYBRID',
-                        feedback='Corroborated by automated flag and container state agreement',
-                        updated_at=CURRENT_TIMESTAMP
-                    WHERE student_id=? AND scenario_id=? AND milestone_id=?
-                      AND case_type='SCORING_CONFLICT' AND status='PENDING'
-                    """,
-                    (student_id, scenario_id, milestone_id),
-                )
+            )
+            auto_resolved_review_ids = [r["review_id"] for r in cur.fetchall()]
 
         log_event(
             "HYBRID_SCORE_PASS",
@@ -283,7 +276,7 @@ async def evaluate_hybrid_submission(
             detail=f"Scenario {scenario_id}, Milestone {milestone_id}: Flag and state corroborated.",
         )
 
-        # Finding #4: Log REVIEW_CASE_RESOLVED event for each auto-resolved review case
+        # Finding #4: Log REVIEW_CASE_RESOLVED only for IDs returned by UPDATE
         for r_id in auto_resolved_review_ids:
             try:
                 log_event(
@@ -339,40 +332,31 @@ async def evaluate_hybrid_submission(
             status="INCOMPLETE",
             scenario_id=scenario_id,
             milestone_id=milestone_id,
-            message="Milestone incomplete: Neither the submitted flag nor container state satisfied rubric criteria.",
+            message=_INCOMPLETE_MESSAGE,
             review_id=None,
             verified_at=now_iso,
             rubric_criteria=rubric_criteria,
         )
 
-    # Case 3: State without Flag -> ESCALATE
+    # Case 3: State without Flag -> INCOMPLETE (no escalate; no credit from state alone)
     if not flag_valid and state_pass:
-        conflict_reason = "Automated container state passed but invalid or incorrect flag submitted."
-        evidence = {
-            "submitted_flag_preview": masked_preview,
-            "flag_valid": False,
-            "state_status": "PASS",
-            "rubric_name": rubric_name,
-            "timestamp": now_iso,
-        }
-        review_id = _escalate_conflict(
-            conn, student_id, scenario_id, milestone_id, conflict_reason, evidence
-        )
-
         log_event(
-            "HYBRID_SCORE_ESCALATED",
+            "HYBRID_SCORE_INCOMPLETE",
             student_id=student_id,
-            result="ESCALATED",
-            detail=f"Scenario {scenario_id}, Milestone {milestone_id}: State passed without valid flag (review_id={review_id}).",
+            result="INCOMPLETE",
+            detail=(
+                f"Scenario {scenario_id}, Milestone {milestone_id}: "
+                "Container state signal without valid flag; no credit, no escalate."
+            ),
         )
 
         return HybridScoreResult(
-            outcome="ESCALATED",
-            status="ESCALATED",
+            outcome="INCOMPLETE",
+            status="INCOMPLETE",
             scenario_id=scenario_id,
             milestone_id=milestone_id,
-            message="Scoring conflict: Container state verified, but submitted flag was invalid. Escalated to instructor review queue.",
-            review_id=review_id,
+            message=_INCOMPLETE_MESSAGE,
+            review_id=None,
             verified_at=now_iso,
             rubric_criteria=rubric_criteria,
         )
@@ -390,9 +374,8 @@ async def evaluate_hybrid_submission(
         status="INCOMPLETE",
         scenario_id=scenario_id,
         milestone_id=milestone_id,
-        message="Milestone incomplete: Neither the submitted flag nor container state satisfied rubric criteria.",
+        message=_INCOMPLETE_MESSAGE,
         review_id=None,
         verified_at=now_iso,
         rubric_criteria=rubric_criteria,
     )
-

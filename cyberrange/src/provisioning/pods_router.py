@@ -506,9 +506,12 @@ async def submit_milestone_flag(
 
     Evaluates the 3-outcome state machine:
     - Flag + State agree -> PASS
-    - Flag without State -> ESCALATE (to review_cases)
-    - State without Flag -> ESCALATE (to review_cases)
+    - Flag without State -> server-side escalate; student sees INCOMPLETE (no review_id)
+    - State without Flag -> INCOMPLETE (no escalate; state alone does not grant credit)
     - Neither -> INCOMPLETE
+
+    Student-visible outcome ESCALATED is unused by Case 2/3; FlagSubmissionResponse
+    keeps the Literal for compatibility. Case 2 still escalates server-side.
     """
     student_id = caller_identity(claims, None)
     if not student_id:
@@ -982,6 +985,17 @@ def resolve_student_review(
             detail="Invalid status: must be one of ('APPROVED', 'REJECTED', 'RETRY')",
         )
 
+    # expected_status is CAS versioning: None = legacy first-resolve (PENDING/RETRY only).
+    # Any provided value (including "") is treated as client-supplied and validated.
+    expected_status = None
+    if body.expected_status is not None:
+        expected_status = body.expected_status.strip().upper()
+        if expected_status not in {"PENDING", "APPROVED", "REJECTED", "RETRY"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid expected_status: must be one of ('PENDING', 'APPROVED', 'REJECTED', 'RETRY')",
+            )
+
     final_score = body.score
     if final_score is not None:
         if not isinstance(final_score, int) or final_score < 0 or final_score > 100:
@@ -1021,12 +1035,20 @@ def resolve_student_review(
             student_id = row["student_id"]
             scenario_id = row["scenario_id"]
             milestone_id = row["milestone_id"]
-            cur = conn.execute(
-                "UPDATE review_cases "
-                "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE review_id = ? AND status IN ('PENDING', 'RETRY')",
-                (clean_status, final_score, clean_feedback, grader, review_id),
-            )
+            if expected_status is not None:
+                cur = conn.execute(
+                    "UPDATE review_cases "
+                    "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE review_id = ? AND status = ?",
+                    (clean_status, final_score, clean_feedback, grader, review_id, expected_status),
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE review_cases "
+                    "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE review_id = ? AND status IN ('PENDING', 'RETRY')",
+                    (clean_status, final_score, clean_feedback, grader, review_id),
+                )
             if cur.rowcount == 0:
                 check_row = conn.execute(
                     "SELECT status FROM review_cases WHERE review_id = ?",
@@ -1175,6 +1197,19 @@ def resubmit_student_review(
             if row["student_id"] != caller:
                 raise HTTPException(status_code=404, detail="Review case not found")
 
+            # SCORING_CONFLICT is staff-only; 404 before status branch (no 400 oracle)
+            case_row = conn.execute(
+                "SELECT case_type FROM review_cases WHERE review_id=?",
+                (review_id,),
+            ).fetchone()
+            case_type = (
+                case_row["case_type"]
+                if case_row and "case_type" in case_row.keys()
+                else "WRITTEN_REPORT"
+            )
+            if case_type == "SCORING_CONFLICT":
+                raise HTTPException(status_code=404, detail="Review case not found")
+
             if row["status"] != "RETRY":
                 raise HTTPException(
                     status_code=400,
@@ -1244,8 +1279,13 @@ def get_review_detail(
         if not row:
             raise HTTPException(status_code=404, detail="Review case not found")
 
-        if not is_staff and row["student_id"] != caller:
-            raise HTTPException(status_code=404, detail="Review case not found")
+        if not is_staff:
+            if row["student_id"] != caller:
+                raise HTTPException(status_code=404, detail="Review case not found")
+            # SCORING_CONFLICT is never student-visible (any status)
+            case_type = row["case_type"] if "case_type" in row.keys() else "WRITTEN_REPORT"
+            if case_type == "SCORING_CONFLICT":
+                raise HTTPException(status_code=404, detail="Review case not found")
 
         return dict(row)
     finally:

@@ -43,7 +43,7 @@ from rubrics import (
     validate_flag,
 )
 import scoring_state
-from hybrid_scoring import _resolve_pod_id_for_student, evaluate_hybrid_submission
+from hybrid_scoring import _resolve_pod_id_for_student
 
 
 # ---------------------------------------------------------------------------
@@ -296,30 +296,15 @@ def test_state_machine_outcome_escalate_flag_without_state(client, hybrid_db: st
     conn.close()
 
 
-def test_state_machine_outcome_escalate_state_without_flag(client, hybrid_db: str):
-    """Outcome 3 (ESCALATE): State PASS but invalid flag on unpassed milestone -> routes to review_cases."""
+def test_state_machine_outcome_state_without_flag_incomplete(client, hybrid_db: str):
+    """Outcome 3 (INCOMPLETE hygiene): live state PASS + invalid flag -> Case-4-identical incomplete.
+
+    No review case; no new milestone_verification PASS row from the live helper alone.
+    """
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
 
-    # Mock live container check passing for a student who has not passed yet
-    async def mock_live():
-        conn = db.get_db_connection()
-        try:
-            return await evaluate_hybrid_submission(
-                conn,
-                student_id=student,
-                scenario_id=1,
-                milestone_id=1,
-                submitted_flag="FLAG{INCORRECT_FLAG_VALUE}",
-                active_pod={"pod_id": 101, "status": "ACTIVE"},
-            )
-        finally:
-            conn.close()
-
-    # Instead of calling API where SCORING_ENABLED=False, we test state_without_flag by setting up
-    # a scenario where live container check is corroborated:
-    import scoring_state
     orig_scoring = scoring_state.SCORING_ENABLED
     orig_ssh = scoring_state.SSHVerifier
 
@@ -331,27 +316,50 @@ def test_state_machine_outcome_escalate_state_without_flag(client, hybrid_db: st
     scoring_state.SSHVerifier = StubVerifier
 
     try:
-        res = client.post(
+        res_case3 = client.post(
             "/progress/1/flag",
             json={"milestone_id": 1, "flag": "FLAG{INCORRECT_FLAG_VALUE}"},
         )
-        assert res.status_code == 200
-        data = res.json()
-        assert data["outcome"] == "ESCALATED"
-        assert data["status"] == "ESCALATED"
-        assert data["review_id"] is not None
+        assert res_case3.status_code == 200
+        data_case3 = res_case3.json()
+
+        # Case 4 baseline (scoring off so live stub is irrelevant): neither signal
+        scoring_state.SCORING_ENABLED = False
+        res_case4 = client.post(
+            "/progress/1/flag",
+            json={"milestone_id": 2, "flag": "FLAG{BOGUS_ATTEMPT}"},
+        )
+        assert res_case4.status_code == 200
+        data_case4 = res_case4.json()
+
+        for key in ("outcome", "status", "message", "review_id"):
+            assert data_case3[key] == data_case4[key]
+        assert data_case3["outcome"] == "INCOMPLETE"
+        assert data_case3["status"] == "INCOMPLETE"
+        assert data_case3["review_id"] is None
+        assert data_case3["message"] == (
+            "Milestone incomplete: Neither the submitted flag nor container state satisfied rubric criteria."
+        )
 
         conn = sqlite3.connect(hybrid_db)
-        conn.row_factory = sqlite3.Row
-        rev = conn.execute("SELECT * FROM review_cases WHERE review_id=?", (data["review_id"],)).fetchone()
-        assert rev is not None
-        assert rev["case_type"] == "SCORING_CONFLICT"
-        assert rev["status"] == "PENDING"
-        assert "container state passed" in rev["conflict_reason"].lower()
+        rev_count = conn.execute(
+            "SELECT COUNT(*) FROM review_cases WHERE student_id=? AND scenario_id=1 AND milestone_id=1",
+            (student,),
+        ).fetchone()[0]
+        assert rev_count == 0
+        mv_count = conn.execute(
+            "SELECT COUNT(*) FROM milestone_verification WHERE student_id=? AND scenario_id=1 AND milestone_id=1 AND status='PASS'",
+            (student,),
+        ).fetchone()[0]
+        assert mv_count == 0
+        live_tag = conn.execute(
+            "SELECT COUNT(*) FROM milestone_verification WHERE detection_data='corroborated_live_check'"
+        ).fetchone()[0]
+        assert live_tag == 0
         conn.close()
     finally:
         scoring_state.SCORING_ENABLED = orig_scoring
-        scoring_state.get_ssh_verifier_cls = orig_ssh
+        scoring_state.SSHVerifier = orig_ssh
 
 
 def test_state_machine_outcome_neither_incomplete(client, hybrid_db: str):
@@ -517,12 +525,12 @@ def test_flag_submit_cannot_impersonate_another_student(client, hybrid_db: str):
 
 
 def test_conflict_escalation_does_not_leak_expected_flag(client, hybrid_db: str):
-    """Anti Agent Zero-Leakage: Student reading GET /reviews/{id} must NOT see expected_flag."""
+    """SCORING_CONFLICT is staff-only: student GET 404; instructor sees evidence without expected_flag."""
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101)
 
-    # Trigger conflict
+    # Trigger Case 2 conflict (valid flag without state)
     client.post(
         "/progress/1/flag",
         json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
@@ -537,12 +545,20 @@ def test_conflict_escalation_does_not_leak_expected_flag(client, hybrid_db: str)
     assert rev_row is not None
     rev_id = rev_row[0]
 
-    # Student reads the review detail
+    # Student must not see SCORING_CONFLICT while PENDING
     rev_res = client.get(f"/reviews/{rev_id}")
-    assert rev_res.status_code == 200
-    rev_body = rev_res.text
-    # Canonical flag must NEVER appear in the response payload
-    assert "FLAG{S01_M1_7F8C2A1E9D4B}" not in rev_body
+    assert rev_res.status_code == 404
+
+    # Instructor GET remains full-fidelity for triage
+    set_caller(app, "instructor_lenie", "instructor")
+    inst_res = client.get(f"/instructor/reviews/{rev_id}")
+    assert inst_res.status_code == 200
+    inst_body = inst_res.json()
+    assert inst_body["case_type"] == "SCORING_CONFLICT"
+    assert "FLAG{S01_M1_7F8C2A1E9D4B}" not in inst_res.text
+    assert "expected_flag" not in inst_res.text
+    evidence = inst_body.get("evidence_data") or ""
+    assert "Flag valid" in inst_body.get("conflict_reason", "") or "flag_valid" in evidence
 
 
 def test_rubrics_endpoint_strips_expected_flag(client, hybrid_db: str):
@@ -678,7 +694,7 @@ def test_unverified_flag_submission_returns_identical_incomplete_response(client
 
 
 def test_already_passed_milestone_with_invalid_flag_does_not_escalate(client, hybrid_db: str):
-    """Finding #2: Submitting an invalid flag for an already-passed milestone returns INCOMPLETE and does not escalate."""
+    """Finding #2: Invalid flag after PASS returns generic incomplete (no progress oracle) and does not escalate."""
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
@@ -692,7 +708,9 @@ def test_already_passed_milestone_with_invalid_flag_does_not_escalate(client, hy
     assert res.status_code == 200
     data = res.json()
     assert data["outcome"] == "INCOMPLETE"
-    assert "already verified" in data["message"].lower()
+    assert data["message"] == (
+        "Milestone incomplete: Neither the submitted flag nor container state satisfied rubric criteria."
+    )
 
     # Confirm NO review case was opened in review_cases
     conn = sqlite3.connect(hybrid_db)
@@ -702,7 +720,7 @@ def test_already_passed_milestone_with_invalid_flag_does_not_escalate(client, hy
 
 
 def test_resolve_review_case_conflict_returns_409_if_already_resolved(client, hybrid_db: str):
-    """Finding #3: Instructor attempting to resolve a review case that is no longer PENDING returns 409 Conflict."""
+    """Finding #3: Stale expected_status=PENDING after auto-approve returns 409 Conflict."""
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
@@ -728,14 +746,141 @@ def test_resolve_review_case_conflict_returns_409_if_already_resolved(client, hy
     )
     assert res_pass.json()["outcome"] == "PASS"
 
-    # Instructor attempts to resolve the stale case (e.g. click Reject)
+    # Instructor attempts to resolve with stale client-rendered PENDING expectation
     set_caller(app, "instructor_lenie", "instructor")
     res_resolve = client.post(
         f"/instructor/reviews/{review_id}/resolve",
-        json={"status": "REJECTED", "feedback": "Too late"},
+        json={"status": "REJECTED", "feedback": "Too late", "expected_status": "PENDING"},
     )
     assert res_resolve.status_code == 409
     assert "no longer in pending status" in res_resolve.json()["detail"].lower()
+
+
+def test_resolve_expected_status_invalid_returns_400(client, hybrid_db: str):
+    """Garbage expected_status is rejected with 400 allow-list detail."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+    )
+    conn = sqlite3.connect(hybrid_db)
+    review_id = conn.execute(
+        "SELECT review_id FROM review_cases WHERE student_id=? AND status='PENDING'",
+        (student,),
+    ).fetchone()[0]
+    conn.close()
+
+    set_caller(app, "instructor_lenie", "instructor")
+    res = client.post(
+        f"/instructor/reviews/{review_id}/resolve",
+        json={"status": "APPROVED", "expected_status": "BOGUS"},
+    )
+    assert res.status_code == 400
+    assert "expected_status" in res.json()["detail"].lower()
+
+
+def test_resolve_regrade_approved_to_rejected_with_expected_status(client, hybrid_db: str):
+    """APPROVED -> REJECTED with matching expected_status succeeds (review status only; no clawback claim)."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+    )
+    conn = sqlite3.connect(hybrid_db)
+    review_id = conn.execute(
+        "SELECT review_id FROM review_cases WHERE student_id=? AND status='PENDING'",
+        (student,),
+    ).fetchone()[0]
+    conn.close()
+
+    set_caller(app, "instructor_lenie", "instructor")
+    res_approve = client.post(
+        f"/instructor/reviews/{review_id}/resolve",
+        json={"status": "APPROVED", "expected_status": "PENDING"},
+    )
+    assert res_approve.status_code == 200
+
+    res_reject = client.post(
+        f"/instructor/reviews/{review_id}/resolve",
+        json={"status": "REJECTED", "expected_status": "APPROVED", "feedback": "Re-grade after oral defense"},
+    )
+    assert res_reject.status_code == 200
+    assert res_reject.json()["decision"] == "REJECTED"
+
+    detail = client.get(f"/instructor/reviews/{review_id}").json()
+    assert detail["status"] == "REJECTED"
+
+
+def test_resolve_omit_expected_status_on_approved_returns_409(client, hybrid_db: str):
+    """Omitting expected_status on already APPROVED uses PENDING/RETRY IN clause -> 409."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+    )
+    conn = sqlite3.connect(hybrid_db)
+    review_id = conn.execute(
+        "SELECT review_id FROM review_cases WHERE student_id=? AND status='PENDING'",
+        (student,),
+    ).fetchone()[0]
+    conn.close()
+
+    set_caller(app, "instructor_lenie", "instructor")
+    assert client.post(
+        f"/instructor/reviews/{review_id}/resolve",
+        json={"status": "APPROVED", "expected_status": "PENDING"},
+    ).status_code == 200
+
+    res = client.post(
+        f"/instructor/reviews/{review_id}/resolve",
+        json={"status": "REJECTED", "feedback": "stale omit"},
+    )
+    assert res.status_code == 409
+
+
+def test_scoring_conflict_hidden_on_student_get_and_resubmit(client, hybrid_db: str):
+    """Wrong and right guesses: student GET/resubmit always 404 for SCORING_CONFLICT review id."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+
+    # Wrong guess: no conflict row
+    client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{WRONG_GUESS_TOKEN}"},
+    )
+    # Right guess: creates PENDING SCORING_CONFLICT invisible to student
+    client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+    )
+
+    conn = sqlite3.connect(hybrid_db)
+    rev_row = conn.execute(
+        "SELECT review_id FROM review_cases WHERE student_id=? AND case_type='SCORING_CONFLICT'",
+        (student,),
+    ).fetchone()
+    conn.close()
+    assert rev_row is not None
+    rev_id = rev_row[0]
+
+    assert client.get(f"/reviews/{rev_id}").status_code == 404
+    assert client.post(
+        f"/reviews/{rev_id}/resubmit",
+        json={"conflict_reason": "please reconsider"},
+    ).status_code == 404
+
+    # Staff still sees triage evidence including flag_valid
+    set_caller(app, "instructor_lenie", "instructor")
+    inst = client.get(f"/instructor/reviews/{rev_id}")
+    assert inst.status_code == 200
+    assert "flag_valid" in (inst.json().get("evidence_data") or "")
 
 
 def test_auto_approval_logs_review_case_resolved_event(client, hybrid_db: str):
@@ -795,7 +940,10 @@ def test_pod_resolution_never_borrows_other_scenario_pod(hybrid_db: str):
 
 
 def test_live_container_check_corroborates_pass_when_scoring_enabled(client, hybrid_db: str):
-    """Finding #6: When scoring is enabled and verifier returns PASS, writes corroborated_live_check."""
+    """Finding #6: Valid flag + stub live PASS -> Case 1 PASS with corroborated_hybrid_flag_state.
+
+    Live helper alone must not write corroborated_live_check rows.
+    """
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
@@ -819,7 +967,6 @@ def test_live_container_check_corroborates_pass_when_scoring_enabled(client, hyb
         data = res.json()
         assert data["outcome"] == "PASS"
 
-        # Check milestone_verification for 'corroborated_live_check'
         conn = sqlite3.connect(hybrid_db)
         conn.row_factory = sqlite3.Row
         mv = conn.execute(
@@ -828,7 +975,11 @@ def test_live_container_check_corroborates_pass_when_scoring_enabled(client, hyb
         ).fetchone()
         assert mv is not None
         assert mv["status"] == "PASS"
-        assert mv["detection_data"] == "corroborated_live_check"
+        assert mv["detection_data"] == "corroborated_hybrid_flag_state"
+        live_only = conn.execute(
+            "SELECT COUNT(*) AS c FROM milestone_verification WHERE detection_data='corroborated_live_check'"
+        ).fetchone()["c"]
+        assert live_only == 0
         conn.close()
     finally:
         scoring_state.SCORING_ENABLED = orig_scoring
