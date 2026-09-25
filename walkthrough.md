@@ -5,7 +5,7 @@
 - Branch: `feature/score-falsepos-gates`
 - GitHub issue: [#114](https://github.com/lmarellanojr/Capstone2-deploy/issues/114)
 - Related issue #96 remains closed and unchanged.
-- Commit: pending final independent audits.
+- Commit: `104de72` (`fix scoring false positives and completion gates`).
 
 ## Resolved requirements
 
