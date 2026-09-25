@@ -895,16 +895,21 @@ class TestScoringChecksDirectBashExecution:
         return text[start:text.index("\nEOF", start)] + "\n"
 
     def _score_s09_m2(self, files: Dict[str, str]) -> str:
-        paths = [Path("/tmp") / name for name in files]
+        # Write through bash, not pathlib: on Windows, Python's "/tmp" is C:\tmp
+        # while Git Bash (which runs the script) has its own /tmp.
+        import subprocess
         try:
-            for path, body in zip(paths, files.values()):
-                path.write_text(body, encoding="utf-8")
+            for name, body in files.items():
+                subprocess.run(
+                    [_BASH_EXE, "-c", f"mkdir -p /tmp && cat > '/tmp/{name}'"],
+                    input=body.encode("utf-8"), check=True,
+                )
             rc, token, stderr = self._run_script(9, 2)
             assert rc == 0, stderr
             return token
         finally:
-            for path in paths:
-                path.unlink(missing_ok=True)
+            rm = " ".join(f"'/tmp/{name}'" for name in files)
+            subprocess.run([_BASH_EXE, "-c", f"rm -f {rm}"])
 
     def test_direct_bash_scenario_09_m2_guide_timeline_template_fails(self):
         template = self._guide_heredoc("/home/msfadmin/incident_timeline.md")
