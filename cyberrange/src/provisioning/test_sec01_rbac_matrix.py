@@ -66,6 +66,19 @@ ANY_UUID = "00000000-0000-0000-0000-000000000001"
 ROUTE_POLICY = {
     ("GET", "/health"): (PUBLIC, "/health", None),
     ("GET", "/capacity"): (PUBLIC, "/capacity", None),
+    # Shared-secret portal callback (#109). No JWT; matrix sends the secret header.
+    ("POST", "/internal/browser-score"): (
+        PUBLIC,
+        "/internal/browser-score",
+        {
+            "student_id": "student_demo",
+            "pod_id": POD,
+            "scenario_id": 6,
+            "milestone_id": 1,
+            "label": "browser:sqli-m1",
+        },
+    ),
+
     ("POST", "/pods/provision"): (ANY_APP_ROLE, "/pods/provision", {"student_id": "ignored", "scenario_id": "01"}),
     ("GET", "/pods"): (ANY_APP_ROLE, "/pods", None),
     ("GET", "/pods/{pod_id}/status"): (ANY_APP_ROLE, f"/pods/{POD}/status", None),
@@ -112,6 +125,7 @@ def client(monkeypatch):
     monkeypatch.setattr("pods_router.get_lxd_free_mb", lambda: 10**6)
     monkeypatch.setattr("pods_router.perform_provisioning", lambda *a, **k: None)
     monkeypatch.setattr("pods_router.perform_destruction", lambda *a, **k: None)
+    monkeypatch.setenv("BROWSER_SCORE_SECRET", "sec01-matrix-secret")
     kc = FakeKeycloak()
     kc.add("admin_demo", "admin")
     app.dependency_overrides[keycloak_admin.get_client] = lambda: kc
@@ -145,6 +159,12 @@ def _insert_pod(pod_id, owner, status="DESTROYED"):
 
 def _request(client, method, url, body):
     kwargs = {"json": body} if body is not None else {}
+    if url == "/internal/browser-score":
+        kwargs["headers"] = {
+            "X-Browser-Score-Secret": os.environ.get(
+                "BROWSER_SCORE_SECRET", "sec01-matrix-secret"
+            )
+        }
     return client.request(method, url, **kwargs)
 
 

