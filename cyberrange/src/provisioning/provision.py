@@ -46,6 +46,30 @@ def vmids_for_pod(pod_id: int, student_id: str):
     }
 
 
+DEFAULT_WAZUH_MANAGER_IP = "10.0.40.10"
+
+
+def wazuh_manager_ip(client) -> str:
+    """Address agents enrol to: WAZUH_MANAGER_IP, else the manager's live mon-net IP.
+
+    The manager's eth0 comes from mon-net DHCP unless pinned (Manual 02, Step 4a),
+    so a host can hand it 10.0.40.2 instead of .10. A hardcoded .10 then leaves
+    every agent unenrolled and Scenario 09 with no alerts (SIEM-SCOPE #112).
+    """
+    configured = os.getenv("WAZUH_MANAGER_IP", "").strip()
+    if configured:
+        return configured
+    name = os.getenv("WAZUH_MANAGER_INSTANCE", "wazuh-manager")
+    try:
+        net = client.instances.get(name).state().network or {}
+        for addr in (net.get("eth0") or {}).get("addresses", []):
+            if addr.get("family") == "inet" and addr.get("scope") == "global":
+                return addr["address"]
+    except Exception as e:
+        logger.warning(f"wazuh manager IP lookup failed, using default: {e}")
+    return DEFAULT_WAZUH_MANAGER_IP
+
+
 def get_lxd_free_mb() -> Optional[float]:
     try:
         client = pylxd.Client(project=os.getenv("LXD_PROJECT", "default"))
@@ -257,9 +281,10 @@ write_files:
 
         agent_ids = {}
         try:
+            manager_ip = wazuh_manager_ip(client)
             for inst_name in (meta_name, dvwa_name):
                 inst = client.instances.get(inst_name)
-                inst.execute(["sed", "-i", "s/MANAGER_IP/10.0.40.10/g", "/var/ossec/etc/ossec.conf"])
+                inst.execute(["sed", "-i", f"s/MANAGER_IP/{manager_ip}/g", "/var/ossec/etc/ossec.conf"])
                 inst.execute(["systemctl", "enable", "wazuh-agent"])
                 inst.execute(["systemctl", "start", "wazuh-agent"])
             token = get_wazuh_token()
@@ -273,7 +298,7 @@ write_files:
                     break
                 time.sleep(5)
             wazuh_agent_id = json.dumps(agent_ids) if agent_ids else None
-            log_event("WAZUH_ENROLL_OK", student_id, pod_id, detail=f"agents={agent_ids}")
+            log_event("WAZUH_ENROLL_OK", student_id, pod_id, detail=f"manager={manager_ip} agents={agent_ids}")
         except Exception as e:
             logger.warning(f"Wazuh enroll skipped/failed: {e}")
             log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))

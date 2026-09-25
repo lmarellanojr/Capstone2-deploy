@@ -245,3 +245,58 @@ class TestVerifySiemAlertTail:
         monkeypatch.setattr(score_verifier.pylxd, "Client", _fake_client(data))
 
         assert score_verifier.verify_siem_alert("012", "5710", since_minutes=10) is False
+
+
+# ── provision.wazuh_manager_ip: agents enrol to the manager's real address ──
+
+class _FakeInstances:
+    def __init__(self, network=None, error=None):
+        self._network, self._error = network, error
+
+    def get(self, name):
+        if self._error:
+            raise self._error
+        network = self._network
+
+        class _State:
+            pass
+
+        class _Inst:
+            def state(self):
+                st = _State()
+                st.network = network
+                return st
+        return _Inst()
+
+
+class _FakeLxd:
+    def __init__(self, **kw):
+        self.instances = _FakeInstances(**kw)
+
+
+_MON_NET_DHCP = {
+    "eth0": {"addresses": [
+        {"family": "inet6", "address": "fd42::2", "scope": "global"},
+        {"family": "inet", "address": "10.0.40.2", "scope": "global"},
+    ]},
+    "lo": {"addresses": [{"family": "inet", "address": "127.0.0.1", "scope": "local"}]},
+}
+
+
+class TestWazuhManagerIp:
+    def test_uses_managers_live_eth0_address(self, monkeypatch):
+        """Live 2026-09-25: manager got 10.0.40.2 from DHCP; hardcoded .10 never enrolled."""
+        import provision
+        monkeypatch.delenv("WAZUH_MANAGER_IP", raising=False)
+        assert provision.wazuh_manager_ip(_FakeLxd(network=_MON_NET_DHCP)) == "10.0.40.2"
+
+    def test_env_override_wins(self, monkeypatch):
+        import provision
+        monkeypatch.setenv("WAZUH_MANAGER_IP", "10.0.40.50")
+        assert provision.wazuh_manager_ip(_FakeLxd(network=_MON_NET_DHCP)) == "10.0.40.50"
+
+    def test_falls_back_to_documented_default(self, monkeypatch):
+        import provision
+        monkeypatch.delenv("WAZUH_MANAGER_IP", raising=False)
+        assert provision.wazuh_manager_ip(_FakeLxd(error=RuntimeError("no manager"))) == "10.0.40.10"
+        assert provision.wazuh_manager_ip(_FakeLxd(network={})) == "10.0.40.10"
