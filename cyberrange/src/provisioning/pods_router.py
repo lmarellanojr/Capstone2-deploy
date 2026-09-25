@@ -77,6 +77,10 @@ def browser_score(
 ):
     expected = os.environ.get("BROWSER_SCORE_SECRET") or ""
     if not expected:
+        logger.warning(
+            "BROWSER_SCORE_SECRET is unset; POST /internal/browser-score returns 503. "
+            "Set the same value in env/.env and portal/.env.local."
+        )
         raise HTTPException(status_code=503, detail="Browser scoring is not configured")
     got = x_browser_score_secret or ""
     # Bytes compare: never raises on non-ASCII (str compare_digest would -> 500),

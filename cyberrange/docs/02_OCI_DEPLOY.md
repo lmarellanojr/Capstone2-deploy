@@ -30,6 +30,7 @@ Follow: C:\Capstone2-Deploy\manual\README.md
 | Chapter 03 | Golden images (kali, meta, dvwa) | `deploy/oci_build_goldens_arm64.sh`, `deploy/golden/phase3/kali_add_student.sh` |
 | Chapter 04 | systemd units (API, portal, bridge, keycloak, tunnel) | `deploy/systemd/` |
 | Chapter 05 | Provision API + Portal | `src/provisioning/`, `portal/` |
+| Chapter 05 / #109 | Scenario 06 browser scoring | Same `BROWSER_SCORE_SECRET` in `env/.env` (from `env/oci-12gib.env.example`) and `portal/.env.local` (from `portal/.env.local.example`). If unset, Open DVWA still loads but browser milestones are not recorded. |
 | Chapter 06 | Scoring (Wazuh integration) | `src/provisioning/alerts_*.py` |
 | Chapter 07 | Deployment + Cloudflare tunnel | `deploy/systemd/cloudflared.service`, `portal/.env.local.example` |
 | Chapter 08 | Verification checklist | N/A (manual checklist) |

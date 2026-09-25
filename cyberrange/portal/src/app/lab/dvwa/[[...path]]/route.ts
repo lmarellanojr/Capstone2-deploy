@@ -21,6 +21,9 @@ import { browserScoreLabel, detectBrowserMilestone } from '@/lib/dvwaScoreSignal
 
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://10.115.77.1:5000'
 
+/** Warn once per process when a real exploit is detected but scoring cannot run. */
+let warnedMissingBrowserScoreSecret = false
+
 try {
   new URL(API_URL)
 } catch {
@@ -194,6 +197,13 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
         : null
     const secret = process.env.BROWSER_SCORE_SECRET
     const studentName = session.user?.name
+    if (milestone && !secret && !warnedMissingBrowserScoreSecret) {
+      warnedMissingBrowserScoreSecret = true
+      console.warn(
+        'dvwa proxy: BROWSER_SCORE_SECRET is unset; browser milestone scoring is skipped. ' +
+          'Set the same value in portal/.env.local and the provision API env/.env.'
+      )
+    }
     if (milestone && secret && studentName) {
       const label = browserScoreLabel(milestone)
       // Long-running Node only. Do not move this route to the Edge runtime:
