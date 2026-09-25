@@ -180,13 +180,14 @@ function normalizeLabPath(path: string): string {
   return p.toLowerCase()
 }
 
-/** Scenario 06 only: home, login, security Low, SQL Injection, static. */
+/** Scenario 06 only: home, login, security Low, SQL Injection, Reflected XSS, static. */
 export function isAllowedDvwaLabPath(path: string): boolean {
   const p = normalizeLabPath(path)
   if (p === '/' || p === '/index.php' || p === '/login.php' || p === '/logout.php') return true
   if (p === '/security.php' || p === '/favicon.ico') return true
   if (p === '/dvwa' || p.startsWith('/dvwa/')) return true
   if (p === '/vulnerabilities/sqli' || p.startsWith('/vulnerabilities/sqli/')) return true
+  if (p === '/vulnerabilities/xss_r' || p.startsWith('/vulnerabilities/xss_r/')) return true
   return false
 }
 
@@ -205,8 +206,9 @@ export const DVWA_LAB_DENIED_HTML = `<!DOCTYPE html>
 <body>
 <p>This page is not part of Scenario 06.</p>
 <p>Use <a href="${DVWA_PREFIX}/">Home</a>,
-<a href="${DVWA_PREFIX}/security.php">DVWA Security (set Low)</a>, or
-<a href="${DVWA_PREFIX}/vulnerabilities/sqli/">SQL Injection</a>.</p>
+<a href="${DVWA_PREFIX}/security.php">DVWA Security (set Low)</a>,
+<a href="${DVWA_PREFIX}/vulnerabilities/sqli/">SQL Injection</a>, or
+<a href="${DVWA_PREFIX}/vulnerabilities/xss_r/">XSS (Reflected)</a>.</p>
 </body></html>
 `
 
@@ -214,4 +216,27 @@ export function shouldRewriteBody(contentType: string | null): boolean {
   if (!contentType) return false
   const ct = contentType.toLowerCase()
   return ct.includes('text/html') || ct.includes('text/css') || ct.includes('application/javascript')
+}
+
+/**
+ * Security: Identifies vulnerable DVWA modules that execute untrusted student payloads.
+ */
+export function isVulnerableDvwaLabPath(path: string): boolean {
+  const p = normalizeLabPath(path)
+  if (p === '/vulnerabilities/sqli' || p.startsWith('/vulnerabilities/sqli/')) return true
+  if (p === '/vulnerabilities/xss_r' || p.startsWith('/vulnerabilities/xss_r/')) return true
+  return false
+}
+
+/**
+ * Security: Serves vulnerable module pages in an opaque origin (origin: null) via CSP sandbox.
+ * Prevents reflected XSS or SQLi payloads from accessing portal cookies, local storage,
+ * or calling authenticated portal APIs (e.g. /api/auth/session) while allowing script execution,
+ * modal dialogs (alert/confirm/prompt), and GET form submissions.
+ */
+export function dvwaContentSecurityPolicy(path: string): string | null {
+  if (isVulnerableDvwaLabPath(path)) {
+    return 'sandbox allow-scripts allow-forms allow-modals'
+  }
+  return null
 }

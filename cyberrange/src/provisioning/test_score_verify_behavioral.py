@@ -167,7 +167,7 @@ class TestStructuralInvariants:
         """G-03: Poller milestone counts cover exactly the four catalog scenarios."""
         assert set(SCENARIO_MILESTONE_COUNTS.keys()) == {1, 6, 9, 11}
         assert SCENARIO_MILESTONE_COUNTS[1] == 4
-        assert SCENARIO_MILESTONE_COUNTS[6] == 3
+        assert SCENARIO_MILESTONE_COUNTS[6] == 4
         assert SCENARIO_MILESTONE_COUNTS[9] == 3
         assert SCENARIO_MILESTONE_COUNTS[11] == 3
 
@@ -198,7 +198,7 @@ class TestStructuralInvariants:
         assert _pending_milestones(1, set()) == [1, 2, 3, 4]
         assert _pending_milestones(1, {1, 3}) == [2, 4]
         assert _pending_milestones(1, {1, 2, 3, 4}) == []
-        assert _pending_milestones(6, set()) == [1, 2, 3]
+        assert _pending_milestones(6, set()) == [1, 2, 3, 4]
         assert _pending_milestones(9, {1}) == [2, 3]
         assert _pending_milestones(11, {1, 2, 3}) == []
         # Unknown scenario returns empty
@@ -267,17 +267,17 @@ class TestScenario01Reconnaissance:
 
 
 # ============================================================================
-# SECTION 3 — Scenario 06: SQL Injection (kali, 3 milestones)
+# SECTION 3 — Scenario 06: SQL Injection & Reflected XSS (kali, 4 milestones)
 # Persistence per scenario (G-03)
 # ============================================================================
 class TestScenario06SQLInjection:
-    """Milestone persistence verification across all 3 milestones for Scenario 06 (G-03)."""
+    """Milestone persistence verification across all 4 milestones for Scenario 06 (G-03)."""
 
     @pytest.mark.anyio
     async def test_scenario_06_pass_all_milestones(self, sv_db):
-        """TC-S06-PASS: All 3 milestones pass, detection stays 0 (deferred web rules)."""
+        """TC-S06-PASS: All 4 milestones pass, detection stays 0 (deferred web rules)."""
         pod = _insert_pod("s06pass", 10, scenario_id="06")
-        for mid in range(1, 4):
+        for mid in range(1, 5):
             res = await verify_milestone(
                 pod=pod, scenario_id=6, milestone_id=mid,
                 scoring_enabled=True, ssh_verifier_cls=DummyPassAll,
@@ -287,13 +287,13 @@ class TestScenario06SQLInjection:
             assert res.status == "PASS"
             assert res.detection_score == 0  # No web rules → score stays 0
 
-        assert _pass_count("s06pass", 6) == 3
+        assert _pass_count("s06pass", 6) == 4
 
     @pytest.mark.anyio
     async def test_scenario_06_fail_all_milestones(self, sv_db):
-        """TC-S06-FAIL: All 3 milestones fail → no false PASS."""
+        """TC-S06-FAIL: All 4 milestones fail → no false PASS."""
         pod = _insert_pod("s06fail", 11, scenario_id="06")
-        for mid in range(1, 4):
+        for mid in range(1, 5):
             res = await verify_milestone(
                 pod=pod, scenario_id=6, milestone_id=mid,
                 scoring_enabled=True, ssh_verifier_cls=DummyFailAll,
@@ -302,12 +302,12 @@ class TestScenario06SQLInjection:
             assert res.status == "FAIL"
 
         assert _pass_count("s06fail", 6) == 0
-        assert _fail_count("s06fail", 6) == 3
+        assert _fail_count("s06fail", 6) == 4
 
     @pytest.mark.anyio
     async def test_scenario_06_detection_for_returns_none(self, sv_db):
         """G-06: detection_for returns None for all Scenario 06 milestones (Apache rules deferred)."""
-        for mid in range(1, 4):
+        for mid in range(1, 5):
             assert detection_for(6, mid) is None
             assert detection_for("06", mid) is None
 
@@ -743,7 +743,7 @@ class TestScoringChecksDirectBashExecution:
 
     @pytest.mark.parametrize("scenario,milestones", [
         (1, [1, 2, 3, 4]),
-        (6, [1, 2, 3]),
+        (6, [1, 2, 3, 4]),
         (9, [1, 2, 3]),
         (11, [1, 2, 3]),
     ])
@@ -904,6 +904,134 @@ class TestScoringChecksDirectBashExecution:
             rc, token, stderr = self._run_script(6, 3)
             assert rc == 0
             assert token == "PASS"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_06_m4_history_pass(self, tmp_path):
+        """Scenario 06 M4: seeded bash history with curl XSS payload produces PASS."""
+        history = tmp_path / ".bash_history"
+        history.write_text("curl -s 'http://10.0.51.20/dvwa/vulnerabilities/xss_r/?name=<script>alert(1)</script>&Submit=Submit'\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(6, 4, env=env)
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_direct_bash_scenario_06_m4_artifact_pass(self):
+        """Scenario 06 M4: /tmp/xss_reflected.txt artifact containing reflection produces PASS."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && printf \'<pre>Hello <script>alert("XSS")</script></pre>\\n\' > /tmp/xss_reflected.txt'
+        cleanup_cmd = 'rm -f /tmp/xss_reflected.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(6, 4)
+            assert rc == 0
+            assert token == "PASS"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_06_m4_payload_artifact_pass(self):
+        """Scenario 06 M4: /tmp/xss_payload.txt artifact containing reflection produces PASS."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && printf \'Hello <script>alert(document.cookie)</script>\\n\' > /tmp/xss_payload.txt'
+        cleanup_cmd = 'rm -f /tmp/xss_payload.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(6, 4)
+            assert rc == 0
+            assert token == "PASS"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_06_m4_empty_artifact_fails(self):
+        """Scenario 06 M4: 0-byte artifact file produces FAIL (size guard)."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && touch /tmp/xss_reflected.txt'
+        cleanup_cmd = 'rm -f /tmp/xss_reflected.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(6, 4)
+            assert rc == 0
+            assert token == "FAIL"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_06_m4_echo_payload_fails_history(self, tmp_path):
+        """Scenario 06 M4 negative: bare echo payload does NOT pass without curl targeting xss_r."""
+        history = tmp_path / ".bash_history"
+        history.write_text("echo \"<script>alert('XSS')</script>\"\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(6, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_direct_bash_scenario_06_m4_curl_without_payload_fails_history(self, tmp_path):
+        """Scenario 06 M4 negative: curl targeting xss_r without script payload does NOT pass."""
+        history = tmp_path / ".bash_history"
+        history.write_text("curl -sI http://10.0.51.20/dvwa/vulnerabilities/xss_r/\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(6, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_direct_bash_scenario_06_m4_unrelated_alert_grep_fails_history(self, tmp_path):
+        """Scenario 06 M4 negative: unrelated alert grep does NOT pass."""
+        history = tmp_path / ".bash_history"
+        history.write_text("grep 'alert(1)' notes.txt\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(6, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_direct_bash_scenario_06_m4_artifact_without_reflection_fails(self):
+        """Scenario 06 M4 negative: artifact lacking DVWA reflection string fails."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && printf \'echo x > /tmp/xss_proof.txt\\n\' > /tmp/xss_proof.txt'
+        cleanup_cmd = 'rm -f /tmp/xss_proof.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(6, 4)
+            assert rc == 0
+            assert token == "FAIL"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_06_m1_artifact_pass(self):
+        """Scenario 06 M1: /tmp/sqli_probe.txt containing SQL error produces PASS."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && printf \'You have an error in your SQL syntax near 1\\n\' > /tmp/sqli_probe.txt'
+        cleanup_cmd = 'rm -f /tmp/sqli_probe.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(6, 1)
+            assert rc == 0
+            assert token == "PASS"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_06_sqli_evidence_fails_m4(self):
+        """Scenario 06 M4: SQLi artifacts/history do NOT satisfy Milestone 4 (no collision)."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && printf \'admin:password123\\n\' > /tmp/sqli_users.txt'
+        cleanup_cmd = 'rm -f /tmp/sqli_users.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            rc, token, stderr = self._run_script(6, 4)
+            assert rc == 0
+            assert token == "FAIL"
+        finally:
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    def test_direct_bash_scenario_06_xss_evidence_fails_m1_m2_m3(self):
+        """Scenario 06 M1-M3: XSS artifacts do NOT satisfy Milestones 1, 2, or 3 (no collision)."""
+        import subprocess
+        setup_cmd = 'mkdir -p /tmp && printf \'Hello <script>alert(1)</script>\\n\' > /tmp/xss_reflected.txt'
+        cleanup_cmd = 'rm -f /tmp/xss_reflected.txt'
+        try:
+            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            for mid in (1, 2, 3):
+                rc, token, stderr = self._run_script(6, mid)
+                assert rc == 0
+                assert token == "FAIL"
         finally:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 

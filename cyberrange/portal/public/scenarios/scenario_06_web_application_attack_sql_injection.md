@@ -1,4 +1,4 @@
-## Scenario 06 — Web Application Attack (SQL Injection)
+## Scenario 06 — Web Application Attack (SQL Injection & Reflected XSS)
 
 > **Network:** Kali `$TARGET_KALI`, DVWA `$TARGET_DVWA` (HTTP). Meta is not required for this lab.
 
@@ -12,7 +12,8 @@
 - Find a SQL injection point in DVWA (security **Low**)  
 - Extract database/table/user data with manual UNION payloads  
 - Automate extraction with SQLMap from **Kali**  
-- Use portal **Manual Check** after each milestone  
+- Exploit Reflected Cross-Site Scripting (XSS) in DVWA (security **Low**)  
+- Use portal **Manual Check** after each milestone (fulfilling TC-S12-07 Step 2)  
 
 ### Lab topology & credentials
 
@@ -45,14 +46,12 @@ If **Open DVWA** is not available yet on your deployment, use Kali CLI (`curl`) 
 ```
 
 **Done when:** Multiple user rows appear.  
-**Then:** On Kali, leave a trail for scoring (history must show the payload idea):
+**Then:** On Kali, capture the injection evidence for scoring:
 
 ```bash
-# Records the payload in shell history for Manual Check (optional if already typed elsewhere)
-echo "manual sqli probe: 1' OR '1'='1 against DVWA"
-# Or probe with curl after you have a PHPSESSID cookie:
-# curl -s -b 'PHPSESSID=YOUR_SESSION; security=low' \
-#   "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1'+OR+'1'='1&Submit=Submit"
+# Probe the injection point from Kali with curl and save the response:
+curl -s -b "PHPSESSID=<session_id>; security=low" \
+  "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1'+OR+'1'='1&Submit=Submit" > /tmp/sqli_probe.txt
 ```
 
 **Manual Check** on Injection Point.
@@ -139,6 +138,43 @@ SQLMap **must** run on Kali so scoring sees it. Running sqlmap only on your lapt
 
 ---
 
+### Task 4 — Reflected XSS (Milestone 4)
+
+**Goal:** Exploit DVWA's Reflected Cross-Site Scripting module and verify payload execution in your browser (fulfilling **TC-S12-07 Step 2: "Perform SQL injection and reflect XSS at the set difficulty"**).
+
+1. In DVWA (security set to **Low**), open **XSS (Reflected)** from the left navigation menu (`/vulnerabilities/xss_r/`).
+2. In the **What's your name?** input field, enter a JavaScript test payload:
+
+```html
+<script>alert('XSS')</script>
+```
+
+*(Alternatively: `<script>alert(document.cookie)</script>` or `<script>alert(1)</script>`)*
+
+3. Click **Submit**.
+4. **Done when:** The browser executes the JavaScript and displays an alert pop-up window, confirming that user-supplied script tags were reflected in the HTTP response without sanitization.
+5. On Kali, prove payload reflection and record evidence for scoring:
+
+```bash
+# Send the reflected XSS probe from Kali with curl and save DVWA's response:
+curl -s -b "PHPSESSID=<session_id>; security=low" \
+  "http://$TARGET_DVWA/dvwa/vulnerabilities/xss_r/?name=%3Cscript%3Ealert(1)%3C%2Fscript%3E&Submit=Submit" > /tmp/xss_reflected.txt
+
+# Confirm that the server response contains the unescaped reflection:
+grep -i "Hello <script" /tmp/xss_reflected.txt
+```
+
+6. Click **Manual Check** on **Reflected XSS** (Milestone 4).
+
+<details>
+<summary>Hint</summary>
+
+Reflected XSS occurs when an application receives data in an HTTP request and includes that data within the immediate response in an unsafe way. Setting DVWA security to **Low** disables htmlspecialchars/sanitization on the `name` parameter.
+
+</details>
+
+---
+
 ### Common failures
 
 | Symptom | Fix |
@@ -146,6 +182,8 @@ SQLMap **must** run on Kali so scoring sees it. Running sqlmap only on your lapt
 | Blank DVWA / connection refused | Use portal **Open DVWA** or confirm `$TARGET_DVWA` from Kali: `curl -sI http://$TARGET_DVWA/dvwa/` |
 | Only one row returned | Security not Low, or payload syntax |
 | Manual Check FAIL on M3 | sqlmap was not run **on Kali**; re-run dump there |
+| Manual Check FAIL on M4 | XSS probe not recorded in Kali bash history (curl targeting xss_r with script payload) or `/tmp/xss_reflected.txt` lacking `Hello <script` |
+| XSS alert does not pop up | DVWA security is not set to Low; check DVWA Security menu |
 | Session expired in sqlmap | Log into DVWA again; refresh PHPSESSID |
 
 ### Optional blue-team note (not scored)
@@ -155,4 +193,5 @@ Wazuh may log web attack patterns against the DVWA agent. Full alert triage is *
 ### Reflection (optional)
 
 - How does parameterized SQL prevent this class of bug?  
-- Why is automating extraction with SQLMap riskier (and noisier) than a single manual payload?
+- Why is automating extraction with SQLMap riskier (and noisier) than a single manual payload?  
+- How does context-sensitive output encoding prevent Reflected XSS, and why is client-side sanitization alone insufficient?

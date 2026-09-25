@@ -94,7 +94,7 @@ class TestDetectionRuleLookup:
             assert detection_for(1, m) is None
 
     def test_apache_web_rules_scenario_06_explicitly_deferred(self):
-        for m in (1, 2, 3):
+        for m in (1, 2, 3, 4):
             assert detection_for("06", m) is None
             assert detection_for(6, m) is None
 

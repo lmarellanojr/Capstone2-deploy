@@ -5,6 +5,7 @@ import {
   DVWA_LAB_DENIED_HTML,
   cookiesForUpstream,
   dropUpstreamSessionCookie,
+  dvwaContentSecurityPolicy,
   dvwaUpstreamOrigin,
   isAllowedDvwaLabPath,
   isDestroyedPhpSession,
@@ -168,6 +169,11 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
   }
   for (const c of stalePhpSessionClearCookies()) {
     out.append('set-cookie', c)
+  }
+
+  const csp = dvwaContentSecurityPolicy(upstreamPath)
+  if (csp) {
+    out.set('content-security-policy', csp)
   }
 
   if (text !== null) {
