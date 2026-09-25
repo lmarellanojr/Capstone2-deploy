@@ -181,11 +181,12 @@ async def evaluate_hybrid_submission(
 
     1. Flag + State agree -> PASS (marks milestone_verification PASS)
     2. Flag without State -> server-side escalate to SCORING_CONFLICT; student sees INCOMPLETE
-    3. State without Flag -> INCOMPLETE (no review case; state alone does not grant credit)
+    3. State without Flag -> server-side escalate to SCORING_CONFLICT; student sees INCOMPLETE
+       (no durable credit until instructor Approve; already-passed + invalid flag does not escalate)
     4. Neither -> INCOMPLETE (no review case created)
 
     HybridScoreResult.outcome retains Literal "ESCALATED" for compatibility; student-visible
-    ESCALATED is unused by Case 2/3. Case 2 still escalates server-side while returning INCOMPLETE.
+    responses for Case 2/3 stay INCOMPLETE while still escalating server-side.
     """
     flag_valid, rubric = validate_flag(conn, scenario_id, milestone_id, submitted_flag)
     if not rubric:
@@ -338,15 +339,30 @@ async def evaluate_hybrid_submission(
             rubric_criteria=rubric_criteria,
         )
 
-    # Case 3: State without Flag -> INCOMPLETE (no escalate; no credit from state alone)
+    # Case 3: State without Flag -> escalate server-side; student sees INCOMPLETE (G-09).
+    # already_passed_row early return above covers typos after credit exists.
     if not flag_valid and state_pass:
+        conflict_reason = (
+            "Automated container state passed but invalid or incorrect flag submitted."
+        )
+        evidence = {
+            "submitted_flag_preview": masked_preview,
+            "flag_valid": False,
+            "state_status": "PASS",
+            "rubric_name": rubric_name,
+            "timestamp": now_iso,
+        }
+        review_id = _escalate_conflict(
+            conn, student_id, scenario_id, milestone_id, conflict_reason, evidence
+        )
+
         log_event(
-            "HYBRID_SCORE_INCOMPLETE",
+            "HYBRID_SCORE_ESCALATED",
             student_id=student_id,
-            result="INCOMPLETE",
+            result="ESCALATED",
             detail=(
                 f"Scenario {scenario_id}, Milestone {milestone_id}: "
-                "Container state signal without valid flag; no credit, no escalate."
+                f"State signal without valid flag (review_id={review_id})."
             ),
         )
 

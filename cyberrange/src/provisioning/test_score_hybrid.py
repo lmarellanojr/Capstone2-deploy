@@ -297,9 +297,9 @@ def test_state_machine_outcome_escalate_flag_without_state(client, hybrid_db: st
 
 
 def test_state_machine_outcome_state_without_flag_incomplete(client, hybrid_db: str):
-    """Outcome 3 (INCOMPLETE hygiene): live state PASS + invalid flag -> Case-4-identical incomplete.
+    """G-09 Case 3: live state PASS + invalid flag -> student INCOMPLETE + one PENDING conflict.
 
-    No review case; no new milestone_verification PASS row from the live helper alone.
+    No durable PASS until instructor Approve; second submit dedups.
     """
     student = "student_shekinah"
     set_caller(app, student, "student")
@@ -342,11 +342,16 @@ def test_state_machine_outcome_state_without_flag_incomplete(client, hybrid_db: 
         )
 
         conn = sqlite3.connect(hybrid_db)
-        rev_count = conn.execute(
-            "SELECT COUNT(*) FROM review_cases WHERE student_id=? AND scenario_id=1 AND milestone_id=1",
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT review_id, case_type, status FROM review_cases "
+            "WHERE student_id=? AND scenario_id=1 AND milestone_id=1",
             (student,),
-        ).fetchone()[0]
-        assert rev_count == 0
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["case_type"] == "SCORING_CONFLICT"
+        assert rows[0]["status"] == "PENDING"
+        first_id = rows[0]["review_id"]
         mv_count = conn.execute(
             "SELECT COUNT(*) FROM milestone_verification WHERE student_id=? AND scenario_id=1 AND milestone_id=1 AND status='PASS'",
             (student,),
@@ -356,6 +361,25 @@ def test_state_machine_outcome_state_without_flag_incomplete(client, hybrid_db: 
             "SELECT COUNT(*) FROM milestone_verification WHERE detection_data='corroborated_live_check'"
         ).fetchone()[0]
         assert live_tag == 0
+        conn.close()
+
+        # Dedup: second Case 3 submit keeps a single PENDING conflict
+        scoring_state.SCORING_ENABLED = True
+        res_dup = client.post(
+            "/progress/1/flag",
+            json={"milestone_id": 1, "flag": "FLAG{INCORRECT_FLAG_VALUE}"},
+        )
+        assert res_dup.status_code == 200
+        assert res_dup.json()["outcome"] == "INCOMPLETE"
+        conn = sqlite3.connect(hybrid_db)
+        rows2 = conn.execute(
+            "SELECT review_id, status FROM review_cases "
+            "WHERE student_id=? AND scenario_id=1 AND milestone_id=1",
+            (student,),
+        ).fetchall()
+        assert len(rows2) == 1
+        assert rows2[0][0] == first_id
+        assert rows2[0][1] == "PENDING"
         conn.close()
     finally:
         scoring_state.SCORING_ENABLED = orig_scoring
@@ -753,7 +777,9 @@ def test_resolve_review_case_conflict_returns_409_if_already_resolved(client, hy
         json={"status": "REJECTED", "feedback": "Too late", "expected_status": "PENDING"},
     )
     assert res_resolve.status_code == 409
-    assert "no longer in pending status" in res_resolve.json()["detail"].lower()
+    detail = res_resolve.json()["detail"].lower()
+    assert "status changed" in detail
+    assert "pending" in detail
 
 
 def test_resolve_expected_status_invalid_returns_400(client, hybrid_db: str):
@@ -842,6 +868,39 @@ def test_resolve_omit_expected_status_on_approved_returns_409(client, hybrid_db:
         json={"status": "REJECTED", "feedback": "stale omit"},
     )
     assert res.status_code == 409
+
+
+def test_resolve_scoring_conflict_rejects_retry(client, hybrid_db: str):
+    """RETRY is not allowed for SCORING_CONFLICT (students cannot see/resubmit those cases)."""
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+    )
+    conn = sqlite3.connect(hybrid_db)
+    review_id = conn.execute(
+        "SELECT review_id FROM review_cases WHERE student_id=? AND status='PENDING'",
+        (student,),
+    ).fetchone()[0]
+    conn.close()
+
+    set_caller(app, "instructor_lenie", "instructor")
+    res = client.post(
+        f"/instructor/reviews/{review_id}/resolve",
+        json={"status": "RETRY", "expected_status": "PENDING", "feedback": "try again"},
+    )
+    assert res.status_code == 400
+    assert "retry is not allowed" in res.json()["detail"].lower()
+
+    conn = sqlite3.connect(hybrid_db)
+    status = conn.execute(
+        "SELECT status FROM review_cases WHERE review_id=?",
+        (review_id,),
+    ).fetchone()[0]
+    conn.close()
+    assert status == "PENDING"
 
 
 def test_scoring_conflict_hidden_on_student_get_and_resubmit(client, hybrid_db: str):

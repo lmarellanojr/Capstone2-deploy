@@ -507,11 +507,11 @@ async def submit_milestone_flag(
     Evaluates the 3-outcome state machine:
     - Flag + State agree -> PASS
     - Flag without State -> server-side escalate; student sees INCOMPLETE (no review_id)
-    - State without Flag -> INCOMPLETE (no escalate; state alone does not grant credit)
+    - State without Flag -> server-side escalate; student sees INCOMPLETE (no review_id)
     - Neither -> INCOMPLETE
 
     Student-visible outcome ESCALATED is unused by Case 2/3; FlagSubmissionResponse
-    keeps the Literal for compatibility. Case 2 still escalates server-side.
+    keeps the Literal for compatibility. Cases 2/3 still escalate server-side.
     """
     student_id = caller_identity(claims, None)
     if not student_id:
@@ -862,7 +862,13 @@ def submit_student_review(
         raise HTTPException(status_code=401, detail="Identity required")
 
     c_type = (body.case_type or "WRITTEN_REPORT").upper().strip()
-    valid_case_types = ("WRITTEN_REPORT", "SCORING_CONFLICT", "MANUAL_REVIEW")
+    # SCORING_CONFLICT is system-only (hybrid escalate); students cannot forge credit via submit.
+    if c_type == "SCORING_CONFLICT":
+        raise HTTPException(
+            status_code=400,
+            detail="SCORING_CONFLICT cases are created by the hybrid scoring system only",
+        )
+    valid_case_types = ("WRITTEN_REPORT", "MANUAL_REVIEW")
     if c_type not in valid_case_types:
         raise HTTPException(
             status_code=400,
@@ -1026,7 +1032,8 @@ def resolve_student_review(
     try:
         with conn:
             row = conn.execute(
-                "SELECT student_id, scenario_id, milestone_id FROM review_cases WHERE review_id=?",
+                "SELECT student_id, scenario_id, milestone_id, case_type "
+                "FROM review_cases WHERE review_id=?",
                 (review_id,),
             ).fetchone()
             if not row:
@@ -1035,6 +1042,17 @@ def resolve_student_review(
             student_id = row["student_id"]
             scenario_id = row["scenario_id"]
             milestone_id = row["milestone_id"]
+            case_type = (
+                row["case_type"]
+                if "case_type" in row.keys() and row["case_type"]
+                else "WRITTEN_REPORT"
+            )
+            # RETRY has no student-visible path for staff-only SCORING_CONFLICT cases.
+            if case_type == "SCORING_CONFLICT" and clean_status == "RETRY":
+                raise HTTPException(
+                    status_code=400,
+                    detail="RETRY is not allowed for SCORING_CONFLICT review cases",
+                )
             if expected_status is not None:
                 cur = conn.execute(
                     "UPDATE review_cases "
@@ -1058,14 +1076,12 @@ def resolve_student_review(
                     raise HTTPException(status_code=404, detail="Review case not found")
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Review case was modified concurrently or is no longer in PENDING status (current status: {check_row['status']})",
+                    detail=(
+                        f"Review case status changed "
+                        f"(expected {expected_status or 'PENDING/RETRY'}, "
+                        f"current {check_row['status']})"
+                    ),
                 )
-
-            case_row = conn.execute(
-                "SELECT case_type FROM review_cases WHERE review_id=?",
-                (review_id,),
-            ).fetchone()
-            case_type = case_row["case_type"] if case_row and "case_type" in case_row.keys() else "WRITTEN_REPORT"
 
             if case_type == "SCORING_CONFLICT" and clean_status == "APPROVED" and milestone_id is not None:
                 s_id_str = str(scenario_id)
