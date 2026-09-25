@@ -47,22 +47,41 @@ async def verify_milestone(
                 detection_data = f"siem-check-error: {e}"
 
         pod_id = pod["pod_id"]
+        pod_created_at = pod.get("created_at")
         conn = get_db_connection()
         with conn:
-            conn.execute(
-                "INSERT INTO milestone_verification "
-                "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (
-                    pod_id,
-                    pod["student_id"],
-                    scenario_id,
-                    milestone_id,
-                    status_result,
-                    detection_score,
-                    detection_data,
-                ),
-            )
+            mv_cols = {r[1] for r in conn.execute("PRAGMA table_info(milestone_verification)").fetchall()}
+            if "pod_created_at" in mv_cols:
+                conn.execute(
+                    "INSERT INTO milestone_verification "
+                    "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data, pod_created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        pod_id,
+                        pod["student_id"],
+                        scenario_id,
+                        milestone_id,
+                        status_result,
+                        detection_score,
+                        detection_data,
+                        pod_created_at,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO milestone_verification "
+                    "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (
+                        pod_id,
+                        pod["student_id"],
+                        scenario_id,
+                        milestone_id,
+                        status_result,
+                        detection_score,
+                        detection_data,
+                    ),
+                )
         conn.close()
 
         log_event(
