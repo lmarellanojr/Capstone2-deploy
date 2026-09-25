@@ -263,6 +263,41 @@ export const provisioning = {
     return response.data
   },
 
+  submitFlag: async (
+    scenarioId: number,
+    data: { milestone_id: number; flag: string }
+  ): Promise<{
+    outcome: "PASS" | "ESCALATED" | "INCOMPLETE"
+    status: string
+    scenario_id: number
+    milestone_id: number
+    message: string
+    review_id?: number
+    verified_at?: string
+    rubric_criteria?: string
+  }> => {
+    const response = await apiClient.post(`/progress/${scenarioId}/flag`, data)
+    return response.data
+  },
+
+  getScenarioRubrics: async (
+    scenarioId: number
+  ): Promise<{
+    scenario_id: number
+    rubrics: {
+      scenario_id: number
+      milestone_id: number
+      name: string
+      criteria: string
+      points: number
+      mitre_technique?: string
+      nist_phase?: string
+    }[]
+  }> => {
+    const response = await apiClient.get(`/progress/${scenarioId}/rubrics`)
+    return response.data
+  },
+
   getLabUrls: async (podId: number): Promise<{
     pod_id: number
     student_id: string
@@ -330,6 +365,7 @@ export const instructor = {
       status: 'APPROVED' | 'REJECTED' | 'RETRY'
       score?: number | null
       feedback?: string | null
+      expected_status?: string | null
     }
   ): Promise<{ status: string; review_id: number; decision: string }> => {
     const response = await apiClient.post(

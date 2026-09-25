@@ -150,6 +150,7 @@ export default function ReviewDetailPage() {
         status: confirmDecision,
         score: numericScore,
         feedback: feedback.trim() || null,
+        expected_status: reviewCase.status,
       });
 
       success(`Review case #${reviewCase.review_id} resolved: ${res.decision || confirmDecision}`);
@@ -157,7 +158,9 @@ export default function ReviewDetailPage() {
       await fetchReview();
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
-      if (status === 404) {
+      if (status === 409) {
+        showToastError("This case changed since you opened it; reload.");
+      } else if (status === 404) {
         showToastError("Review case or resolve endpoint not found.");
       } else {
         showToastError(mapErrorToMessage(err).message);

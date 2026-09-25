@@ -65,6 +65,7 @@ class ReviewResolveRequest(BaseModel):
     status: str
     score: Optional[int] = None
     feedback: Optional[str] = None
+    expected_status: Optional[str] = None
 
 
 class ReviewResolveResponse(BaseModel):
@@ -116,3 +117,35 @@ class KnowledgeGainSummary(BaseModel):
 class KnowledgeGainExportResponse(BaseModel):
     summary: KnowledgeGainSummary
     records: List[KnowledgeGainRecord]
+
+
+
+class FlagSubmissionRequest(BaseModel):
+    milestone_id: int = Field(..., ge=1, le=10)
+    flag: str = Field(..., min_length=1, max_length=256)
+
+
+class FlagSubmissionResponse(BaseModel):
+    outcome: Literal["PASS", "ESCALATED", "INCOMPLETE"]
+    status: str
+    scenario_id: int
+    milestone_id: int
+    message: str
+    review_id: Optional[int] = None
+    verified_at: Optional[str] = None
+    rubric_criteria: Optional[str] = None
+
+
+class MilestoneRubricResponse(BaseModel):
+    scenario_id: int
+    milestone_id: int
+    name: str
+    criteria: str
+    points: int
+    mitre_technique: Optional[str] = None
+    nist_phase: Optional[str] = None
+
+
+class ScenarioRubricsResponse(BaseModel):
+    scenario_id: int
+    rubrics: List[MilestoneRubricResponse]

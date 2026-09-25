@@ -76,6 +76,8 @@ ROUTES=(
   "GET|/pods/$NOPOD/alerts|app_role||"
   "GET|/progress|app_role||"
   "DELETE|/progress/$NOSCEN|app_role||"
+  "POST|/progress/$NOSCEN/flag|app_role|{\"milestone_id\":1,\"flag\":\"x\"}|{\"flag\":\"missing\"}"
+  "GET|/progress/$NOSCEN/rubrics|app_role||"
   "POST|/reviews/submit|app_role|{\"scenario_id\":1,\"report_text\":\"x\"}|{\"report_text\":\"missing scenario\"}"
   "GET|/reviews/$NOPOD|app_role||"
   "POST|/reviews/$NOPOD/resubmit|app_role|{\"report_text\":\"x\"}|{\"report_text\":\"x\"}"

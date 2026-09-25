@@ -21,14 +21,20 @@ from knowledge_gain import (
     format_records_csv,
 )
 from models import (
+    FlagSubmissionRequest,
+    FlagSubmissionResponse,
+    MilestoneRubricResponse,
     PodResponse,
     ProvisionRequest,
     ReviewResolveRequest,
     ReviewResolveResponse,
     ReviewResubmitRequest,
     ReviewResubmitResponse,
+    ScenarioRubricsResponse,
     VerificationResponse,
 )
+from hybrid_scoring import evaluate_hybrid_submission
+from rubrics import CATALOG_SCENARIO_IDS, list_rubrics
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
 from scoring import verify_milestone
 from ttl import ttl_payload
@@ -487,6 +493,120 @@ def reset_scenario_progress(scenario_id: int, claims: dict = Depends(verify_toke
     return {"student_id": student_id, "scenario_id": scenario_id, "deleted": deleted}
 
 
+@router.post(
+    "/progress/{scenario_id}/flag",
+    response_model=FlagSubmissionResponse,
+)
+async def submit_milestone_flag(
+    scenario_id: str,
+    body: FlagSubmissionRequest,
+    claims: dict = Depends(verify_token),
+):
+    """Submit a milestone flag for hybrid scoring correlation (SCORE-HYBRID).
+
+    Evaluates the 3-outcome state machine:
+    - Flag + State agree -> PASS
+    - Flag without State -> server-side escalate; student sees INCOMPLETE (no review_id)
+    - State without Flag -> server-side escalate; student sees INCOMPLETE (no review_id)
+    - Neither -> INCOMPLETE
+
+    Student-visible outcome ESCALATED is unused by Case 2/3; FlagSubmissionResponse
+    keeps the Literal for compatibility. Cases 2/3 still escalate server-side.
+    """
+    student_id = caller_identity(claims, None)
+    if not student_id:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    try:
+        scen_id_int = int(scenario_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"Invalid scenario_id: {scenario_id}")
+
+    if scen_id_int not in CATALOG_SCENARIO_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Scenario {scen_id_int} is not an active catalog scenario {CATALOG_SCENARIO_IDS}",
+        )
+
+    clean_flag = body.flag.strip() if body.flag else ""
+    if not clean_flag:
+        raise HTTPException(status_code=400, detail="Flag cannot be empty")
+
+    conn = get_db_connection()
+    try:
+        result = await evaluate_hybrid_submission(
+            conn,
+            student_id=student_id,
+            scenario_id=scen_id_int,
+            milestone_id=body.milestone_id,
+            submitted_flag=clean_flag,
+        )
+        return FlagSubmissionResponse(
+            outcome=result.outcome,
+            status=result.status,
+            scenario_id=result.scenario_id,
+            milestone_id=result.milestone_id,
+            message=result.message,
+            review_id=result.review_id,
+            verified_at=result.verified_at,
+            rubric_criteria=result.rubric_criteria,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    finally:
+        conn.close()
+
+
+@router.get(
+    "/progress/{scenario_id}/rubrics",
+    response_model=ScenarioRubricsResponse,
+)
+def get_scenario_rubrics(
+    scenario_id: str,
+    claims: dict = Depends(verify_token),
+):
+    """Retrieve rubric criteria for all milestones in a scenario.
+
+    Excludes expected_flag to prevent answer-key leakage (Anti Agent invariant).
+    """
+    student_id = caller_identity(claims, None)
+    if not student_id:
+        raise HTTPException(status_code=401, detail="Identity required")
+
+    try:
+        scen_id_int = int(scenario_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"Invalid scenario_id: {scenario_id}")
+
+    if scen_id_int not in CATALOG_SCENARIO_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Scenario {scen_id_int} is not an active catalog scenario {CATALOG_SCENARIO_IDS}",
+        )
+
+    conn = get_db_connection()
+    try:
+        rubrics_list = list_rubrics(conn, scen_id_int)
+        clean_rubrics = [
+            MilestoneRubricResponse(
+                scenario_id=r["scenario_id"],
+                milestone_id=r["milestone_id"],
+                name=r["name"],
+                criteria=r["criteria"],
+                points=r.get("points", 50),
+                mitre_technique=r.get("mitre_technique"),
+                nist_phase=r.get("nist_phase"),
+            )
+            for r in rubrics_list
+        ]
+        return ScenarioRubricsResponse(
+            scenario_id=scen_id_int,
+            rubrics=clean_rubrics,
+        )
+    finally:
+        conn.close()
+
+
 @router.get("/pods/{pod_id}/milestones")
 def get_pod_milestones(pod_id: int, claims: dict = Depends(verify_token)):
     conn = get_db_connection()
@@ -742,7 +862,13 @@ def submit_student_review(
         raise HTTPException(status_code=401, detail="Identity required")
 
     c_type = (body.case_type or "WRITTEN_REPORT").upper().strip()
-    valid_case_types = ("WRITTEN_REPORT", "SCORING_CONFLICT", "MANUAL_REVIEW")
+    # SCORING_CONFLICT is system-only (hybrid escalate); students cannot forge credit via submit.
+    if c_type == "SCORING_CONFLICT":
+        raise HTTPException(
+            status_code=400,
+            detail="SCORING_CONFLICT cases are created by the hybrid scoring system only",
+        )
+    valid_case_types = ("WRITTEN_REPORT", "MANUAL_REVIEW")
     if c_type not in valid_case_types:
         raise HTTPException(
             status_code=400,
@@ -865,6 +991,17 @@ def resolve_student_review(
             detail="Invalid status: must be one of ('APPROVED', 'REJECTED', 'RETRY')",
         )
 
+    # expected_status is CAS versioning: None = legacy first-resolve (PENDING/RETRY only).
+    # Any provided value (including "") is treated as client-supplied and validated.
+    expected_status = None
+    if body.expected_status is not None:
+        expected_status = body.expected_status.strip().upper()
+        if expected_status not in {"PENDING", "APPROVED", "REJECTED", "RETRY"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid expected_status: must be one of ('PENDING', 'APPROVED', 'REJECTED', 'RETRY')",
+            )
+
     final_score = body.score
     if final_score is not None:
         if not isinstance(final_score, int) or final_score < 0 or final_score > 100:
@@ -895,21 +1032,76 @@ def resolve_student_review(
     try:
         with conn:
             row = conn.execute(
-                "SELECT student_id, scenario_id, milestone_id FROM review_cases WHERE review_id=?",
+                "SELECT student_id, scenario_id, milestone_id, case_type "
+                "FROM review_cases WHERE review_id=?",
                 (review_id,),
             ).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Review case not found")
 
             student_id = row["student_id"]
-            cur = conn.execute(
-                "UPDATE review_cases "
-                "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE review_id = ?",
-                (clean_status, final_score, clean_feedback, grader, review_id),
+            scenario_id = row["scenario_id"]
+            milestone_id = row["milestone_id"]
+            case_type = (
+                row["case_type"]
+                if "case_type" in row.keys() and row["case_type"]
+                else "WRITTEN_REPORT"
             )
+            # RETRY has no student-visible path for staff-only SCORING_CONFLICT cases.
+            if case_type == "SCORING_CONFLICT" and clean_status == "RETRY":
+                raise HTTPException(
+                    status_code=400,
+                    detail="RETRY is not allowed for SCORING_CONFLICT review cases",
+                )
+            if expected_status is not None:
+                cur = conn.execute(
+                    "UPDATE review_cases "
+                    "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE review_id = ? AND status = ?",
+                    (clean_status, final_score, clean_feedback, grader, review_id, expected_status),
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE review_cases "
+                    "SET status = ?, score = ?, feedback = ?, graded_by = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE review_id = ? AND status IN ('PENDING', 'RETRY')",
+                    (clean_status, final_score, clean_feedback, grader, review_id),
+                )
             if cur.rowcount == 0:
-                raise HTTPException(status_code=404, detail="Review case not found")
+                check_row = conn.execute(
+                    "SELECT status FROM review_cases WHERE review_id = ?",
+                    (review_id,),
+                ).fetchone()
+                if not check_row:
+                    raise HTTPException(status_code=404, detail="Review case not found")
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Review case status changed "
+                        f"(expected {expected_status or 'PENDING/RETRY'}, "
+                        f"current {check_row['status']})"
+                    ),
+                )
+
+            if case_type == "SCORING_CONFLICT" and clean_status == "APPROVED" and milestone_id is not None:
+                s_id_str = str(scenario_id)
+                s_id_pad = str(scenario_id).zfill(2)
+                pod_row = conn.execute(
+                    "SELECT pod_id FROM pods WHERE student_id=? AND (scenario_id=? OR scenario_id=?) ORDER BY id DESC LIMIT 1",
+                    (student_id, s_id_str, s_id_pad),
+                ).fetchone()
+                target_pod_id = pod_row["pod_id"] if pod_row and pod_row["pod_id"] else 0
+                exists = conn.execute(
+                    "SELECT id FROM milestone_verification WHERE student_id=? AND scenario_id=? AND milestone_id=? AND status='PASS' LIMIT 1",
+                    (student_id, scenario_id, milestone_id),
+                ).fetchone()
+                if not exists:
+                    conn.execute(
+                        "INSERT INTO milestone_verification "
+                        "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
+                        "VALUES (?, ?, ?, ?, 'PASS', 0, 'instructor_approved_conflict')",
+                        (target_pod_id, student_id, scenario_id, milestone_id),
+                    )
     finally:
         conn.close()
 
@@ -1021,6 +1213,19 @@ def resubmit_student_review(
             if row["student_id"] != caller:
                 raise HTTPException(status_code=404, detail="Review case not found")
 
+            # SCORING_CONFLICT is staff-only; 404 before status branch (no 400 oracle)
+            case_row = conn.execute(
+                "SELECT case_type FROM review_cases WHERE review_id=?",
+                (review_id,),
+            ).fetchone()
+            case_type = (
+                case_row["case_type"]
+                if case_row and "case_type" in case_row.keys()
+                else "WRITTEN_REPORT"
+            )
+            if case_type == "SCORING_CONFLICT":
+                raise HTTPException(status_code=404, detail="Review case not found")
+
             if row["status"] != "RETRY":
                 raise HTTPException(
                     status_code=400,
@@ -1090,8 +1295,13 @@ def get_review_detail(
         if not row:
             raise HTTPException(status_code=404, detail="Review case not found")
 
-        if not is_staff and row["student_id"] != caller:
-            raise HTTPException(status_code=404, detail="Review case not found")
+        if not is_staff:
+            if row["student_id"] != caller:
+                raise HTTPException(status_code=404, detail="Review case not found")
+            # SCORING_CONFLICT is never student-visible (any status)
+            case_type = row["case_type"] if "case_type" in row.keys() else "WRITTEN_REPORT"
+            if case_type == "SCORING_CONFLICT":
+                raise HTTPException(status_code=404, detail="Review case not found")
 
         return dict(row)
     finally:
