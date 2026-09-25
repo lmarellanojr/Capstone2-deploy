@@ -949,6 +949,64 @@ class TestScoringChecksDirectBashExecution:
         assert rc == 0
         assert token == "PASS"
 
+    def test_scenario_06_m1_plain_quoted_url_without_injection_is_fail(self):
+        """Finding 3: shell apostrophes around a plain id=1 URL must not PASS."""
+        self._write_history(
+            "curl -s 'http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit'\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_zsh_extended_history_echo_is_fail(self):
+        """Finding 4: zsh EXTENDED_HISTORY echo paste must FAIL."""
+        self._write_history(
+            ": 1700000000:0;echo \"manual sqli probe: 1' OR '1'='1 against DVWA\"\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_leading_whitespace_echo_is_fail(self):
+        self._write_history("   echo \"1' OR '1'='1\"\n")
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_printf_guide_line_is_fail(self):
+        self._write_history("printf '%s\\n' \"1' OR '1'='1\"\n")
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_chained_echo_is_fail(self):
+        self._write_history("true; echo \"1' OR '1'='1 against DVWA\"\n")
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m3_snoopy_sqlmap_with_hash_is_pass(self, tmp_path):
+        """Finding 5: Snoopy evidence counts when interactive history is empty."""
+        snoopy = tmp_path / "auth.log"
+        snoopy.write_text(
+            "snoopy[123]: cmdline: sqlmap -u http://10.0.51.12/dvwa/vulnerabilities/sqli/"
+            "?id=1 --cookie=PHPSESSID=abc123def456 -D dvwa -T users --dump --batch\n",
+            encoding="utf-8",
+        )
+        artifact = tmp_path / "admin_hash.txt"
+        artifact.write_text("5f4dcc3b5aa765d61d8327deb882cf99\n", encoding="utf-8")
+        self._write_history("")
+        rc, token, _ = self._run_script(
+            6,
+            3,
+            env={
+                "ADMIN_HASH_FILE": artifact.as_posix(),
+                "SNOOPY_LOG_FILE": snoopy.as_posix(),
+            },
+        )
+        assert rc == 0
+        assert token == "PASS"
+
     def test_scenario_06_m1_syntax_error_artifact_is_pass(self, tmp_path):
         artifact = tmp_path / "sqli_probe.txt"
         artifact.write_text("You have an error in your SQL syntax\n", encoding="utf-8")

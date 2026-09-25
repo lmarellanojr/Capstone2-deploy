@@ -322,21 +322,38 @@ check_scenario_5() {
 # matches ANY word and would flag every real command as a placeholder. It only
 # looks correct on Windows git-bash (literal `<`). The globs below behave the
 # same on every shell.
-history_line_is_placeholder() {
+history_line_normalize() {
+    # Strip zsh EXTENDED_HISTORY ": <unix>:<duration>;" and leading whitespace.
     local line="$1"
+    if [[ "$line" =~ ^:\ [0-9]+:[0-9]+\;(.*)$ ]]; then
+        line="${BASH_REMATCH[1]}"
+    fi
+    line="${line#"${line%%[![:space:]]*}"}"
+    printf '%s\n' "$line"
+}
+
+history_line_is_placeholder() {
+    local line
+    line="$(history_line_normalize "$1")"
+    # Guide paste: echo/printf as a command (start of line or after ; && || |)
+    if printf '%s\n' "$line" | grep -qE '(^|[;&|[:space:]])[[:space:]]*(echo|printf)([[:space:]]|$)'; then
+        return 0
+    fi
     case "$line" in
-        echo|echo[[:space:]]*)  return 0 ;;   # guide echo lines
         *"manual sqli probe:"*) return 0 ;;   # the guide's literal probe string
         *"<"*">"*)              return 0 ;;   # any <...> placeholder token
     esac
     return 1
 }
 
-# Case-insensitive. Drops placeholder and echo lines before matching.
+# Case-insensitive. Drops placeholder and echo/printf lines before matching.
+# Also scans Snoopy logs (same filter) so a real sqlmap that never hit
+# interactive history can still PASS with a valid hash file.
 history_has_real_line() {
     local pattern="$1"
     local hist_targets=(/root/.bash_history /home/*/.bash_history /root/.zsh_history /home/*/.zsh_history)
     [[ -n "${HOME:-}" && -f "${HOME}/.bash_history" ]] && hist_targets+=("${HOME}/.bash_history")
+    [[ -n "${HOME:-}" && -f "${HOME}/.zsh_history" ]] && hist_targets+=("${HOME}/.zsh_history")
     local f line
     for f in "${hist_targets[@]}"; do
         [[ -f "$f" ]] || continue
@@ -344,6 +361,19 @@ history_has_real_line() {
             history_line_is_placeholder "$line" && continue
             if printf '%s\n' "$line" | grep -qiE "$pattern"; then
                 log "PASS: real history line matched $pattern"
+                return 0
+            fi
+        done < "$f"
+    done
+    local snoopy_targets=(/var/log/auth.log /var/log/syslog)
+    [[ -n "${SNOOPY_LOG_FILE:-}" && -f "${SNOOPY_LOG_FILE}" ]] && snoopy_targets=("${SNOOPY_LOG_FILE}")
+    for f in "${snoopy_targets[@]}"; do
+        [[ -f "$f" ]] || continue
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" == *snoopy* ]] || continue
+            history_line_is_placeholder "$line" && continue
+            if printf '%s\n' "$line" | grep -qiE "$pattern"; then
+                log "PASS: real snoopy line matched $pattern"
                 return 0
             fi
         done < "$f"
@@ -361,9 +391,10 @@ check_scenario_6() {
     hash_file="$(admin_hash_file)"
     case $milestone in
         1)
-            # Real curl: OR payload (any case) OR the textbook 1' probe.
+            # Real curl: OR / 1' / %27 must sit inside the id= value, not in
+            # a shell-quoting apostrophe after the URL (finding 3).
             # $TARGET_DVWA in the typed line is fine. echo / <placeholders> are not.
-            if history_has_real_line 'curl.*vulnerabilities/sqli.*id=.*(or[[:space:]]*['"'"'\"]?1|%27|'"'"')'; then
+            if history_has_real_line 'curl.*vulnerabilities/sqli.*id=[^&[:space:]]*(or[[:space:]]*['"'"'\"]?1|%27|'"'"')'; then
                 echo "PASS"; return
             fi
             # Artifact proof (#104). History cannot see the SQL error body.
