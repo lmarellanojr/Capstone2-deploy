@@ -15,9 +15,19 @@ interface LayoutWrapperProps {
   /** Explicit, independent of sectionLabel: a section can have its own sidebar label
    *  without losing a working search box. Instructor/Admin pages set this themselves. */
   hideSearch?: boolean;
+  /** LAB-LAYOUT: when true, the persistent desktop sidebar column is not
+   *  rendered, so its width goes back to `children` -- used by the active
+   *  lab session page so the Kali terminal / Guide split gets more room
+   *  (team request: hide the left nav once a lab is open). The mobile
+   *  hamburger menu (Sidebar shown as a `lg:hidden` overlay) is unaffected:
+   *  it costs no layout width on any breakpoint, so there's no reason to
+   *  lose navigation entirely. A caller that hides the sidebar is expected
+   *  to provide its own way back (the scenario page's own "My Labs" link
+   *  in its header bar already does). */
+  hideSidebar?: boolean;
 }
 
-export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hideSearch = false }: LayoutWrapperProps) {
+export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hideSearch = false, hideSidebar = false }: LayoutWrapperProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
 
@@ -25,9 +35,11 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hide
 
   return (
     <div className="flex h-screen min-h-[100dvh] bg-primary overflow-hidden">
-      <div className="hidden lg:block w-64 flex-shrink-0">
-        <Sidebar navItems={navItems} sectionLabel={sectionLabel} />
-      </div>
+      {!hideSidebar && (
+        <div className="hidden lg:block w-64 flex-shrink-0">
+          <Sidebar navItems={navItems} sectionLabel={sectionLabel} />
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col min-w-0">
         <TopNav
