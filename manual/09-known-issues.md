@@ -276,7 +276,8 @@ student pod (`MAX_PODS=1`) on this profile.
 1. Agents on `pod-<student>-meta` / `pod-<student>-dvwa` report to the manager
    at `10.0.40.10`.
 2. `GET /pods/{pod_id}/alerts` (`alerts_endpoint.py` → `alerts_reader.py`) tails
-   the manager's `alerts.json`, scoped to that student's agents.
+   the manager's `alerts.json`, scoped to that student's agents and to the
+   current pod's lifetime (nothing older than `pods.created_at`; SIEM-SCOPE #112).
 3. The portal's Scenario 09 SIEM pane polls that endpoint every **15 s**
    (`POLL_MS` in `siemAlertQuery.ts`), skips polling while the tab is hidden,
    and offers rule / agent / severity filters on the fetched rows.
@@ -293,6 +294,94 @@ student pod (`MAX_PODS=1`) on this profile.
 **Do not** install the Indexer or Dashboard on the 12 GiB profile. The
 `WAZUH_DASHBOARD_PUBLIC_URL` path in `lab_proxy.py` exists only for a larger
 host. Leave it unset here.
+
+---
+
+## Issue 14: Rule 5710 missing from the Scenario 09 SIEM pane (SIEM-SCOPE #112)
+
+**Symptom:** A student runs Task 0 (`ssh nosuchuser@$TARGET_META` from Kali),
+waits a couple of minutes, and the SIEM pane has no rule `5710` row. Or the
+pane shows 5710 and 510 rows on a pod that was created seconds ago.
+
+**Root cause (live, 2026-09-25, Ampere host, pod `pod-student-demo-…-meta`):**
+the agents never reached the manager, so **no** pod alerts existed at all.
+
+- `provision.py` hardcoded `MANAGER_IP → 10.0.40.10` into every agent's
+  `ossec.conf`. On this host the manager's mon-net `eth0` had been given
+  **10.0.40.2** by DHCP: Manual 02 Step 4a pinned `eth1` but never `eth0`.
+- From meta, `10.0.40.10:1514/1515` were unreachable and `10.0.40.2:1514/1515`
+  were open. The agent ran, read `/var/log/auth.log`, and never enrolled:
+  `client.keys` stayed empty and `agent_control -l` listed only the manager.
+- Steps 1 and 2 of the chain below passed (ssh and rsyslog active, auth.log
+  localfile present). The chain broke at "agent connected".
+
+**Fix (#112):** `provision.py` now asks `wazuh_manager_ip()` for the address:
+`WAZUH_MANAGER_IP` from `.env` if set, else the `wazuh-manager` container's live
+`eth0` IPv4 from LXD, else `10.0.40.10`. The chosen address is logged in the
+`WAZUH_ENROLL_OK` audit event. Manual 02 Step 4a now pins `eth0` to
+`10.0.40.10`, so new installs match the docs. On an existing host with a
+different address, new pods work after deploying #112. To make the docs'
+`.10` true there as well:
+
+```bash
+lxc config device set wazuh-manager eth0 ipv4.address=10.0.40.10   # or `override` if eth0 comes from a profile
+lxc restart wazuh-manager
+```
+
+Pods provisioned before the fix keep the wrong address. Destroy and re-provision them.
+
+**Separate, still open:** the same host logged `WAZUH_ENROLL_FAIL: set
+WAZUH_SCORING_USER and WAZUH_SCORING_PW` on every provision since 2026-09-08,
+so `pods.wazuh_agent_id` stays empty. The SIEM pane still works because it also
+matches agents by name, but `detection_score` can't be set until the host's
+`.env` has the scoring API user (see `cyberrange/env/oci-12gib.env.example`).
+
+**Also fixed in code (#112):**
+
+- **Alerts from a previous pod.** When a student re-provisions, the Wazuh agent
+  re-enrolls with a new ID but the same name (`pod-<student>-meta`). The alerts
+  endpoint matched on ID *or* name within a 240-minute window, so a fresh pod
+  showed the old pod's alerts, including an old 5710. The endpoint and the
+  advisory `detection_score` check now ignore anything older than
+  `pods.created_at`. A 5710 in the pane is now always from the current pod.
+- **`detection_score` stopped reading early.** `score_verifier.verify_siem_alert()`
+  read `alerts.json` from the **start** and gave up after 64 MiB. Once the file
+  grew past that (e.g. during the rule `1007` disk-full flood), the newest
+  alerts were never checked and 09 M1 detection stayed `0`. It now keeps the
+  newest 64 MiB, like the SIEM pane's reader already did. This was found by
+  reading the code, not seen on a live pod.
+
+**Diagnosing it again.** Walk the chain in order and note where 5710 stops
+appearing:
+
+```bash
+# 1. meta logged the attempt (sshd writes "Invalid user" before any password prompt)
+lxc exec pod-<student>-meta -- grep "Invalid user nosuchuser" /var/log/auth.log | tail -3
+#    empty? check sshd is up and rsyslog is writing auth.log:
+lxc exec pod-<student>-meta -- systemctl is-active ssh rsyslog
+
+# 2. the agent reads auth.log and is connected
+lxc exec pod-<student>-meta -- grep -A2 "<localfile>" /var/ossec/etc/ossec.conf | grep auth.log
+lxc exec pod-<student>-meta -- grep -i "connected to the server" /var/ossec/logs/ossec.log | tail -1
+lxc exec pod-<student>-meta -- grep -A1 "<server>" /var/ossec/etc/ossec.conf     # manager address the agent uses
+lxc list wazuh-manager -c n4                                                   # must match
+
+# 3. the manager raised 5710 for that agent
+lxc exec wazuh-manager -- grep '"id":"5710"' /var/ossec/logs/alerts/alerts.json | grep "pod-<student>-meta" | tail -2
+
+# 4. the API returns it (Scenario 09 pod, owner's token)
+curl -s -H "Authorization: Bearer $TOKEN" "http://<api>/pods/<pod_id>/alerts?rule_id=5710" | head -c 400
+```
+
+| Stops at | Likely cause | Action |
+|---|---|---|
+| 1 | Task 0 never reached meta's sshd (wrong `$TARGET_META`, sshd down) or rsyslog not installed on the golden | Fix Task 0 target / add rsyslog to the meta golden |
+| 2 | Agent points at the wrong manager address (**seen live**, see root cause above); or no `auth.log` localfile; or not enrolled | Re-provision after #112 / pin the manager's `eth0`; add the localfile in `bake_wazuh_agent.sh`; see Issue 7 for enrolment |
+| 3 | Decoder/rule did not match this sshd's log line | Record the exact line; check it with `wazuh-logtest` on the manager |
+| 4 | Alert is older than the pod (expected after #112), or buried under more than 200 CIS/SCA rows | Tick **Rule 5710 only** (server-side filter) |
+
+**Still to record:** a Scenario 09 run on a host with the #112 fix deployed,
+showing the meta agent enrolled and rule 5710 in the pane after Task 0.
 
 ---
 

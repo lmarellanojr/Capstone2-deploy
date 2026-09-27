@@ -874,11 +874,11 @@ class TestScoringChecksDirectBashExecution:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 
     def test_direct_bash_scenario_09_m2_artifact_pass(self):
-        """Scenario 09 M2: incident_timeline.md artifact produces PASS."""
+        """Scenario 09 M2: incident_timeline.md with a rule ID and real time produces PASS."""
         import subprocess
 
         setup_cmd = (
-            'mkdir -p /tmp && printf "# Incident Timeline\\n- rule 5710 triggered\\n- phase 1 complete\\n" > /tmp/incident_timeline.md'
+            'mkdir -p /tmp && printf "# Incident Timeline\\n- 14:32 rule 5710 triggered (true_positive)\\n- phase 1 complete\\n" > /tmp/incident_timeline.md'
         )
         cleanup_cmd = 'rm -f /tmp/incident_timeline.md'
         try:
@@ -888,6 +888,67 @@ class TestScoringChecksDirectBashExecution:
             assert token == "PASS"
         finally:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+
+    # SIEM-SCOPE (#112): the guide's templates must not earn M2 unedited.
+    _S09_GUIDE = (
+        Path(__file__).resolve().parents[2]
+        / "portal/public/scenarios/scenario_09_siem_alert_triage_and_log_analysis.md"
+    )
+
+    @classmethod
+    def _guide_heredoc(cls, target: str) -> str:
+        """Body of the guide's `cat > <target> << 'EOF'` block, as a student would paste it."""
+        text = cls._S09_GUIDE.read_text(encoding="utf-8")
+        start = text.index(f"cat > {target} << 'EOF'\n") + len(f"cat > {target} << 'EOF'\n")
+        return text[start:text.index("\nEOF", start)] + "\n"
+
+    def _score_s09_m2(self, files: Dict[str, str]) -> str:
+        # Write through bash, not pathlib: on Windows, Python's "/tmp" is C:\tmp
+        # while Git Bash (which runs the script) has its own /tmp.
+        import subprocess
+        try:
+            for name, body in files.items():
+                subprocess.run(
+                    [_BASH_EXE, "-c", f"mkdir -p /tmp && cat > '/tmp/{name}'"],
+                    input=body.encode("utf-8"), check=True,
+                )
+            rc, token, stderr = self._run_script(9, 2)
+            assert rc == 0, stderr
+            return token
+        finally:
+            rm = " ".join(f"'/tmp/{name}'" for name in files)
+            subprocess.run([_BASH_EXE, "-c", f"rm -f {rm}"])
+
+    def test_direct_bash_scenario_09_m2_guide_timeline_template_fails(self):
+        template = self._guide_heredoc("/home/msfadmin/incident_timeline.md")
+        assert "HH:MM" in template  # guard: the test reads the real template
+        assert self._score_s09_m2({"incident_timeline.md": template}) == "FAIL"
+
+    def test_direct_bash_scenario_09_m2_filled_in_guide_timeline_passes(self):
+        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("HH:MM", "14:32")
+        assert self._score_s09_m2({"incident_timeline.md": filled}) == "PASS"
+
+    def test_direct_bash_scenario_09_m2_timeline_without_time_fails(self):
+        body = "# Incident timeline\n1. phase: initial_access_attempt - rule: 5710 - true_positive\n"
+        assert self._score_s09_m2({"incident_timeline.md": body}) == "FAIL"
+
+    def test_direct_bash_scenario_09_m2_triage_template_marked_tp_fails(self):
+        """Only flipping classification in the unedited M1 template is not triage."""
+        template = self._guide_heredoc("/home/msfadmin/alert_triage.json")
+        flipped = template.replace("needs_investigation", "true_positive")
+        assert flipped != template
+        assert self._score_s09_m2({"alert_triage.json": flipped}) == "FAIL"
+
+    def test_direct_bash_scenario_09_m2_real_triage_tp_passes(self):
+        triage = json.dumps({
+            "alert_id": "1727346720.51234",
+            "severity": "medium",
+            "rule": "5710",
+            "agent": "pod-alice-meta",
+            "classification": "true_positive",
+            "notes": "14:32 failed SSH for nosuchuser from Kali",
+        })
+        assert self._score_s09_m2({"alert_triage.json": triage}) == "PASS"
 
     def _write_history(self, text: str) -> None:
         (self.default_home / ".bash_history").write_text(text, encoding="utf-8")
