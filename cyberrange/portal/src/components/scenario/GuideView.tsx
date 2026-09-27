@@ -34,9 +34,17 @@ function CodeBlock({ children, ...props }: any) {
   const [copied, setCopied] = useState(false);
   const text = getPlainText(children).replace(/\n$/, "");
 
+  // GUIDE-UX-TRIAL: long lab commands (e.g. the Scenario 3 Task 0 SSH line)
+  // were wider than the Guide panel, so only horizontal-scrolling revealed
+  // the full text -- a student hand-selecting the visible portion could copy
+  // an incomplete command. Wrapping here is purely a display fix: the Copy
+  // button already reads the full text from `children` via getPlainText()
+  // above, independent of how the <pre> renders, so it was never truncated.
   return (
     <div className="relative">
-      <pre {...props}>{children}</pre>
+      <pre {...props} className={`${props.className ?? ""} whitespace-pre-wrap break-words`}>
+        {children}
+      </pre>
       <button
         type="button"
         onClick={async () => {
@@ -141,7 +149,9 @@ function GuideViewComponent({ pod, scenario }: GuideViewProps) {
       {printRoot &&
         createPortal(
           <div className="prose max-w-none p-10">
-            <h1 className="mb-6">{scenario.name}</h1>
+            {/* GUIDE-UX-TRIAL / SCEN-UX #116: match the on-screen guide's own
+                H1 (also renumbered to Scenario N in the .md source). */}
+            <h1 className="mb-6">Scenario {scenario.displayNumber} — {scenario.name}</h1>
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={printMarkdownComponents}

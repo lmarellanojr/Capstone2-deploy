@@ -1,4 +1,4 @@
-## Scenario 01 - Network Reconnaissance & Exploitation
+## Scenario 1 — Network Reconnaissance & Exploitation
 
 > **Network:** Your pod uses `$TARGET_SUBNET` (formula `10.0.<50+pod_id>.0/24`). Kali `$TARGET_KALI`, Meta `$TARGET_META`, DVWA `$TARGET_DVWA`.
 
@@ -54,11 +54,9 @@ If the subnet variable is empty: `echo $TARGET_SUBNET` - or use the IP strip in 
 
 **Goal:** List open TCP ports on the **meta** target (expect 21, 22, 80, 8180).
 
-**Fast path (recommended for scoring and lab resources):**
+**Recommended (shows all four expected ports, including 8180):**
 
 ```bash
-nmap -F $TARGET_META
-# or explicitly:
 nmap -p 21,22,80,8180 $TARGET_META
 ```
 
@@ -68,7 +66,9 @@ nmap -p 21,22,80,8180 $TARGET_META
 <details>
 <summary>Hint</summary>
 
-Prefer `-p` or `-F` over a full `-p-` scan first; full scans are slow on shared hosts.
+`-p 21,22,80,8180` is the recommended command for this milestone — it's what the Done-when check above needs.
+`nmap -F $TARGET_META` (top-100-ports scan) is a faster **optional** alternative, but it does **not** include port 8180, so it will not by itself satisfy this milestone's Done-when. Use `-F` only for a quick look, then still run the `-p` command above before Manual Check.
+Prefer `-p` (or `-F` for the optional quick look) over a full `-p-` scan first; full scans are slow on shared hosts.
 
 </details>
 

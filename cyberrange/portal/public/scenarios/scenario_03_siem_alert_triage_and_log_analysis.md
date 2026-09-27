@@ -1,4 +1,4 @@
-## Scenario 09 — SIEM Alert Triage and Log Analysis
+## Scenario 3 — SIEM Alert Triage
 
 > **Network:** Generate traffic from Kali `$TARGET_KALI` toward meta `$TARGET_META` (and optionally DVWA). SIEM manager: `10.0.40.10` (shared). Your agents are named like `pod-<you>-meta` and `pod-<you>-dvwa`.
 
@@ -32,10 +32,18 @@ You create your own alert activity, then triage it. There is **no** required ins
 On **Kali**:
 
 ```bash
-# Failed / unknown-user SSH (often Wazuh rule 5710-class)
 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 nosuchuser@$TARGET_META exit 2>/dev/null || true
+```
 
-# Light recon noise
+> If pasting this inserts a literal `^[[200~` in front of the command (or the command otherwise fails to run), run this **once** in the Kali terminal, then paste again — or just type the line by hand:
+> ```bash
+> bind 'set enable-bracketed-paste off'
+> ```
+> Prefer the code block's **Copy** button over hand-selecting the text above, so you get the exact command even if it wraps on screen.
+
+Then, light recon noise (separate block, does **not** trigger the primary 5710 signal by itself):
+
+```bash
 nmap -sn $TARGET_META
 nmap -F $TARGET_META
 ```
@@ -155,6 +163,7 @@ Expand each section until the file is clearly longer than a tweet.
 | Seeing many CIS/SCA rows (19007, 19008, 19004) | These are agent config scans (noise to classify). Focus on **5710** (failed SSH) or **510** (rootcheck) as true positives. |
 | nmap is not creating alerts | Correct—nmap `-sn` / `-F` usually does **not** create Wazuh rows. It is not a primary detection signal. |
 | Shared SIEM (multi-student) | Only trust agents named with **your** student/pod id (e.g., `pod-alice-meta`). Manager IP is `10.0.40.10`. |
+| Kali tab disconnects / intermittent "Session Expired" during this lab (~20–30 min in) | Known issue, cause not yet confirmed — tracked in [REG-01 #39](https://github.com/lmarellanojr/Capstone2-deploy/issues/39). Reload the Kali tab (or the page) and re-authenticate; your triage files on **meta** are not affected. |
 
 ### Reflection (optional)
 

@@ -137,6 +137,12 @@ export function ProvisioningOverlay({ isOpen, onClose, onSubmit }: ProvisioningO
                       : "border-border hover:border-brand/40 bg-secondary"
                   }`}
                 >
+                  {/* GUIDE-UX-TRIAL / SCEN-UX #116: same "Scenario N" number
+                      as the catalog card, so the picker doesn't disagree
+                      with the lab a student just came from. */}
+                  <p className="text-xs font-semibold text-brand mb-0.5">
+                    Scenario {scenario.displayNumber}
+                  </p>
                   <p className="font-semibold text-sm text-text-main">{scenario.name}</p>
                   <p className="text-xs text-text-muted mt-1">MITRE: {scenario.mitre}</p>
                 </button>
@@ -152,7 +158,10 @@ export function ProvisioningOverlay({ isOpen, onClose, onSubmit }: ProvisioningO
               <p className="mb-2">
                 <span className="text-text-muted">Scenario:</span>{" "}
                 <span className="font-semibold text-text-main">
-                  {scenarios.find((s) => s.id === selectedScenario)?.name}
+                  {(() => {
+                    const s = scenarios.find((s) => s.id === selectedScenario)
+                    return s ? `Scenario ${s.displayNumber} — ${s.name}` : null
+                  })()}
                 </span>
               </p>
               <p className="mb-2">

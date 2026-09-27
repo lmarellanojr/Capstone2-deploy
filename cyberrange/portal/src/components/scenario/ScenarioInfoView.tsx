@@ -76,7 +76,11 @@ export function ScenarioInfoView({ scenario, onStart, loading, error }: Scenario
             {scenarioDuration(scenario.difficulty)} · MITRE {scenario.mitre}
           </span>
         </div>
-        <h1 className="text-3xl font-bold mb-2 text-text-main">{scenario.name}</h1>
+        {/* GUIDE-UX-TRIAL / SCEN-UX #116: "Scenario N -- Name" so this page
+            matches the catalog card and the lab header breadcrumb. */}
+        <h1 className="text-3xl font-bold mb-2 text-text-main">
+          Scenario {scenario.displayNumber} — {scenario.name}
+        </h1>
         <p className="text-text-secondary text-lg">{scenario.description}</p>
       </div>
 
