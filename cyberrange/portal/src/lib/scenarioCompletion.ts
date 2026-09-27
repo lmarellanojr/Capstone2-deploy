@@ -49,7 +49,8 @@ export function isScenarioComplete(options: {
     loadedProgressKey,
   } = options
   if (currentProgressKey === null || loadedProgressKey !== currentProgressKey) return false
+  if (normalizeScenarioId(scenarioId) === null) return false
   if (requiredMilestoneIds.length === 0) return false
   if (!requiredMilestoneIds.every((id) => completedMilestoneIds.has(id))) return false
-  return normalizeScenarioId(scenarioId) !== "11" || completedMilestoneIds.has(3)
+  return true
 }

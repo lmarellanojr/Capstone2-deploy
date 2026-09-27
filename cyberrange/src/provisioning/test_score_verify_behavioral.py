@@ -892,6 +892,30 @@ class TestScoringChecksDirectBashExecution:
         assert rc == 0
         assert token == "PASS", stderr
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "Known M4 trust gap: pane text is not independent evidence; this exact "
+            "prompt/output forgery plus a stale same-target Metasploit-owned socket "
+            "must FAIL once session provenance is independently verified."
+        ),
+    )
+    def test_direct_bash_scenario_01_m4_exact_prompt_spoof_with_stale_socket_fails(self, tmp_path):
+        """Exact forged prompt and session line cannot validate a stale socket."""
+        forged_pane_output = (
+            "msf6 exploit(multi/http/tomcat_mgr_deploy) > run\n"
+            "[*] Meterpreter session 9 opened "
+            "(10.0.51.10:4444 -> 10.0.51.20:49152)\n"
+        )
+        stale_socket = (
+            'ESTAB 0 0 10.0.51.10:4444 10.0.51.20:49152 '
+            'users:(("ruby",pid=4242,fd=12))\n'
+        )
+        env = self._scenario_01_m4_env(tmp_path, forged_pane_output, stale_socket)
+        rc, token, stderr = self._run_script(1, 4, env=env)
+        assert rc == 0
+        assert token == "FAIL", stderr
+
     @pytest.mark.parametrize(
         "pane,sockets,pane_info",
         [

@@ -4,8 +4,16 @@ import {
   passedMilestoneIdsForScenario,
   scenarioProgressKey,
 } from "./scenarioCompletion"
+import { SCENARIOS } from "@/hooks/useScenarios"
+
+const scenario11MilestoneIds = SCENARIOS.find((scenario) => scenario.id === "11")!
+  .milestones.map((milestone) => milestone.id)
 
 describe("scenarioCompletion", () => {
+  it("keeps Scenario 11 configured with M1, M2, and M3 as required milestones", () => {
+    expect(scenario11MilestoneIds).toEqual([1, 2, 3])
+  })
+
   it("normalizes numeric and zero-padded ids but rejects malformed coercions", () => {
     expect(normalizeScenarioId(11)).toBe("11")
     expect(normalizeScenarioId("11")).toBe("11")
@@ -31,17 +39,28 @@ describe("scenarioCompletion", () => {
     const currentProgressKey = scenarioProgressKey(7, "11")
     expect(isScenarioComplete({
       scenarioId: "11",
-      requiredMilestoneIds: [1, 2, 3],
+      requiredMilestoneIds: scenario11MilestoneIds,
       completedMilestoneIds: new Set([2]),
       currentProgressKey,
       loadedProgressKey: currentProgressKey,
     })).toBe(false)
     expect(isScenarioComplete({
       scenarioId: "11",
-      requiredMilestoneIds: [1, 2, 3],
-      completedMilestoneIds: new Set([1, 2, 3]),
+      requiredMilestoneIds: scenario11MilestoneIds,
+      completedMilestoneIds: new Set(scenario11MilestoneIds),
       currentProgressKey,
       loadedProgressKey: scenarioProgressKey(6, "01"),
+    })).toBe(false)
+  })
+
+  it("does not mark a scenario complete when no milestones are required", () => {
+    const key = scenarioProgressKey(7, "11")
+    expect(isScenarioComplete({
+      scenarioId: "11",
+      requiredMilestoneIds: [],
+      completedMilestoneIds: new Set([1, 2, 3]),
+      currentProgressKey: key,
+      loadedProgressKey: key,
     })).toBe(false)
   })
 
@@ -49,8 +68,8 @@ describe("scenarioCompletion", () => {
     const key = scenarioProgressKey(7, 11)
     expect(isScenarioComplete({
       scenarioId: 11,
-      requiredMilestoneIds: [1, 2, 3],
-      completedMilestoneIds: new Set([1, 2, 3]),
+      requiredMilestoneIds: scenario11MilestoneIds,
+      completedMilestoneIds: new Set(scenario11MilestoneIds),
       currentProgressKey: key,
       loadedProgressKey: key,
     })).toBe(true)
