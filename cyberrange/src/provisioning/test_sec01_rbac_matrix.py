@@ -66,6 +66,19 @@ ANY_UUID = "00000000-0000-0000-0000-000000000001"
 ROUTE_POLICY = {
     ("GET", "/health"): (PUBLIC, "/health", None),
     ("GET", "/capacity"): (PUBLIC, "/capacity", None),
+    # Shared-secret portal callback (#109). No JWT; matrix sends the secret header.
+    ("POST", "/internal/browser-score"): (
+        PUBLIC,
+        "/internal/browser-score",
+        {
+            "student_id": "student_demo",
+            "pod_id": POD,
+            "scenario_id": 6,
+            "milestone_id": 1,
+            "label": "browser:sqli-m1",
+        },
+    ),
+
     ("POST", "/pods/provision"): (ANY_APP_ROLE, "/pods/provision", {"student_id": "ignored", "scenario_id": "01"}),
     ("GET", "/pods"): (ANY_APP_ROLE, "/pods", None),
     ("GET", "/pods/{pod_id}/status"): (ANY_APP_ROLE, f"/pods/{POD}/status", None),
@@ -77,6 +90,8 @@ ROUTE_POLICY = {
     ("GET", "/pods/{pod_id}/alerts"): (ANY_APP_ROLE, f"/pods/{POD}/alerts", None),
     ("GET", "/progress"): (ANY_APP_ROLE, "/progress", None),
     ("DELETE", "/progress/{scenario_id}"): (ANY_APP_ROLE, "/progress/1", None),
+    ("POST", "/progress/{scenario_id}/flag"): (ANY_APP_ROLE, "/progress/1/flag", {"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"}),
+    ("GET", "/progress/{scenario_id}/rubrics"): (ANY_APP_ROLE, "/progress/1/rubrics", None),
     ("POST", "/reviews/submit"): (ANY_APP_ROLE, "/reviews/submit", {"scenario_id": 1, "report_text": "matrix probe"}),
     # INST-03 (#86): owner-or-staff read, owner-only resubmit (see IDOR tests below).
     ("GET", "/reviews/{review_id}"): (ANY_APP_ROLE, "/reviews/1", None),
@@ -110,6 +125,7 @@ def client(monkeypatch):
     monkeypatch.setattr("pods_router.get_lxd_free_mb", lambda: 10**6)
     monkeypatch.setattr("pods_router.perform_provisioning", lambda *a, **k: None)
     monkeypatch.setattr("pods_router.perform_destruction", lambda *a, **k: None)
+    monkeypatch.setenv("BROWSER_SCORE_SECRET", "sec01-matrix-secret")
     kc = FakeKeycloak()
     kc.add("admin_demo", "admin")
     app.dependency_overrides[keycloak_admin.get_client] = lambda: kc
@@ -143,6 +159,12 @@ def _insert_pod(pod_id, owner, status="DESTROYED"):
 
 def _request(client, method, url, body):
     kwargs = {"json": body} if body is not None else {}
+    if url == "/internal/browser-score":
+        kwargs["headers"] = {
+            "X-Browser-Score-Secret": os.environ.get(
+                "BROWSER_SCORE_SECRET", "sec01-matrix-secret"
+            )
+        }
     return client.request(method, url, **kwargs)
 
 

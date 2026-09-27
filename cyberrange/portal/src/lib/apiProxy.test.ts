@@ -111,4 +111,10 @@ describe("/api route inventory", () => {
     expect(src).toMatch(/if \(!session\)\s*\{\s*return NextResponse\.json\(\{ error: "Unauthorized" \}, \{ status: 401 \}\)/)
     expect(src).toContain("Bearer ${session.accessToken}")
   })
+
+  it("progress flag route forwards POST JSON body as 4th proxyToApi argument", () => {
+    const src = fs.readFileSync(path.join(apiDir, "progress/[scenarioId]/flag/route.ts"), "utf8")
+    expect(src).toMatch(/const body = await req\.json\(\)\.catch\(\(\) => \(\{\}\)\)/)
+    expect(src).toMatch(/proxyToApi\(req,\s*`\/progress\/\$\{scenarioId\}\/flag`,\s*"POST",\s*body\)/)
+  })
 })

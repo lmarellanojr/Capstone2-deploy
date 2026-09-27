@@ -564,11 +564,11 @@ def test_submit_and_list_reviews():
     assert detail["score"] is None
 
 
-def test_submit_scoring_conflict_without_report_text():
+def test_submit_scoring_conflict_rejected_for_students():
+    """Students cannot forge SCORING_CONFLICT via /reviews/submit (system/hybrid only)."""
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
 
-    # Submit as student
     res = client.post("/reviews/submit", json={
         "scenario_id": 2,
         "milestone_id": 1,
@@ -576,19 +576,19 @@ def test_submit_scoring_conflict_without_report_text():
         "conflict_reason": "Flag submitted correctly but automated verifier failed.",
         "evidence_data": {"command": "cat /flag.txt", "output": "flag{pwned_123}"}
     }, headers=headers)
-    assert res.status_code == 200
-    review_id = res.json()["review_id"]
+    assert res.status_code == 400
+    assert "hybrid scoring system only" in res.json()["detail"].lower()
 
-    # Verify via detail endpoint as instructor
+    # No forged review row created
     app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor1")
-    res_detail = client.get(f"/instructor/reviews/{review_id}", headers=headers)
-    assert res_detail.status_code == 200
-    detail = res_detail.json()
-    assert detail["case_type"] == "SCORING_CONFLICT"
-    assert detail["report_text"] is None
-    assert detail["conflict_reason"] == "Flag submitted correctly but automated verifier failed."
-    assert "flag{pwned_123}" in detail["evidence_data"]
-    assert detail["score"] is None
+    queue = client.get("/instructor/reviews?status_filter=PENDING", headers=headers)
+    assert queue.status_code == 200
+    forged = [
+        r for r in queue.json()["reviews"]
+        if r.get("case_type") == "SCORING_CONFLICT"
+        and r.get("conflict_reason") == "Flag submitted correctly but automated verifier failed."
+    ]
+    assert forged == []
 
 
 def test_submit_invalid_case_type():
@@ -604,6 +604,7 @@ def test_submit_invalid_case_type():
 
 
 def test_submit_scoring_conflict_missing_reason_and_report():
+    """SCORING_CONFLICT is rejected before the missing-reason/report validation path."""
     client = TestClient(app)
     headers = {"Authorization": "Bearer mock_token"}
     res = client.post("/reviews/submit", json={
@@ -611,7 +612,7 @@ def test_submit_scoring_conflict_missing_reason_and_report():
         "case_type": "SCORING_CONFLICT"
     }, headers=headers)
     assert res.status_code == 400
-    assert "Either conflict_reason or report_text is required" in res.json()["detail"]
+    assert "hybrid scoring system only" in res.json()["detail"].lower()
 
 
 def test_submit_empty_report_text():
@@ -1845,7 +1846,7 @@ def test_resolve_review_deleted_row_returns_404(monkeypatch):
 
         def execute(self, sql, *args, **kwargs):
             res = self._target.execute(sql, *args, **kwargs)
-            if "SELECT student_id, scenario_id, milestone_id FROM review_cases" in sql:
+            if "SELECT student_id, scenario_id, milestone_id, case_type" in sql:
                 # Row deleted immediately after preliminary SELECT check
                 other_conn = real_get_conn()
                 try:

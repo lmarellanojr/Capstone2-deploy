@@ -17,8 +17,12 @@ import {
   stalePhpSessionClearCookies,
   stripDisallowedDvwaMenu,
 } from '@/lib/dvwaProxy'
+import { browserScoreLabel, detectBrowserMilestone } from '@/lib/dvwaScoreSignals'
 
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://10.115.77.1:5000'
+
+/** Warn once per process when a real exploit is detected but scoring cannot run. */
+let warnedMissingBrowserScoreSecret = false
 
 try {
   new URL(API_URL)
@@ -177,6 +181,50 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
   }
 
   if (text !== null) {
+    const requestText =
+      body && contentType && /application\/x-www-form-urlencoded|text\/plain/i.test(contentType)
+        ? new TextDecoder().decode(body)
+        : ''
+    const milestone =
+      up.status === 200
+        ? detectBrowserMilestone({
+            path: upstreamPath,
+            search: req.nextUrl.search,
+            method: req.method,
+            requestBody: requestText,
+            responseText: text,
+          })
+        : null
+    const secret = process.env.BROWSER_SCORE_SECRET
+    const studentName = session.user?.name
+    if (milestone && !secret && !warnedMissingBrowserScoreSecret) {
+      warnedMissingBrowserScoreSecret = true
+      console.warn(
+        'dvwa proxy: BROWSER_SCORE_SECRET is unset; browser milestone scoring is skipped. ' +
+          'Set the same value in portal/.env.local and the provision API env/.env.'
+      )
+    }
+    if (milestone && secret && studentName) {
+      const label = browserScoreLabel(milestone)
+      // Long-running Node only. Do not move this route to the Edge runtime:
+      // the process can exit before this fetch finishes and the score is lost.
+      void fetch(`${API_URL}/internal/browser-score`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-browser-score-secret': secret,
+        },
+        body: JSON.stringify({
+          student_id: studentName,
+          pod_id: podId,
+          scenario_id: 6,
+          milestone_id: milestone,
+          label,
+        }),
+        cache: 'no-store',
+      }).catch((err) => console.error('dvwa proxy: browser score failed', err))
+    }
+
     out.set('content-type', up.headers.get('content-type') || 'text/html; charset=utf-8')
     return new NextResponse(rewriteHtml(stripDisallowedDvwaMenu(text)), {
       status: up.status,
