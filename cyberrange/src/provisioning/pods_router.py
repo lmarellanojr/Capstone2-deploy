@@ -1,13 +1,15 @@
 """Pod provisioning and lifecycle API routes."""
+import hmac
 import json
 import logging
+import os
 import sqlite3
 from typing import Optional, Union
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response, status
 
 import auth
 from auth import caller_identity, require_owner, verify_token
@@ -36,13 +38,81 @@ from models import (
 from hybrid_scoring import evaluate_hybrid_submission
 from rubrics import CATALOG_SCENARIO_IDS, list_rubrics
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
-from scoring import verify_milestone
+from scoring import record_browser_milestone, verify_milestone
 from ttl import ttl_payload
 
 # SEC-01 (#36): every route here requires one of the three application roles,
 # on top of whatever narrower check the route adds (require_owner,
 # require_role(["instructor", "admin"]), ...). See auth.require_app_role.
 router = APIRouter(dependencies=[Depends(auth.require_app_role)])
+
+# Shared-secret browser scoring (#109). No JWT / require_app_role — the portal
+# Node process authenticates with X-Browser-Score-Secret only.
+internal_router = APIRouter()
+
+_BROWSER_LABELS = {
+    1: "browser:sqli-m1",
+    2: "browser:sqli-m2",
+    3: "browser:sqli-m3",
+    4: "browser:xss-m4",
+}
+
+
+class BrowserScoreIn(BaseModel):
+    student_id: str
+    pod_id: int
+    scenario_id: int
+    milestone_id: int
+    label: str
+
+
+def _pod_scenario_is_06(raw) -> bool:
+    return str(raw).lstrip("0") == "6" or str(raw) in {"6", "06"}
+
+
+@internal_router.post("/internal/browser-score")
+def browser_score(
+    body: BrowserScoreIn,
+    x_browser_score_secret: str = Header(default=""),
+):
+    expected = os.environ.get("BROWSER_SCORE_SECRET") or ""
+    if not expected:
+        logger.warning(
+            "BROWSER_SCORE_SECRET is unset; POST /internal/browser-score returns 503. "
+            "Set the same value in env/.env and portal/.env.local."
+        )
+        raise HTTPException(status_code=503, detail="Browser scoring is not configured")
+    got = x_browser_score_secret or ""
+    # Bytes compare: never raises on non-ASCII (str compare_digest would -> 500),
+    # and returns False for unequal length. Guarantees 401, not 500.
+    if not hmac.compare_digest(got.encode("utf-8"), expected.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if body.scenario_id != 6 or body.milestone_id not in _BROWSER_LABELS:
+        raise HTTPException(status_code=400, detail="Unsupported milestone")
+    if body.label != _BROWSER_LABELS[body.milestone_id]:
+        raise HTTPException(status_code=400, detail="Label does not match milestone")
+
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM pods WHERE pod_id=?", (body.pod_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pod not found")
+        pod = dict(row)
+        if pod["status"] != "ACTIVE":
+            raise HTTPException(
+                status_code=409, detail=f"Pod not active (status: {pod['status']})"
+            )
+        if pod["student_id"] != body.student_id:
+            raise HTTPException(status_code=403, detail="Pod owner mismatch")
+        if not _pod_scenario_is_06(pod.get("scenario_id")):
+            raise HTTPException(status_code=409, detail="Pod is not on scenario 06")
+        with conn:
+            record_browser_milestone(conn, pod, body.milestone_id, body.label)
+    finally:
+        conn.close()
+    return {"status": "PASS", "milestone_id": body.milestone_id}
 
 
 def _scoring_deps() -> dict:

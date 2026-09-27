@@ -19,6 +19,7 @@ from capacity import (
 from config import API_BIND_HOST, API_BIND_PORT, MAX_PODS, POD_TTL_HOURS, REAP_INTERVAL_SECONDS, SCORE_POLL_INTERVAL_SECONDS, PROFILE_NAME
 from db import get_db_connection, init_db
 from logging_config import configure_logging
+from pods_router import internal_router as browser_score_router
 from pods_router import router as pods_router
 from users_router import router as users_router
 from infra_health import router as infra_health_router
@@ -48,6 +49,7 @@ if _score_mod is None or _wazuh_mod is None:
 
 app = FastAPI(title="Cyber Range Pod Provisioning API (LXD Version)", version="1.2.0")
 app.include_router(pods_router)
+app.include_router(browser_score_router)
 app.include_router(users_router)
 app.include_router(infra_health_router)
 # alerts_endpoint.py keeps its own stub-friendly verify_token_dep, so the

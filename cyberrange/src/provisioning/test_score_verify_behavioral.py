@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Literal, Tuple
@@ -692,15 +693,22 @@ class TestScoringChecksShCoverage:
 # SECTION 10 — scoring_checks.sh Direct Bash Execution Across 4 Scenarios
 # ============================================================================
 def _find_bash() -> str | None:
-    import shutil
-    p = shutil.which("bash")
-    if p:
-        return p
-    for candidate in [
+    """Prefer Git Bash on Windows. WSL's System32 bash cannot run Windows script paths."""
+    git_candidates = [
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files\Git\usr\bin\bash.exe",
         r"C:\Git\bin\bash.exe",
-    ]:
+    ]
+    if os.name == "nt":
+        for candidate in git_candidates:
+            if Path(candidate).exists():
+                return candidate
+    p = shutil.which("bash")
+    if p and "system32" not in p.lower() and "SysNative" not in p:
+        return p
+    if p:
+        return p
+    for candidate in git_candidates:
         if Path(candidate).exists():
             return candidate
     return None
@@ -881,31 +889,201 @@ class TestScoringChecksDirectBashExecution:
         finally:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 
-    def test_direct_bash_scenario_06_m2_artifact_pass(self):
-        """Scenario 06 M2: /tmp/sqli_users.txt artifact produces PASS."""
-        import subprocess
-        setup_cmd = 'mkdir -p /tmp && printf \'admin:password123\\n\' > /tmp/sqli_users.txt'
-        cleanup_cmd = 'rm -f /tmp/sqli_users.txt'
-        try:
-            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
-            rc, token, stderr = self._run_script(6, 2)
-            assert rc == 0
-            assert token == "PASS"
-        finally:
-            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+    def _write_history(self, text: str) -> None:
+        (self.default_home / ".bash_history").write_text(text, encoding="utf-8")
 
-    def test_direct_bash_scenario_06_m3_artifact_pass(self):
-        """Scenario 06 M3: /tmp/admin_hash.txt artifact produces PASS."""
-        import subprocess
-        setup_cmd = 'mkdir -p /tmp && printf \'admin:e10adc3949ba59abbe56e057f20f883e\\n\' > /tmp/admin_hash.txt'
-        cleanup_cmd = 'rm -f /tmp/admin_hash.txt'
-        try:
-            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
-            rc, token, stderr = self._run_script(6, 3)
-            assert rc == 0
-            assert token == "PASS"
-        finally:
-            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+    def test_direct_bash_scenario_06_m2_artifact_pass(self, tmp_path):
+        """Scenario 06 M2: username:32-hex file produces PASS."""
+        artifact = tmp_path / "sqli_users.txt"
+        artifact.write_text("admin:5f4dcc3b5aa765d61d8327deb882cf99\n", encoding="utf-8")
+        rc, token, stderr = self._run_script(
+            6, 2, env={"SQLI_USERS_FILE": artifact.as_posix()}
+        )
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_direct_bash_scenario_06_m3_artifact_pass(self, tmp_path):
+        """Scenario 06 M3: real sqlmap history plus 32-hex hash file produces PASS."""
+        artifact = tmp_path / "admin_hash.txt"
+        artifact.write_text("e10adc3949ba59abbe56e057f20f883e\n", encoding="utf-8")
+        self._write_history(
+            'sqlmap -u "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit" '
+            '--cookie="PHPSESSID=abc123def456; security=low" -D dvwa -T users --dump --batch\n'
+        )
+        rc, token, stderr = self._run_script(
+            6, 3, env={"ADMIN_HASH_FILE": artifact.as_posix()}
+        )
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_scenario_06_m1_guide_echo_is_fail(self):
+        self._write_history("echo \"manual sqli probe: 1' OR '1'='1 against DVWA\"\n")
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_real_curl_is_pass(self):
+        self._write_history(
+            "curl -s -b 'PHPSESSID=abc123def456; security=low' "
+            "\"http://10.0.51.12/dvwa/vulnerabilities/sqli/?id=1'+OR+'1'='1&Submit=Submit\"\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_scenario_06_m1_quote_only_curl_with_target_env_is_pass(self):
+        """Canonical 1' probe. $TARGET_DVWA stays literal in history and must still PASS."""
+        self._write_history(
+            "curl -s -b 'PHPSESSID=abc123def456; security=low' "
+            "\"http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1%27&Submit=Submit\"\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_scenario_06_m1_mixed_case_or_is_pass(self):
+        self._write_history(
+            "curl -s \"http://10.0.51.12/dvwa/vulnerabilities/sqli/?id=1'+Or+'1'='1&Submit=Submit\"\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_scenario_06_m1_plain_quoted_url_without_injection_is_fail(self):
+        """Finding 3: shell apostrophes around a plain id=1 URL must not PASS."""
+        self._write_history(
+            "curl -s 'http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit'\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_plain_id_ending_at_shell_quote_is_fail(self):
+        """Finding 8: curl '...?id=1' must FAIL (closing quote is not injection)."""
+        self._write_history(
+            "curl -s 'http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1'\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_zsh_extended_history_echo_is_fail(self):
+        """Finding 4: zsh EXTENDED_HISTORY echo paste must FAIL."""
+        self._write_history(
+            ": 1700000000:0;echo \"manual sqli probe: 1' OR '1'='1 against DVWA\"\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_leading_whitespace_echo_is_fail(self):
+        self._write_history("   echo \"1' OR '1'='1\"\n")
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_printf_guide_line_is_fail(self):
+        self._write_history("printf '%s\\n' \"1' OR '1'='1\"\n")
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m1_chained_echo_is_fail(self):
+        self._write_history("true; echo \"1' OR '1'='1 against DVWA\"\n")
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m3_snoopy_sqlmap_with_hash_is_pass(self, tmp_path):
+        """Finding 5: Snoopy evidence counts when interactive history is empty."""
+        snoopy = tmp_path / "auth.log"
+        snoopy.write_text(
+            "snoopy[123]: cmdline: sqlmap -u http://10.0.51.12/dvwa/vulnerabilities/sqli/"
+            "?id=1 --cookie=PHPSESSID=abc123def456 -D dvwa -T users --dump --batch\n",
+            encoding="utf-8",
+        )
+        artifact = tmp_path / "admin_hash.txt"
+        artifact.write_text("5f4dcc3b5aa765d61d8327deb882cf99\n", encoding="utf-8")
+        self._write_history("")
+        rc, token, _ = self._run_script(
+            6,
+            3,
+            env={
+                "ADMIN_HASH_FILE": artifact.as_posix(),
+                "SNOOPY_LOG_FILE": snoopy.as_posix(),
+            },
+        )
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_scenario_06_m1_syntax_error_artifact_is_pass(self, tmp_path):
+        artifact = tmp_path / "sqli_probe.txt"
+        artifact.write_text("You have an error in your SQL syntax\n", encoding="utf-8")
+        rc, token, _ = self._run_script(6, 1, env={"SQLI_PROBE_FILE": artifact.as_posix()})
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_scenario_06_m2_union_echo_history_is_fail(self):
+        self._write_history(
+            "echo \"UNION SELECT user, password FROM users\" >> /tmp/sqli_users.txt\n"
+        )
+        rc, token, _ = self._run_script(6, 2)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m2_placeholder_file_is_fail(self, tmp_path):
+        artifact = tmp_path / "sqli_users.txt"
+        artifact.write_text("UNION SELECT user, password FROM users\n", encoding="utf-8")
+        rc, token, _ = self._run_script(6, 2, env={"SQLI_USERS_FILE": artifact.as_posix()})
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m2_real_rows_file_is_pass(self, tmp_path):
+        artifact = tmp_path / "sqli_users.txt"
+        artifact.write_text("admin:5f4dcc3b5aa765d61d8327deb882cf99\n", encoding="utf-8")
+        rc, token, _ = self._run_script(6, 2, env={"SQLI_USERS_FILE": artifact.as_posix()})
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_scenario_06_m3_placeholder_sqlmap_is_fail(self):
+        """Angle-bracket cookie fails. $TARGET_DVWA in the same line is not the reason."""
+        self._write_history(
+            'sqlmap -u "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit" '
+            '--cookie="PHPSESSID=<session_id>; security=low" -D dvwa -T users --dump --batch\n'
+        )
+        rc, token, _ = self._run_script(6, 3)
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m3_placeholder_hash_file_is_fail(self, tmp_path):
+        artifact = tmp_path / "admin_hash.txt"
+        artifact.write_text("<admin_hash_here>\n", encoding="utf-8")
+        self._write_history(
+            'sqlmap -u "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1" '
+            '--cookie="PHPSESSID=abc123def456; security=low" -D dvwa -T users --dump --batch\n'
+        )
+        rc, token, _ = self._run_script(6, 3, env={"ADMIN_HASH_FILE": artifact.as_posix()})
+        assert rc == 0
+        assert token == "FAIL"
+
+    def test_scenario_06_m3_real_hash_file_is_pass(self, tmp_path):
+        artifact = tmp_path / "admin_hash.txt"
+        artifact.write_text("5f4dcc3b5aa765d61d8327deb882cf99\n", encoding="utf-8")
+        self._write_history(
+            'sqlmap -u "http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit" '
+            '--cookie="PHPSESSID=abc123def456; security=low" -D dvwa -T users --dump --batch\n'
+        )
+        rc, token, _ = self._run_script(6, 3, env={"ADMIN_HASH_FILE": artifact.as_posix()})
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_scenario_06_check_ignores_sqlmap_output_file(self):
+        """Decision: /tmp/sqlmap_output.txt is not an M3 pass path."""
+        from ssh_verifier import SCORING_SCRIPT_PATH
+        content = Path(SCORING_SCRIPT_PATH).read_text(encoding="utf-8")
+        start = content.index("check_scenario_6()")
+        end = content.index("check_scenario_7")
+        assert "sqlmap_output.txt" not in content[start:end]
 
     def test_direct_bash_scenario_06_m4_history_pass(self, tmp_path):
         """Scenario 06 M4: seeded bash history with curl XSS payload produces PASS."""
