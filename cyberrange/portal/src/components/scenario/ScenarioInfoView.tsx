@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Scenario } from "@/hooks/useScenarios";
+import { Scenario, scenarioDisplayTitle } from "@/hooks/useScenarios";
 import { Badge, Button, Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui";
 import { DifficultyBadge, scenarioDuration } from "@/components/scenarios/DifficultyBadge";
 import { MilestoneItem } from "@/components/progress/MilestoneItem";
@@ -76,7 +76,11 @@ export function ScenarioInfoView({ scenario, onStart, loading, error }: Scenario
             {scenarioDuration(scenario.difficulty)} · MITRE {scenario.mitre}
           </span>
         </div>
-        <h1 className="text-3xl font-bold mb-2 text-text-main">{scenario.name}</h1>
+        {/* GUIDE-UX-TRIAL / SCEN-UX #116: "Scenario N -- Name" so this page
+            matches the catalog card and the lab header breadcrumb. */}
+        <h1 className="text-3xl font-bold mb-2 text-text-main">
+          {scenarioDisplayTitle(scenario)}
+        </h1>
         <p className="text-text-secondary text-lg">{scenario.description}</p>
       </div>
 

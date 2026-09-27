@@ -51,9 +51,12 @@ src/provisioning/test_score_persistence.py ............                  [100%]
 ### 2.1 Scenario Catalog & Preserved Scenario Mapping
 In the cyber range curriculum and portal documentation, scenarios are mapped as follows:
 - **Scenario 1:** Network Reconnaissance (`scenario_id = 1`, [scenario_01_network_reconnaissance.md](../portal/public/scenarios/scenario_01_network_reconnaissance.md))
-- **Scenario 2 → Internal Scenario 06:** Web Application Attack SQL Injection / DVWA (`scenario_id = 6`, [scenario_06_web_application_attack_sql_injection.md](../portal/public/scenarios/scenario_06_web_application_attack_sql_injection.md))
-- **Scenario 3:** SIEM Alert Triage and Log Analysis (`scenario_id = 9`, [scenario_09_siem_alert_triage_and_log_analysis.md](../portal/public/scenarios/scenario_09_siem_alert_triage_and_log_analysis.md))
-- **Scenario 4:** Vulnerability Hardening (`scenario_id = 11`, [scenario_11_vulnerability_hardening.md](../portal/public/scenarios/scenario_11_vulnerability_hardening.md))
+- **Scenario 2 → Internal Scenario 06:** Web Application Attack SQL Injection / DVWA (`scenario_id = 6`, [scenario_02_web_application_attack_sql_injection.md](../portal/public/scenarios/scenario_02_web_application_attack_sql_injection.md))
+- **Scenario 3:** SIEM Alert Triage and Log Analysis (`scenario_id = 9`, [scenario_03_siem_alert_triage_and_log_analysis.md](../portal/public/scenarios/scenario_03_siem_alert_triage_and_log_analysis.md))
+- **Scenario 4:** Vulnerability Hardening (`scenario_id = 11`, [scenario_04_vulnerability_hardening.md](../portal/public/scenarios/scenario_04_vulnerability_hardening.md))
+
+> [!NOTE]
+> **GUIDE-UX-TRIAL / SCEN-UX #116:** the Guide filenames above were renamed from `scenario_06_…`/`scenario_09_…`/`scenario_11_…` to `scenario_02_…`/`scenario_03_…`/`scenario_04_…` so the on-disk name and each Guide's own H1 match the catalog's Scenario 1–4 numbering. `scenario_id` (1/6/9/11) is unchanged in the backend, database, and provisioning API — only the Guide filename, its H1 text, and `useScenarios.ts`'s `guideFile` pointer moved.
 
 > [!NOTE]
 > **Preserved Scenario Mapping:** In Maricar's mock data and screens, **Scenario 2 maps directly to internal scenario 06** (`scenario_id = 6`, SQL Injection). This mapping is preserved across all API endpoints, database records, and UI components.

@@ -4,6 +4,12 @@ import { Button } from "@/components/ui";
 
 interface Scenario {
   id: string;
+  // GUIDE-UX-TRIAL / SCEN-UX #116: single source of truth is
+  // SCENARIOS[].displayNumber in useScenarios.ts -- this card no longer
+  // keeps its own id -> "Scenario N" lookup table (that duplicate table was
+  // exactly the source of the catalog/guide numbering mismatch found in
+  // trial testing).
+  displayNumber: number;
   name: string;
   description: string;
   difficulty: number;
@@ -15,17 +21,9 @@ interface ScenarioCardProps {
   scenario: Scenario;
 }
 
-/** Capstone display order (portal ids stay 01/06/09/11). */
-const CAPSTONE_LABEL: Record<string, string> = {
-  '01': 'Scenario 1',
-  '06': 'Scenario 2',
-  '09': 'Scenario 3',
-  '11': 'Scenario 4',
-};
-
 export function ScenarioCard({ scenario }: ScenarioCardProps) {
   const duration = scenarioDuration(scenario.difficulty);
-  const capstone = CAPSTONE_LABEL[scenario.id] ?? `Lab ${scenario.id}`;
+  const capstone = `Scenario ${scenario.displayNumber}`;
 
   return (
     <div className="card-surface rounded-xl p-6 hover:shadow-card-hover transition h-full flex flex-col">
