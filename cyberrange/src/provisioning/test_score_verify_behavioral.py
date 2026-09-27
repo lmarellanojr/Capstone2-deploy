@@ -958,6 +958,15 @@ class TestScoringChecksDirectBashExecution:
         assert rc == 0
         assert token == "FAIL"
 
+    def test_scenario_06_m1_plain_id_ending_at_shell_quote_is_fail(self):
+        """Finding 8: curl '...?id=1' must FAIL (closing quote is not injection)."""
+        self._write_history(
+            "curl -s 'http://$TARGET_DVWA/dvwa/vulnerabilities/sqli/?id=1'\n"
+        )
+        rc, token, _ = self._run_script(6, 1)
+        assert rc == 0
+        assert token == "FAIL"
+
     def test_scenario_06_m1_zsh_extended_history_echo_is_fail(self):
         """Finding 4: zsh EXTENDED_HISTORY echo paste must FAIL."""
         self._write_history(

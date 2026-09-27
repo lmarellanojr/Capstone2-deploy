@@ -15,13 +15,22 @@ logger = logging.getLogger("provision_api")
 
 
 def has_browser_pass(
-    conn: sqlite3.Connection, pod_id: int, scenario_id: int, milestone_id: int
+    conn: sqlite3.Connection,
+    pod_id: int,
+    student_id: str,
+    scenario_id: int,
+    milestone_id: int,
 ) -> bool:
+    """True if this student already has a browser PASS on this pod/scenario/milestone.
+
+    student_id is required: pod slots 1–6 are reused, and a prior student's
+    browser PASS must not short-circuit Manual Check for the next occupant.
+    """
     row = conn.execute(
         "SELECT 1 FROM milestone_verification "
-        "WHERE pod_id=? AND scenario_id=? AND milestone_id=? AND status='PASS' "
-        "AND detection_data LIKE 'browser:%' LIMIT 1",
-        (pod_id, scenario_id, milestone_id),
+        "WHERE pod_id=? AND student_id=? AND scenario_id=? AND milestone_id=? "
+        "AND status='PASS' AND detection_data LIKE 'browser:%' LIMIT 1",
+        (pod_id, student_id, scenario_id, milestone_id),
     ).fetchone()
     return row is not None
 
@@ -38,7 +47,7 @@ def record_browser_milestone(
             SELECT ?, ?, 6, ?, 'PASS', 0, ?
             WHERE NOT EXISTS (
                 SELECT 1 FROM milestone_verification
-                WHERE pod_id=? AND scenario_id=6 AND milestone_id=?
+                WHERE pod_id=? AND student_id=? AND scenario_id=6 AND milestone_id=?
                   AND status='PASS' AND detection_data LIKE 'browser:%'
             )
             """,
@@ -48,6 +57,7 @@ def record_browser_milestone(
                 milestone_id,
                 label,
                 pod["pod_id"],
+                pod["student_id"],
                 milestone_id,
             ),
         )
@@ -73,7 +83,9 @@ async def verify_milestone(
         if scenario_id == 6:
             conn = get_db_connection()
             try:
-                if has_browser_pass(conn, pod["pod_id"], 6, milestone_id):
+                if has_browser_pass(
+                    conn, pod["pod_id"], pod["student_id"], 6, milestone_id
+                ):
                     return VerificationResponse(
                         status="PASS",
                         message="browser evidence already recorded",

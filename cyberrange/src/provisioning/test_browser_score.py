@@ -68,16 +68,43 @@ def _body(**over):
     return base
 
 
-def _pass_count(pod_id: int, milestone_id: int) -> int:
+def _pass_count(pod_id: int, milestone_id: int, student_id: str | None = None) -> int:
     conn = get_db_connection()
-    n = conn.execute(
-        "SELECT COUNT(*) FROM milestone_verification "
-        "WHERE pod_id=? AND scenario_id=6 AND milestone_id=? AND status='PASS' "
-        "AND detection_data LIKE 'browser:%'",
-        (pod_id, milestone_id),
-    ).fetchone()[0]
+    if student_id is None:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM milestone_verification "
+            "WHERE pod_id=? AND scenario_id=6 AND milestone_id=? AND status='PASS' "
+            "AND detection_data LIKE 'browser:%'",
+            (pod_id, milestone_id),
+        ).fetchone()[0]
+    else:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM milestone_verification "
+            "WHERE pod_id=? AND student_id=? AND scenario_id=6 AND milestone_id=? "
+            "AND status='PASS' AND detection_data LIKE 'browser:%'",
+            (pod_id, student_id, milestone_id),
+        ).fetchone()[0]
     conn.close()
     return n
+
+
+def _reassign_pod(pod_id: int, new_student_id: str) -> dict:
+    """Simulate slot reuse: same pod_id, new student owns the ACTIVE row."""
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE pods SET student_id=?, vmid_kali=?, vmid_meta=?, vmid_dvwa=? WHERE pod_id=?",
+        (
+            new_student_id,
+            f"pod-{new_student_id}-kali",
+            f"pod-{new_student_id}-meta",
+            f"pod-{new_student_id}-dvwa",
+            pod_id,
+        ),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM pods WHERE pod_id=?", (pod_id,)).fetchone()
+    conn.close()
+    return dict(row)
 
 
 def test_missing_secret_is_401(client):
@@ -268,3 +295,62 @@ async def test_browser_pass_on_6_does_not_affect_scenario_1():
         verify_siem_alert=None,
     )
     assert res.status == "FAIL"
+
+
+@pytest.mark.anyio
+async def test_verify_ignores_other_student_browser_pass_on_reused_pod():
+    """Finding 6: student B must not Manual-Check-PASS on student A's leftover row."""
+    _insert_pod(pod_id=3, student_id="student_a")
+    conn = get_db_connection()
+    with conn:
+        conn.execute(
+            "INSERT INTO milestone_verification "
+            "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (3, "student_a", 6, 1, "PASS", 0, "browser:sqli-m1"),
+        )
+    conn.close()
+    pod_b = _reassign_pod(3, "student_b")
+
+    class AlwaysFail:
+        async def verify_milestone(self, student_id, scenario_id, milestone_id):
+            return "FAIL", "would fail on Kali"
+
+    res = await verify_milestone(
+        pod=pod_b,
+        scenario_id=6,
+        milestone_id=1,
+        scoring_enabled=True,
+        ssh_verifier_cls=AlwaysFail,
+        detection_enabled=False,
+        detection_for=None,
+        verify_siem_alert=None,
+    )
+    assert res.status == "FAIL"
+    assert res.message == "would fail on Kali"
+
+
+def test_reused_pod_slot_records_browser_pass_per_student(client):
+    """Finding 7: two students on the same pod slot each get their own browser PASS."""
+    _insert_pod(pod_id=3, student_id="student_a")
+    assert (
+        client.post(
+            "/internal/browser-score",
+            json=_body(student_id="student_a", pod_id=3),
+            headers=_headers(),
+        ).status_code
+        == 200
+    )
+    assert _pass_count(3, 1, student_id="student_a") == 1
+
+    _reassign_pod(3, "student_b")
+    r = client.post(
+        "/internal/browser-score",
+        json=_body(student_id="student_b", pod_id=3),
+        headers=_headers(),
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "PASS"
+    assert _pass_count(3, 1, student_id="student_a") == 1
+    assert _pass_count(3, 1, student_id="student_b") == 1
+    assert _pass_count(3, 1) == 2

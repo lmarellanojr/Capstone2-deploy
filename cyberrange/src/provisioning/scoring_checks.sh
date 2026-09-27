@@ -391,10 +391,11 @@ check_scenario_6() {
     hash_file="$(admin_hash_file)"
     case $milestone in
         1)
-            # Real curl: OR / 1' / %27 must sit inside the id= value, not in
-            # a shell-quoting apostrophe after the URL (finding 3).
-            # $TARGET_DVWA in the typed line is fine. echo / <placeholders> are not.
-            if history_has_real_line 'curl.*vulnerabilities/sqli.*id=[^&[:space:]]*(or[[:space:]]*['"'"'\"]?1|%27|'"'"')'; then
+            # Real curl: OR / %27 must sit inside the id= value (finding 3 + 8).
+            # Stop the id value at & / space / quote so a trailing shell quote
+            # after plain id=1 cannot match. Bare ' alone is not enough; require
+            # or…1 or %27. Allow '+' (URL space) around or. $TARGET_DVWA is fine.
+            if history_has_real_line 'curl.*vulnerabilities/sqli.*id=[^&[:space:]'"'"'\"]*(%27|'"'"'*(\+|[[:space:]])*or(\+|[[:space:]])*['"'"'\"]?1)'; then
                 echo "PASS"; return
             fi
             # Artifact proof (#104). History cannot see the SQL error body.
