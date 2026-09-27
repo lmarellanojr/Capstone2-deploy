@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from alerts_reader import ManagerUnavailable, list_siem_alerts
+from ttl import created_at_utc
 
 alerts_router = APIRouter()
 
@@ -57,6 +58,15 @@ def require_owner(pod_row: Any, claims: dict) -> None:
     caller = claims.get("preferred_username") or claims.get("sub")
     if caller != owner:
         raise HTTPException(status_code=404, detail="Pod not found")
+
+
+def _pod_created_at(pod: Any):
+    """pods.created_at as UTC datetime; None if the row lacks it (older stubs)."""
+    try:
+        raw = pod["created_at"]
+    except (KeyError, IndexError):
+        return None
+    return created_at_utc(raw)
 
 
 def get_db_connection():
@@ -124,6 +134,10 @@ def get_pod_alerts(
             rule_id=rule_id,
             exclude_rule_ids=exclude,
             limit=limit,
+            # Only this pod's lifetime: a re-provisioned pod reuses the
+            # pod-<student>-<role> agent names, so the name match alone would
+            # show the previous pod's alerts.
+            not_before=_pod_created_at(pod),
         )
     except ManagerUnavailable:
         return JSONResponse(

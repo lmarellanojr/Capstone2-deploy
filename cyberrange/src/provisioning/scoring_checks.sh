@@ -543,12 +543,19 @@ check_scenario_9() {
             fi
             ;;
         2)
-            # M2: Timeline / true-positive classification
-            if [[ -n "$timeline" ]] && grep -qE "^#|^-|^[0-9]+\.|rule|phase" "$timeline" 2>/dev/null; then
+            # M2: Timeline / true-positive classification.
+            # The guide's template already has headings, "rule" and "phase" on
+            # every line, so structure alone can't earn the points. Need one
+            # line with a rule ID and a real clock time (HH:MM still there = unedited).
+            if [[ -n "$timeline" ]] \
+                && grep -iE "rule[^0-9]{0,15}[0-9]{3,6}" "$timeline" 2>/dev/null \
+                    | grep -E "[0-9]{1,2}:[0-9]{2}" | grep -v "HH:MM" >/dev/null; then
                 echo "PASS"
                 return
             fi
-            if [[ -n "$triage" ]] && grep -qiE "true.?positive|\"TP\"|real" "$triage" 2>/dev/null; then
+            # Triage TP path: the M1 triage template's placeholders mean it wasn't filled in.
+            if [[ -n "$triage" ]] && grep -qiE "true.?positive|\"TP\"|real" "$triage" 2>/dev/null \
+                && ! grep -qE "example-1|pod-STUDENT-meta|Replace fields with" "$triage" 2>/dev/null; then
                 echo "PASS"
                 return
             fi

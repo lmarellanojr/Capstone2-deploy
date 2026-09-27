@@ -311,6 +311,11 @@ for `apt`:
 ```bash
 lxc config device add wazuh-manager eth1 nic \
   network=lxdbr0 ipv4.address=10.115.77.144
+# Pin the agent-facing address too. Without this, mon-net DHCP picks one
+# (10.0.40.2 on one team host) and every doc/runbook that says .10 is wrong.
+# (`device set` because --network made eth0 an instance device; if eth0 comes
+# from a profile instead, use `lxc config device override` with the same key.)
+lxc config device set wazuh-manager eth0 ipv4.address=10.0.40.10
 lxc restart wazuh-manager </dev/null
 sleep 15
 

@@ -68,8 +68,15 @@ def list_siem_alerts(
     rule_id: Optional[str] = None,
     exclude_rule_ids: Optional[list[str]] = None,
     limit: int = 50,
+    not_before: Optional[datetime] = None,
     raw: Optional[bytes] = None,
 ) -> AlertList:
+    """Alerts for these agents, newest first.
+
+    not_before is the pod's created_at. Agent names (pod-<student>-meta) are
+    reused when a student re-provisions, so without it a fresh pod would show
+    the previous pod's alerts for up to since_minutes.
+    """
     want = {str(a).zfill(3) for a in agent_ids if a}
     names = {str(n) for n in (agent_names or []) if n}
     if not want and not names:
@@ -77,6 +84,8 @@ def list_siem_alerts(
     rid = str(rule_id) if rule_id else None
     skip = {str(x) for x in (exclude_rule_ids or []) if x}
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=since_minutes)
+    if not_before is not None and not_before > cutoff:
+        cutoff = not_before
 
     if raw is None:
         raw, truncated = _read_manager_tail()

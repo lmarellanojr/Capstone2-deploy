@@ -2,6 +2,7 @@ import os
 import re
 import json
 import pylxd
+from collections import deque
 import requests
 from datetime import datetime, timedelta, timezone
 import urllib3
@@ -83,7 +84,9 @@ def verify_siem_alert(agent_id, rule_id, since_minutes=240):
     alerts.json, read over the LXD control plane (no Wazuh API/indexer/creds).
     The manager is trusted infra; this is the agentless, tamper-sound signal.
     Default window (240m) covers a lab session so a late verify still credits a
-    real detection. Parses incrementally with a byte cap.
+    real detection. Keeps only the newest _ALERTS_MAX_BYTES of the file: the
+    alerts we want are at the end, and reading from the start stopped at the
+    cap before reaching them once alerts.json grew past 64 MiB (SIEM-SCOPE).
     """
     agent_id = str(agent_id).zfill(3)        # alerts.json stores zero-padded ids
     rule_id = str(rule_id)
@@ -92,28 +95,30 @@ def verify_siem_alert(agent_id, rule_id, since_minutes=240):
     try:
         res = client.api.instances[WAZUH_MANAGER_INSTANCE].files.get(
             params={'path': ALERTS_JSON_PATH}, stream=True)
-        buf, total = b"", 0
+        chunks, size, truncated = deque(), 0, False
         for chunk in res.iter_content(chunk_size=65536):
-            total += len(chunk)
-            if total > _ALERTS_MAX_BYTES:
-                break
-            buf += chunk
-            lines = buf.split(b"\n")
-            buf = lines.pop()                # keep trailing partial line
-            for raw in lines:
-                if b'"rule"' not in raw:
+            chunks.append(chunk)
+            size += len(chunk)
+            while size - len(chunks[0]) >= _ALERTS_MAX_BYTES:
+                size -= len(chunks.popleft())
+                truncated = True
+        lines = b"".join(chunks).split(b"\n")
+        if truncated:
+            lines = lines[1:]                # drop the partial first line
+        for raw in reversed(lines):          # newest first
+            if b'"rule"' not in raw:
+                continue
+            try:
+                ev = json.loads(raw)
+                if str(ev.get('rule', {}).get('id')) != rule_id:
                     continue
-                try:
-                    ev = json.loads(raw)
-                    if str(ev.get('rule', {}).get('id')) != rule_id:
-                        continue
-                    if str(ev.get('agent', {}).get('id')) != agent_id:
-                        continue
-                    if _parse_wazuh_ts(ev.get('timestamp', '')) >= cutoff:
-                        print(f"[Agent {agent_id}] Success: rule {rule_id} fired")
-                        return True
-                except (ValueError, KeyError):
+                if str(ev.get('agent', {}).get('id')) != agent_id:
                     continue
+                if _parse_wazuh_ts(ev.get('timestamp', '')) >= cutoff:
+                    print(f"[Agent {agent_id}] Success: rule {rule_id} fired")
+                    return True
+            except (ValueError, KeyError):
+                continue
         print(f"[Agent {agent_id}] Failed: rule {rule_id} not detected in window")
         return False
     except pylxd.exceptions.NotFound:
