@@ -126,10 +126,13 @@ whoami
 
 **Done when:** Shell context is `tomcat` (e.g. `uid=…(tomcat)`).
 
-**Then:** Keep the session open and click **Manual Check** for Milestone 4.
-The check confirms that the Tomcat deployment module opened a live session to
-this pod's meta target. Selecting the module or running a failed exploit is not
-enough. Do not exit the session until the check passes.
+**Then:** Keep the session open and promptly click **Manual Check** for Milestone 4, before additional terminal output scrolls the session-open event out of tmux's retained history.
+The check rejects module history and failed attempts, and correlates a Tomcat
+`run`/`exploit` prompt with the session-open text and a Metasploit-owned socket
+to this pod's meta target. Pane text is student-controlled, however, so this is
+not independent proof of session provenance; the remaining exact-prompt spoof
+limitation is tracked in issue #122. Do not exit the session until the check
+passes.
 
 ```text
 exit

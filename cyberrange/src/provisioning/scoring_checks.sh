@@ -140,7 +140,7 @@ check_live_tomcat_msf_session() {
         command -v tmux >/dev/null 2>&1 || return 1
         command -v ss >/dev/null 2>&1 || return 1
         pane_info=$(runuser -u student -- tmux list-panes -t lab -F '#{pane_pid}|#{pane_current_command}' 2>/dev/null || true)
-        pane_output=$(runuser -u student -- tmux capture-pane -p -S -2000 -t lab 2>/dev/null || true)
+        pane_output=$(runuser -u student -- tmux capture-pane -p -J -S - -t lab 2>/dev/null || true)
         socket_output=$(ss -Htnp state established 2>/dev/null || true)
     fi
 
@@ -150,14 +150,16 @@ check_live_tomcat_msf_session() {
     [[ "$pane_pid" =~ ^[0-9]+$ ]] || return 1
     [[ "$pane_cmd" =~ ^(ruby|msfconsole)$ ]] || return 1
 
-    # The numbered session-open event must follow the Tomcat module context;
-    # a later prompt for another exploit invalidates that context.
+    # Arm only on an explicit run/exploit at the Tomcat module prompt. Any other
+    # Metasploit prompt clears arming, so an echo entered after module selection
+    # cannot forge the session-open event. Pane text itself remains untrusted;
+    # the strict full-prompt spoof regression tracks the RPC provenance gap.
     session_peer=$(printf '%s\n' "$pane_output" | awk -v target="$target" '
-        /exploit\([^)]*\)/ {
-            if ($0 ~ /exploit\(multi\/http\/tomcat_mgr_deploy\)/) module="tomcat"
-            else module="other"
+        /(^|[[:space:]])msf[0-9]+ .* >[[:space:]]/ {
+            armed = ($0 ~ /exploit\(multi\/http\/tomcat_mgr_deploy\)[[:space:]]*>[[:space:]]*(run|exploit)([[:space:]]|$)/)
+            next
         }
-        module == "tomcat" && /(Meterpreter|Command shell) session [0-9]+ opened/ {
+        armed && /(Meterpreter|Command shell) session [0-9]+ opened/ {
             arrow=index($0, "-> ")
             if (!arrow) next
             peer=substr($0, arrow+3)

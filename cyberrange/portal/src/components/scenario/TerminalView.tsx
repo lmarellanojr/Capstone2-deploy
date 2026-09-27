@@ -164,9 +164,9 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     .filter((m) => completed.has(m.id))
     .reduce((sum, m) => sum + m.points, 0)
 
-  // Fires exactly once when the score first reaches max: this effect only
-  // re-runs when earnedPoints/totalPoints actually change, and once at max
-  // they don't change again, so closing the modal doesn't reopen it (issue #8).
+  // The current progress-key gate prevents stale or unloaded progress from
+  // completing this scenario. Polling returns the previous state when nothing
+  // changes (`changed ? next : prev`), so closing the modal does not reopen it.
   // milestonesLoading guards against firing on mount for a fresh pod with
   // totalPoints already computed but completed still empty for one tick.
   useEffect(() => {

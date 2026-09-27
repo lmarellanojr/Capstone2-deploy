@@ -47,7 +47,13 @@ def launch_command_for(pod_type: str) -> list:
     # TERM must be set or tmux fails "open terminal failed" (su - resets env, so set it
     # inside the -c script; the SSH bridge previously got this from the PTY term request).
     launch = ("export TERM=xterm-256color; "
-              "command -v tmux >/dev/null && exec tmux new-session -A -s lab || exec bash -l")
+              "if command -v tmux >/dev/null; then "
+              "if tmux has-session -t lab 2>/dev/null; then "
+              "exec tmux attach-session -t lab; "
+              "else tmux start-server \\; set-option -g history-limit 10000 "
+              "\\; new-session -d -s lab || exec bash -l; "
+              "exec tmux attach-session -t lab; fi; "
+              "else exec bash -l; fi")
     return ["lxc", "--project", LXD_PROJECT, "exec", "{container}", "-t",
             "--env", "TERM=xterm-256color",
             "--", "su", "-", user, "-c", launch]
