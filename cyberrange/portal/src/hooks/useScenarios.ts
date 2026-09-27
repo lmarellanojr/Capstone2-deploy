@@ -11,6 +11,15 @@ export interface Milestone {
 
 export interface Scenario {
   id: string
+  // GUIDE-UX-TRIAL / SCEN-UX #116: the single source of truth for the
+  // student-facing "Scenario N" number. `id` stays the internal/backend
+  // scenario_id (01/06/09/11 -- unchanged, still used for routing,
+  // provisioning and scoring) and must never be shown to students directly;
+  // every screen that used to derive a number from `id` (or keep its own
+  // duplicate lookup table, e.g. ScenarioCard's old CAPSTONE_LABEL) should
+  // read `displayNumber` instead so the catalog, lab header, guide, and
+  // provisioning picker can't drift out of sync again.
+  displayNumber: number
   name: string
   type: 'offensive' | 'defensive'
   description: string
@@ -20,9 +29,16 @@ export interface Scenario {
   milestones: Milestone[]
 }
 
+// GUIDE-UX-TRIAL / SCEN-UX #116: "Scenario N -- Name" for any screen that
+// wants the combined label (guide H1, print title, lab header breadcrumb).
+export function scenarioDisplayTitle(scenario: Pick<Scenario, 'displayNumber' | 'name'>): string {
+  return `Scenario ${scenario.displayNumber} — ${scenario.name}`
+}
+
 export const SCENARIOS: Scenario[] = [
   {
     id: '01',
+    displayNumber: 1,
     name: 'Network Reconnaissance & Exploitation',
     type: 'offensive',
     description: 'Identify live hosts and map services across a target subnet.',
@@ -38,12 +54,13 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: '06',
+    displayNumber: 2,
     name: 'SQL Injection',
     type: 'offensive',
     description: 'Exploit DVWA SQL injection (browser + sqlmap on Kali) to extract database data.',
     mitre: 'T1190',
     difficulty: 2,
-    guideFile: 'scenario_06_web_application_attack_sql_injection.md',
+    guideFile: 'scenario_02_web_application_attack_sql_injection.md',
     milestones: [
       { id: 1, name: 'Injection Point', description: 'Identify the SQL injection vulnerability in the DVWA application (set security to Low).', points: 50 },
       { id: 2, name: 'Database Extraction', description: 'Extract the users table from the backend database using the injection vulnerability.', points: 75 },
@@ -53,12 +70,13 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: '09',
+    displayNumber: 3,
     name: 'SIEM Alert Triage',
     type: 'defensive',
     description: 'Analyze security alerts and classify false positives.',
     mitre: 'T1595',
     difficulty: 2,
-    guideFile: 'scenario_09_siem_alert_triage_and_log_analysis.md',
+    guideFile: 'scenario_03_siem_alert_triage_and_log_analysis.md',
     milestones: [
       { id: 1, name: 'Start Triage', description: 'Generate noise from Kali, open the SIEM (if available), and write alert_triage.json on meta with rule/severity fields.', points: 50 },
       { id: 2, name: 'True Positive Classification', description: 'Classify true positives and write incident_timeline.md (or mark TPs in the triage file) on meta.', points: 100 },
@@ -67,12 +85,13 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: '11',
+    displayNumber: 4,
     name: 'Vulnerability Hardening',
     type: 'defensive',
     description: 'Remediate the Tomcat manager weakness exploited in Scenario 1 and confirm the exploit path is closed.',
     mitre: 'T1548',
     difficulty: 3,
-    guideFile: 'scenario_11_vulnerability_hardening.md',
+    guideFile: 'scenario_04_vulnerability_hardening.md',
     milestones: [
       { id: 1, name: 'Identify the Weakness', description: 'Inspect the Tomcat manager configuration on the meta target and confirm the default tomcat/tomcat credential is present.', points: 50 },
       { id: 2, name: 'Apply the Remediation', description: 'Rotate or remove the default Tomcat manager credential on the meta target.', points: 75 },

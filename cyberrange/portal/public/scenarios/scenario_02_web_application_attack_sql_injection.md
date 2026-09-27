@@ -1,4 +1,4 @@
-## Scenario 06 — Web Application Attack (SQL Injection & Reflected XSS)
+## Scenario 2 — SQL Injection
 
 > **Network:** Kali `$TARGET_KALI`, DVWA `$TARGET_DVWA` (HTTP). Meta is not required for this lab.
 
