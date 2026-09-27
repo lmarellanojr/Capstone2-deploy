@@ -38,7 +38,11 @@ ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 nosuchuser@$TARGET_META exit
 
 > If pasting this inserts a literal `^[[200~` in front of the command (or the command otherwise fails to run), run this **once** in the Kali terminal, then paste again — or just type the line by hand:
 > ```bash
-> bind 'set enable-bracketed-paste off'
+> bind 'set enable-bracketed-paste off'    # bash (default on this pod)
+> ```
+> If that reports `command not found`, your shell is zsh, not bash — use this instead:
+> ```zsh
+> unset zle_bracketed_paste
 > ```
 > Prefer the code block's **Copy** button over hand-selecting the text above, so you get the exact command even if it wraps on screen.
 

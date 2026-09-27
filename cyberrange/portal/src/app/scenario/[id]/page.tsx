@@ -8,7 +8,7 @@ import { LayoutWrapper } from '@/components/layout/LayoutWrapper'
 import { LoadingSpinner } from '@/components/ui'
 import { Button } from '@/components/ui'
 import { ScenarioInfoView, ProvisioningView, TerminalView, LabCountdown, SessionExpiredOverlay } from '@/components/scenario'
-import { useScenarios } from '@/hooks/useScenarios'
+import { useScenarios, scenarioDisplayTitle } from '@/hooks/useScenarios'
 import { useScenarioPod } from '@/hooks/useScenarioPod'
 
 interface PageProps {
@@ -68,7 +68,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
           {/* GUIDE-UX-TRIAL / SCEN-UX #116: same "Scenario N -- Name" label
               as the catalog card and the lab info page. */}
           <span className="font-semibold text-text-main min-w-0 break-words">
-            Scenario {scenario.displayNumber} — {scenario.name}
+            {scenarioDisplayTitle(scenario)}
           </span>
           {phase === 'active' && pod && (
             <span className="sm:ml-auto text-xs text-success font-semibold bg-green-50 px-2 py-1 rounded-full border border-green-200 whitespace-nowrap">

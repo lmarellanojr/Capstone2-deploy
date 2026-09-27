@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Pod } from "@/lib/api";
 import { injectPodIpsIntoGuide } from "@/lib/podIps";
-import { Scenario } from "@/hooks/useScenarios";
+import { Scenario, scenarioDisplayTitle } from "@/hooks/useScenarios";
 import { copyToClipboard } from "@/lib/copyToClipboard";
 
 interface GuideViewProps {
@@ -151,7 +151,7 @@ function GuideViewComponent({ pod, scenario }: GuideViewProps) {
           <div className="prose max-w-none p-10">
             {/* GUIDE-UX-TRIAL / SCEN-UX #116: match the on-screen guide's own
                 H1 (also renumbered to Scenario N in the .md source). */}
-            <h1 className="mb-6">Scenario {scenario.displayNumber} — {scenario.name}</h1>
+            <h1 className="mb-6">{scenarioDisplayTitle(scenario)}</h1>
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={printMarkdownComponents}

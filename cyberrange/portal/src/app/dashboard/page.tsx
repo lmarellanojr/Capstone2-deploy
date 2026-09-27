@@ -9,7 +9,7 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { ProvisioningOverlay } from "@/components/provisioning/ProvisioningOverlay";
 import { PodStatus } from "@/components/provisioning/PodStatus";
 import { Button } from "@/components/ui";
-import { useScenarios } from "@/hooks/useScenarios";
+import { useScenarios, scenarioDisplayTitle } from "@/hooks/useScenarios";
 import { provisioning, type Pod } from "@/lib/api";
 
 export default function DashboardPage() {
@@ -120,7 +120,7 @@ export default function DashboardPage() {
                   {/* GUIDE-UX-TRIAL / SCEN-UX #116: same "Scenario N" number
                       as the catalog card and lab pages. */}
                   <p className="font-semibold text-text-main text-sm">
-                    Scenario {s.displayNumber} — {s.name}
+                    {scenarioDisplayTitle(s)}
                   </p>
                   <p className="text-xs text-text-muted mt-0.5">{s.description.slice(0, 60)}…</p>
                 </div>

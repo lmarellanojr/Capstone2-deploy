@@ -6,7 +6,7 @@ import { mapErrorToMessage } from "@/lib/errorHandler";
 import { Modal, ModalHeader, ModalBody, ModalFooter, Button } from "@/components/ui";
 import { StepTracker } from "./StepTracker";
 import { PodProvisioningProgress } from "./PodProvisioningProgress";
-import { useScenarios } from "@/hooks/useScenarios";
+import { useScenarios, scenarioDisplayTitle } from "@/hooks/useScenarios";
 import { useProvisioning } from "@/hooks/useProvisioning";
 import { useToastContext } from "@/context/ToastContext";
 import type { ProvisionResponse } from "@/lib/api";
@@ -160,7 +160,7 @@ export function ProvisioningOverlay({ isOpen, onClose, onSubmit }: ProvisioningO
                 <span className="font-semibold text-text-main">
                   {(() => {
                     const s = scenarios.find((s) => s.id === selectedScenario)
-                    return s ? `Scenario ${s.displayNumber} — ${s.name}` : null
+                    return s ? scenarioDisplayTitle(s) : null
                   })()}
                 </span>
               </p>
