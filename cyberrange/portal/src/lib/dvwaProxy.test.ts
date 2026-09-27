@@ -4,6 +4,8 @@ import {
   dvwaContentSecurityPolicy,
   stripDisallowedDvwaMenu,
   DVWA_PREFIX,
+  DVWA_THEME_PUBLIC_PREFIX,
+  rewriteSandboxedThemeUrls,
 } from './dvwaProxy'
 
 describe('dvwaProxy access control', () => {
@@ -106,6 +108,33 @@ describe('dvwaProxy access control', () => {
       expect(dvwaContentSecurityPolicy('/login.php')).toBeNull()
       expect(dvwaContentSecurityPolicy('/favicon.ico')).toBeNull()
       expect(dvwaContentSecurityPolicy('/dvwa/css/main.css')).toBeNull()
+    })
+  })
+
+  describe('rewriteSandboxedThemeUrls', () => {
+    it('rewrites css/js/img under /lab/dvwa/dvwa/ to the public mirror', () => {
+      const html = [
+        `<link rel="stylesheet" href="${DVWA_PREFIX}/dvwa/css/main.css" />`,
+        `<script src="${DVWA_PREFIX}/dvwa/js/dvwaPage.js"></script>`,
+        `<img src="${DVWA_PREFIX}/dvwa/images/logo.png" alt="DVWA" />`,
+      ].join('')
+      const out = rewriteSandboxedThemeUrls(html)
+      expect(out).toContain(`href="${DVWA_THEME_PUBLIC_PREFIX}/css/main.css"`)
+      expect(out).toContain(`src="${DVWA_THEME_PUBLIC_PREFIX}/js/dvwaPage.js"`)
+      expect(out).toContain(`src="${DVWA_THEME_PUBLIC_PREFIX}/images/logo.png"`)
+      expect(out).not.toContain(`${DVWA_PREFIX}/dvwa/css/main.css`)
+    })
+
+    it('does not rewrite vulnerability form actions or menu hrefs', () => {
+      const html = `<form action="${DVWA_PREFIX}/vulnerabilities/sqli/" method="GET"><a href="${DVWA_PREFIX}/vulnerabilities/xss_r/">XSS</a></form>`
+      expect(rewriteSandboxedThemeUrls(html)).toBe(html)
+    })
+
+    it('leaves CSP policy unchanged (no allow-same-origin)', () => {
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(
+        'sandbox allow-scripts allow-forms allow-modals'
+      )
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')!).not.toMatch(/same-origin/)
     })
   })
 })

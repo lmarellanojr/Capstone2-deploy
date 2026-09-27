@@ -66,4 +66,46 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBeNull()
   })
+
+  it('rewrites theme URLs to /dvwa-theme/ on vulnerable pages while preserving CSP sandbox', async () => {
+    const upstreamHtml = [
+      '<html><head>',
+      '<link rel="stylesheet" type="text/css" href="/dvwa/css/main.css">',
+      '<script type="text/javascript" src="/dvwa/js/dvwaPage.js"></script>',
+      '</head><body>',
+      '<img src="/dvwa/images/logo.png" />',
+      '<h2>Vulnerability: SQL Injection</h2>',
+      '</body></html>',
+    ].join('')
+    mockActivePodAndUpstream(upstreamHtml)
+    const req = makeRequest('/lab/dvwa/vulnerabilities/sqli/')
+    const res = await GET(req, { params: Promise.resolve({ path: ['vulnerabilities', 'sqli'] }) })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-security-policy')).toBe(
+      'sandbox allow-scripts allow-forms allow-modals'
+    )
+    const body = await res.text()
+    expect(body).toContain('href="/dvwa-theme/css/main.css"')
+    expect(body).toContain('src="/dvwa-theme/js/dvwaPage.js"')
+    expect(body).toContain('src="/dvwa-theme/images/logo.png"')
+    expect(body).not.toContain('/lab/dvwa/dvwa/css/main.css')
+  })
+
+  it('keeps proxied theme URLs on safe pages without mirror rewrite', async () => {
+    const upstreamHtml = [
+      '<html><head>',
+      '<link rel="stylesheet" type="text/css" href="/dvwa/css/main.css">',
+      '</head><body>DVWA Security</body></html>',
+    ].join('')
+    mockActivePodAndUpstream(upstreamHtml)
+    const req = makeRequest('/lab/dvwa/security.php')
+    const res = await GET(req, { params: Promise.resolve({ path: ['security.php'] }) })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-security-policy')).toBeNull()
+    const body = await res.text()
+    expect(body).toContain('href="/lab/dvwa/dvwa/css/main.css"')
+    expect(body).not.toContain('/dvwa-theme/css/main.css')
+  })
 })
