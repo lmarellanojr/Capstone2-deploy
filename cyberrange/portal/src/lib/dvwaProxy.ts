@@ -247,18 +247,30 @@ export const DVWA_THEME_PUBLIC_PREFIX = '/dvwa-theme'
 /**
  * Retarget proxied theme URLs to the public mirror.
  * Call only on HTML for vulnerable modules (after rewriteHtml).
+ *
+ * Pass A: absolute /lab/dvwa/dvwa/{css|images|js}/… (and favicon).
+ * Pass B: DigiNinja relative href|src only — one or more ../ then
+ * dvwa/(css|images|js)/ or favicon.ico. Does not touch action/formaction.
  */
 export function rewriteSandboxedThemeUrls(html: string, prefix = DVWA_PREFIX): string {
   const esc = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  // /lab/dvwa/dvwa/{css|images|js}/... → /dvwa-theme/{css|images|js}/...
+  // Pass A — absolute proxied theme paths
   let out = html.replace(
     new RegExp(`${esc}/dvwa/(css|images|js)/`, 'gi'),
     `${DVWA_THEME_PUBLIC_PREFIX}/$1/`
   )
-  // optional favicon
   out = out.replace(
     new RegExp(`${esc}/favicon\\.ico`, 'gi'),
     `${DVWA_THEME_PUBLIC_PREFIX}/favicon.ico`
+  )
+  // Pass B — DigiNinja relative roots on href|src (value-anchored; require ../+)
+  out = out.replace(
+    /\b(href|src)=(["'])(?:\.\.\/)+dvwa\/(css|images|js)\//gi,
+    `$1=$2${DVWA_THEME_PUBLIC_PREFIX}/$3/`
+  )
+  out = out.replace(
+    /\b(href|src)=(["'])(?:\.\.\/)+favicon\.ico\2/gi,
+    `$1=$2${DVWA_THEME_PUBLIC_PREFIX}/favicon.ico$2`
   )
   return out
 }

@@ -130,6 +130,60 @@ describe('dvwaProxy access control', () => {
       expect(rewriteSandboxedThemeUrls(html)).toBe(html)
     })
 
+    it('rewrites DigiNinja relative ../../dvwa theme href/src to the public mirror', () => {
+      const html = [
+        '<link rel="stylesheet" href="../../dvwa/css/main.css" />',
+        '<script src="../../dvwa/js/dvwaPage.js"></script>',
+        '<img src="../../dvwa/images/logo.png" alt="DVWA" />',
+        '<link rel="icon" href="../../favicon.ico" />',
+      ].join('')
+      const out = rewriteSandboxedThemeUrls(html)
+      expect(out).toContain(`href="${DVWA_THEME_PUBLIC_PREFIX}/css/main.css"`)
+      expect(out).toContain(`src="${DVWA_THEME_PUBLIC_PREFIX}/js/dvwaPage.js"`)
+      expect(out).toContain(`src="${DVWA_THEME_PUBLIC_PREFIX}/images/logo.png"`)
+      expect(out).toContain(`href="${DVWA_THEME_PUBLIC_PREFIX}/favicon.ico"`)
+      expect(out).not.toContain('../../dvwa/css/main.css')
+      expect(out).not.toContain('../../favicon.ico')
+    })
+
+    it('does not rewrite relative vulnerability action/nav or formaction', () => {
+      const html = [
+        '<form action="../../vulnerabilities/sqli/" method="GET">',
+        '<a href="../../vulnerabilities/xss_r/">XSS</a>',
+        '<button formaction="../../dvwa/css/main.css">Go</button>',
+        '<form action="../../dvwa/css/main.css" method="GET"></form>',
+        '</form>',
+      ].join('')
+      const out = rewriteSandboxedThemeUrls(html)
+      expect(out).toContain('action="../../vulnerabilities/sqli/"')
+      expect(out).toContain('href="../../vulnerabilities/xss_r/"')
+      expect(out).toContain('formaction="../../dvwa/css/main.css"')
+      expect(out).toContain('action="../../dvwa/css/main.css"')
+      expect(out).not.toContain(`${DVWA_THEME_PUBLIC_PREFIX}/css/main.css`)
+    })
+
+    it('does not rewrite non-theme favicon paths or mid-value ../../dvwa fragments', () => {
+      const html = [
+        '<link rel="icon" href="assets/favicon.ico" />',
+        `<a href="${DVWA_PREFIX}/vulnerabilities/sqli/?ref=../../dvwa/css/main.css">SQLi</a>`,
+      ].join('')
+      expect(rewriteSandboxedThemeUrls(html)).toBe(html)
+    })
+
+    it('rewrites mixed absolute and DigiNinja relative theme URLs without touching action', () => {
+      const html = [
+        `<link rel="stylesheet" href="${DVWA_PREFIX}/dvwa/css/main.css" />`,
+        '<script src="../../dvwa/js/dvwaPage.js"></script>',
+        '<form action="../../vulnerabilities/sqli/" method="GET"></form>',
+      ].join('')
+      const out = rewriteSandboxedThemeUrls(html)
+      expect(out).toContain(`href="${DVWA_THEME_PUBLIC_PREFIX}/css/main.css"`)
+      expect(out).toContain(`src="${DVWA_THEME_PUBLIC_PREFIX}/js/dvwaPage.js"`)
+      expect(out).toContain('action="../../vulnerabilities/sqli/"')
+      expect(out).not.toContain(`${DVWA_PREFIX}/dvwa/css/main.css`)
+      expect(out).not.toContain('../../dvwa/js/dvwaPage.js')
+    })
+
     it('leaves CSP policy unchanged (no allow-same-origin)', () => {
       expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(
         'sandbox allow-scripts allow-forms allow-modals'
