@@ -197,10 +197,10 @@ def validate_flag(
 ) -> Tuple[bool, Optional[dict]]:
     """Validate a submitted flag against rubric criteria.
 
-    - When student_id is provided, resolution is dynamic-first: checks
-      pod_milestone_flags table, falling back to deterministic generation
-      via generate_milestone_flag(). Under no circumstances does a provided
-      student_id fall back to static git seed flags (anti-leakage guard).
+    - When student_id is provided, resolution is dynamic-only: checks
+      pod_milestone_flags table, then deterministic generation via
+      generate_milestone_flag(). If neither matches the submitted flag,
+      validation fails — the static git seed bridge is never reached.
     - When student_id is None, falls back to milestone_rubrics["expected_flag"]
       as a backward-compatible bridge for legacy test fixtures.
     - Uses secrets.compare_digest in constant time to prevent timing attacks.
@@ -227,15 +227,25 @@ def validate_flag(
             return is_valid, rubric
 
         # 2. If student is not yet in pod_milestone_flags, check deterministic dynamic generation:
-        dynamic_expected = generate_milestone_flag(clean_sid, scenario_id, milestone_id)
-        if secrets.compare_digest(clean_submitted, dynamic_expected.strip().upper()):
-            return True, rubric
+        try:
+            dynamic_expected = generate_milestone_flag(clean_sid, scenario_id, milestone_id)
+            if secrets.compare_digest(clean_submitted, dynamic_expected.strip().upper()):
+                return True, rubric
+        except Exception:
+            # If dynamic generation is unavailable (e.g. COHORT_FLAG_SECRET not set),
+            # reject rather than crash or fall back to static answer keys.
+            pass
 
-    # 3. Backward-compatible bridge: fall back to static rubric expected_flag only when
-    # the student has no provisioned dynamic flag (e.g. legacy test fixtures without pod_milestone_flags).
+        # Student context is present but neither dynamic path matched — reject.
+        # Never fall through to the static bridge for an authenticated student.
+        return False, rubric
+
+    # 3. Backward-compatible bridge: fall back to static rubric expected_flag ONLY when
+    # student_id is None (legacy test fixtures without student context).
     static_expected = rubric.get("expected_flag", "")
     if static_expected:
         is_valid = secrets.compare_digest(clean_submitted, static_expected.strip().upper())
         return is_valid, rubric
 
     return False, rubric
+

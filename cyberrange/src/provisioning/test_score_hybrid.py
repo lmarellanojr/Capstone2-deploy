@@ -71,6 +71,7 @@ def hybrid_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Hermetic SQLite database initialized with all migrations up to v5."""
     db_file = tmp_path / "test_hybrid.db"
     monkeypatch.setattr(db, "DB_PATH", str(db_file))
+    monkeypatch.setenv("COHORT_FLAG_SECRET", "test-cohort-secret-hybrid")
     migrate.apply(str(db_file))
     return str(db_file)
 
@@ -134,6 +135,27 @@ def insert_milestone_pass(db_path: str, student_id: str, scenario_id: int, miles
             (pod_id, student_id, scenario_id, milestone_id),
         )
     conn.close()
+
+
+def plant_dynamic_flag(
+    db_path: str,
+    student_id: str,
+    scenario_id: int,
+    milestone_id: int,
+    pod_id: int = 101,
+) -> str:
+    """Generate and persist a dynamic flag for a student, returning the flag string.
+
+    Used by tests that need a valid flag for a student context now that the static
+    bridge is blocked for authenticated students.
+    """
+    from flag_planting import generate_milestone_flag, save_pod_flags
+
+    flag = generate_milestone_flag(student_id, scenario_id, milestone_id)
+    conn = sqlite3.connect(db_path)
+    save_pod_flags(conn, pod_id, student_id, scenario_id, {milestone_id: flag})
+    conn.close()
+    return flag
 
 
 # ---------------------------------------------------------------------------
@@ -222,13 +244,14 @@ def test_state_machine_outcome_pass(client, hybrid_db: str):
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
     # State is PASS
     insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
 
     # Submit authentic flag
     res = client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     assert res.status_code == 200
     data = res.json()
@@ -260,12 +283,13 @@ def test_state_machine_outcome_escalate_flag_without_state(client, hybrid_db: st
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
     # NOTE: No milestone_verification PASS record inserted
 
     # Student submits valid flag without doing the container work
     res = client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     assert res.status_code == 200
     data = res.json()
@@ -292,7 +316,7 @@ def test_state_machine_outcome_escalate_flag_without_state(client, hybrid_db: st
     # Zero-leakage check: evidence_data must NOT leak expected_flag
     ev_data = json.loads(rev["evidence_data"])
     assert "expected_flag" not in ev_data
-    assert "FLAG{S01_M1_7F8C2A1E9D4B}" not in rev["evidence_data"]
+    assert flag not in rev["evidence_data"]
     conn.close()
 
 
@@ -424,15 +448,16 @@ def test_tc_s12_06_scenario_1_recon_and_exploitation(client, hybrid_db: str):
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
 
     s1_milestones = [
-        (1, "FLAG{S01_M1_7F8C2A1E9D4B}", "Host Discovery"),
-        (2, "FLAG{S01_M2_3E5B7C9A1D2F}", "Port Enumeration"),
-        (3, "FLAG{S01_M3_A4D6F8C0E2B1}", "Service Version Detection"),
-        (4, "FLAG{S01_M4_B2C4E6A8D0F1}", "Tomcat Manager Exploitation"),
+        (1, "Host Discovery"),
+        (2, "Port Enumeration"),
+        (3, "Service Version Detection"),
+        (4, "Tomcat Manager Exploitation"),
     ]
 
-    for m_id, flag, name in s1_milestones:
+    for m_id, name in s1_milestones:
         # Pre-seed container state pass for that milestone
         insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=m_id, pod_id=101)
+        flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=m_id, pod_id=101)
 
         res = client.post(
             "/progress/01/flag",  # Test leading zero formatting support
@@ -464,11 +489,12 @@ def test_tc_s12_10_conflict_routed_to_inst_03_queue_and_resolved(client, hybrid_
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=6, pod_id=202, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=6, milestone_id=1, pod_id=202)
 
     # Step 1: Submit valid flag for Scenario 6 M1 without state pass -> Escalated on server, returns INCOMPLETE to student
     res = client.post(
         "/progress/6/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S06_M1_9B4E2F1A7C3D}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     assert res.status_code == 200
     sub_data = res.json()
@@ -527,6 +553,7 @@ def test_flag_submit_cannot_impersonate_another_student(client, hybrid_db: str):
     set_caller(app, "student_shekinah", "student")
     insert_test_pod(hybrid_db, "student_shekinah", scenario_id=1, pod_id=101)
     insert_test_pod(hybrid_db, "student_victim", scenario_id=1, pod_id=999)
+    flag_victim = plant_dynamic_flag(hybrid_db, "student_victim", scenario_id=1, milestone_id=1, pod_id=999)
 
     # Attacker tries to submit a flag on behalf of 'student_victim'
     res = client.post(
@@ -534,7 +561,7 @@ def test_flag_submit_cannot_impersonate_another_student(client, hybrid_db: str):
         json={
             "student_id": "student_victim",  # Smuggled parameter
             "milestone_id": 1,
-            "flag": "FLAG{S01_M1_7F8C2A1E9D4B}",
+            "flag": flag_victim,
         },
     )
     assert res.status_code == 200
@@ -553,11 +580,12 @@ def test_conflict_escalation_does_not_leak_expected_flag(client, hybrid_db: str)
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101)
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
 
     # Trigger Case 2 conflict (valid flag without state)
     client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
 
     conn = sqlite3.connect(hybrid_db)
@@ -579,7 +607,7 @@ def test_conflict_escalation_does_not_leak_expected_flag(client, hybrid_db: str)
     assert inst_res.status_code == 200
     inst_body = inst_res.json()
     assert inst_body["case_type"] == "SCORING_CONFLICT"
-    assert "FLAG{S01_M1_7F8C2A1E9D4B}" not in inst_res.text
+    assert flag not in inst_res.text
     assert "expected_flag" not in inst_res.text
     evidence = inst_body.get("evidence_data") or ""
     assert "Flag valid" in inst_body.get("conflict_reason", "") or "flag_valid" in evidence
@@ -607,18 +635,19 @@ def test_conflict_deduplication(client, hybrid_db: str):
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=9, pod_id=303)
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=9, milestone_id=1, pod_id=303)
 
     # First conflict attempt (valid flag without state)
     res1 = client.post(
         "/progress/9/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S09_M1_1A3C5E7F9B2D}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     assert res1.json()["outcome"] == "INCOMPLETE"
 
     # Second conflict attempt for same milestone
     res2 = client.post(
         "/progress/9/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S09_M1_1A3C5E7F9B2D}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     assert res2.json()["outcome"] == "INCOMPLETE"
 
@@ -684,11 +713,12 @@ def test_unverified_flag_submission_returns_identical_incomplete_response(client
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
 
     # Submission A: Correct flag without container state
     res_valid = client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     # Submission B: Wrong flag without container state
     res_wrong = client.post(
@@ -748,11 +778,12 @@ def test_resolve_review_case_conflict_returns_409_if_already_resolved(client, hy
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
 
     # Create a conflict case
     client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
 
     conn = sqlite3.connect(hybrid_db)
@@ -766,7 +797,7 @@ def test_resolve_review_case_conflict_returns_409_if_already_resolved(client, hy
     insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
     res_pass = client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     assert res_pass.json()["outcome"] == "PASS"
 
@@ -787,9 +818,10 @@ def test_resolve_expected_status_invalid_returns_400(client, hybrid_db: str):
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
     client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     conn = sqlite3.connect(hybrid_db)
     review_id = conn.execute(
@@ -812,9 +844,10 @@ def test_resolve_regrade_approved_to_rejected_with_expected_status(client, hybri
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
     client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     conn = sqlite3.connect(hybrid_db)
     review_id = conn.execute(
@@ -846,9 +879,10 @@ def test_resolve_omit_expected_status_on_approved_returns_409(client, hybrid_db:
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
     client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     conn = sqlite3.connect(hybrid_db)
     review_id = conn.execute(
@@ -875,9 +909,10 @@ def test_resolve_scoring_conflict_rejects_retry(client, hybrid_db: str):
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
     client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     conn = sqlite3.connect(hybrid_db)
     review_id = conn.execute(
@@ -908,6 +943,7 @@ def test_scoring_conflict_hidden_on_student_get_and_resubmit(client, hybrid_db: 
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
 
     # Wrong guess: no conflict row
     client.post(
@@ -917,7 +953,7 @@ def test_scoring_conflict_hidden_on_student_get_and_resubmit(client, hybrid_db: 
     # Right guess: creates PENDING SCORING_CONFLICT invisible to student
     client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
 
     conn = sqlite3.connect(hybrid_db)
@@ -947,11 +983,12 @@ def test_auto_approval_logs_review_case_resolved_event(client, hybrid_db: str):
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
 
     # Step 1: Create conflict case
     client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
 
     conn = sqlite3.connect(hybrid_db)
@@ -962,7 +999,7 @@ def test_auto_approval_logs_review_case_resolved_event(client, hybrid_db: str):
     insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
     res_pass = client.post(
         "/progress/1/flag",
-        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+        json={"milestone_id": 1, "flag": flag},
     )
     assert res_pass.json()["outcome"] == "PASS"
 
@@ -1006,6 +1043,7 @@ def test_live_container_check_corroborates_pass_when_scoring_enabled(client, hyb
     student = "student_shekinah"
     set_caller(app, student, "student")
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
 
     class MockSSHVerifier:
         async def verify_milestone(self, sid, scen_id, mid):
@@ -1020,7 +1058,7 @@ def test_live_container_check_corroborates_pass_when_scoring_enabled(client, hyb
     try:
         res = client.post(
             "/progress/1/flag",
-            json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+            json={"milestone_id": 1, "flag": flag},
         )
         assert res.status_code == 200
         data = res.json()
@@ -1051,6 +1089,7 @@ def test_inactive_pod_not_used_for_live_check(client, hybrid_db: str):
     set_caller(app, student, "student")
     # Insert pod in PROVISIONING status
     insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="PROVISIONING")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
 
     class MockSSHVerifier:
         async def verify_milestone(self, sid, scen_id, mid):
@@ -1066,7 +1105,7 @@ def test_inactive_pod_not_used_for_live_check(client, hybrid_db: str):
         # Submitting valid flag with PROVISIONING pod should NOT probe, returns INCOMPLETE
         res = client.post(
             "/progress/1/flag",
-            json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+            json={"milestone_id": 1, "flag": flag},
         )
         assert res.status_code == 200
         data = res.json()
@@ -1134,6 +1173,37 @@ def test_static_flag_rejected_for_provisioned_student(client, hybrid_db: str):
     assert data["outcome"] == "INCOMPLETE"
 
 
+def test_unplanted_student_cannot_use_static_key(client, hybrid_db: str):
+    """Student with no pod_milestone_flags row still cannot pass with the static git key.
+
+    Regression guard for the validate_flag static fallthrough bug: when student_id
+    is set but no planted row exists, the static bridge must NOT be reached.
+    """
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+
+    # Verify: no pod_milestone_flags row exists for this student
+    conn = sqlite3.connect(hybrid_db)
+    row = conn.execute(
+        "SELECT COUNT(*) FROM pod_milestone_flags WHERE student_id=?", (student,)
+    ).fetchone()
+    assert row[0] == 0
+    conn.close()
+
+    # Student has verified container state
+    insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
+
+    # Student submits the static leaked key from v5.sql — must be rejected
+    res = client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": "FLAG{S01_M1_7F8C2A1E9D4B}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["outcome"] == "INCOMPLETE"
+
+
 def test_cross_student_flag_isolation(client, hybrid_db: str):
     """Student A's flag submitted by Student B is rejected (anti-cheating guard)."""
     from flag_planting import generate_milestone_flag, save_pod_flags
@@ -1164,13 +1234,33 @@ def test_cross_student_flag_isolation(client, hybrid_db: str):
     assert data["outcome"] == "INCOMPLETE"
 
 
-def test_audit_log_zero_leakage_after_flag_planting(hybrid_db: str):
-    """Zero-leakage: audit_log detail never contains plaintext flags."""
+def test_audit_log_zero_leakage_after_flag_planting(client, hybrid_db: str):
+    """Zero-leakage: audit_log detail never contains plaintext flags after a full plant+submit flow."""
+    from flag_planting import generate_milestone_flag, save_pod_flags
+
+    student = "student_shekinah"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=101, status="ACTIVE")
+
+    dynamic_flag = generate_milestone_flag(student, 1, 1)
+    conn = sqlite3.connect(hybrid_db)
+    save_pod_flags(conn, 101, student, 1, {1: dynamic_flag})
+    conn.close()
+
+    insert_milestone_pass(hybrid_db, student, scenario_id=1, milestone_id=1, pod_id=101)
+
+    # Submit the correct flag to trigger full scoring + audit logging path
+    res = client.post(
+        "/progress/1/flag",
+        json={"milestone_id": 1, "flag": dynamic_flag},
+    )
+    assert res.status_code == 200
+
+    # Now verify no flag literals leaked into audit_log
     conn = sqlite3.connect(hybrid_db)
     conn.row_factory = sqlite3.Row
-
-    # Query all events in audit_log
     rows = conn.execute("SELECT * FROM audit_log").fetchall()
+    assert len(rows) > 0, "Expected audit_log rows after flag submission"
     for r in rows:
         detail = r["detail"] or ""
         assert "FLAG{" not in detail, f"Plaintext flag leaked in audit_log: {detail}"

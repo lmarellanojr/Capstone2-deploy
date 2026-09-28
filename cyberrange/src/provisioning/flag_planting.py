@@ -36,9 +36,17 @@ def _has_table(conn: sqlite3.Connection, table_name: str) -> bool:
 
 
 def get_cohort_secret() -> str:
-    """Retrieve the cohort flag secret via unified secrets_loader."""
-    secret = get_secret("COHORT_FLAG_SECRET", required=False, default=DEFAULT_COHORT_SECRET)
-    return (secret or DEFAULT_COHORT_SECRET).strip()
+    """Retrieve the cohort flag secret via unified secrets_loader.
+
+    Requires COHORT_FLAG_SECRET to be set. Raises RuntimeError at provision
+    time if missing, preventing silent fallback to a committed constant.
+    """
+    secret = get_secret("COHORT_FLAG_SECRET", required=True)
+    if not secret or not secret.strip():
+        raise RuntimeError(
+            "COHORT_FLAG_SECRET is empty. Set a strong random secret before provisioning."
+        )
+    return secret.strip()
 
 
 def generate_milestone_flag(

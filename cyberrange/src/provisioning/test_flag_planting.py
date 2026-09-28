@@ -36,6 +36,7 @@ def test_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Hermetic SQLite database initialized with all migrations up to v7."""
     db_file = tmp_path / "test_flag_planting.db"
     monkeypatch.setattr(db, "DB_PATH", str(db_file))
+    monkeypatch.setenv("COHORT_FLAG_SECRET", "test-cohort-secret-planting")
     migrate.apply(str(db_file))
     return str(db_file)
 
@@ -86,12 +87,12 @@ def test_flag_whitespace_and_empty_validation():
 
 def test_generate_all_scenario_flags():
     """All milestones defined for catalog scenarios are generated."""
-    flags_s01 = generate_all_scenario_flags("student_alice", 1)
+    flags_s01 = generate_all_scenario_flags("student_alice", 1, secret="test-key")
     assert set(flags_s01.keys()) == {1, 2, 3, 4}
     for mid, flag in flags_s01.items():
         assert flag.startswith(f"FLAG{{S01_M{mid}_")
 
-    flags_s09 = generate_all_scenario_flags("student_alice", 9)
+    flags_s09 = generate_all_scenario_flags("student_alice", 9, secret="test-key")
     assert set(flags_s09.keys()) == {1, 2, 3}
 
 
