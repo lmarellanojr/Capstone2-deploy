@@ -53,14 +53,11 @@ export default function ScenarioDetailPage({ params }: PageProps) {
     startLab()
   }
 
-  // LAB-LAYOUT: hide the left nav once the terminal is on screen (active or
-  // expired phase both render TerminalView) so the Kali terminal / Guide
-  // split gets the freed-up width. idle/provisioning/loading keep the
-  // sidebar -- those screens aren't space-constrained the same way, and a
-  // brand-new student landing on the info page still benefits from the nav
-  // being visible. The header bar's own "My Labs" link is the way back once
-  // the sidebar is gone.
-  const hideSidebar = phase === 'active' || phase === 'expired'
+  // LAB-LAYOUT: hide the desktop nav only while a terminal is actually on
+  // screen. `!!pod` excludes expired-with-no-pod, which renders
+  // SessionExpiredOverlay instead of TerminalView and doesn't need the extra
+  // width.
+  const hideSidebar = (phase === 'active' || phase === 'expired') && !!pod
 
   return (
     <LayoutWrapper hideSidebar={hideSidebar}>

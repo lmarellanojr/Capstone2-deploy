@@ -15,15 +15,8 @@ interface LayoutWrapperProps {
   /** Explicit, independent of sectionLabel: a section can have its own sidebar label
    *  without losing a working search box. Instructor/Admin pages set this themselves. */
   hideSearch?: boolean;
-  /** LAB-LAYOUT: when true, the persistent desktop sidebar column is not
-   *  rendered, so its width goes back to `children` -- used by the active
-   *  lab session page so the Kali terminal / Guide split gets more room
-   *  (team request: hide the left nav once a lab is open). The mobile
-   *  hamburger menu (Sidebar shown as a `lg:hidden` overlay) is unaffected:
-   *  it costs no layout width on any breakpoint, so there's no reason to
-   *  lose navigation entirely. A caller that hides the sidebar is expected
-   *  to provide its own way back (the scenario page's own "My Labs" link
-   *  in its header bar already does). */
+  /** When true, the persistent desktop sidebar column is not rendered, and
+   *  `children` reclaims its width. Mobile overlay nav is unaffected. */
   hideSidebar?: boolean;
 }
 
