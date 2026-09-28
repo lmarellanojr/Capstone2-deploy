@@ -100,13 +100,24 @@ docker run -d --name vulnerable-apps_dvwa_1 --restart always \
   -e DB_SERVER=db -p 80:80 \
   ghcr.io/digininja/dvwa >/dev/null
 docker exec vulnerable-apps_dvwa_1 printenv DB_SERVER | grep -qx db
+# Wait until PHP can open MySQL on hostname db (DNS + mysqli), then require a
+# real DigiNinja login form. Empty/failed curl is not success.
+php_ok=0
+for _j in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if docker exec vulnerable-apps_dvwa_1 php -r 'try { new mysqli("db","dvwa","p@ssw0rd","dvwa",3306); exit(0);} catch (Throwable $e) { exit(1); }'; then
+    php_ok=1
+    break
+  fi
+  sleep 2
+done
+[ "$php_ok" = 1 ]
 login_ok=0
 body=
-for _j in 1 2 3 4 5 6 7 8; do
+for _j in 1 2 3 4 5 6 7 8 9 10 11 12; do
   body=$(curl -fsS -m 8 http://127.0.0.1/login.php 2>/dev/null || true)
   if printf '%s' "$body" | grep -qiE 'Connection refused|mysqli_sql_exception'; then
-    printf '%s' "$body"
-    exit 1
+    sleep 2
+    continue
   fi
   if [ -n "$body" ] && printf '%s' "$body" | grep -qi 'user_token' && printf '%s' "$body" | grep -qi 'Login'; then
     login_ok=1
