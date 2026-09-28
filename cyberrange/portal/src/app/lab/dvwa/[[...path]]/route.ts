@@ -9,9 +9,11 @@ import {
   dvwaUpstreamOrigin,
   isAllowedDvwaLabPath,
   isDestroyedPhpSession,
+  isVulnerableDvwaLabPath,
   rewriteCookie,
   rewriteHtml,
   rewriteLocation,
+  rewriteSandboxedThemeUrls,
   safeUpstreamPath,
   shouldRewriteBody,
   stalePhpSessionClearCookies,
@@ -226,7 +228,11 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     }
 
     out.set('content-type', up.headers.get('content-type') || 'text/html; charset=utf-8')
-    return new NextResponse(rewriteHtml(stripDisallowedDvwaMenu(text)), {
+    let html = rewriteHtml(stripDisallowedDvwaMenu(text))
+    if (isVulnerableDvwaLabPath(upstreamPath)) {
+      html = rewriteSandboxedThemeUrls(html)
+    }
+    return new NextResponse(html, {
       status: up.status,
       headers: out,
     })
