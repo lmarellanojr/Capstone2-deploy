@@ -126,8 +126,13 @@ whoami
 
 **Done when:** Shell context is `tomcat` (e.g. `uid=…(tomcat)`).
 
-**Then:** Run `exit` in the session - Manual Check reads Metasploit history,
-so it will fail on this milestone until this command is actually run.
+**Then:** Keep the session open and promptly click **Manual Check** for Milestone 4, before additional terminal output scrolls the session-open event out of tmux's retained history.
+The check rejects module history and failed attempts, and correlates a Tomcat
+`run`/`exploit` prompt with the session-open text and a Metasploit-owned socket
+to this pod's meta target. Pane text is student-controlled, however, so this is
+not independent proof of session provenance; the remaining exact-prompt spoof
+limitation is tracked in issue #122. Do not exit the session until the check
+passes.
 
 ```text
 exit
@@ -137,7 +142,9 @@ exit
 <summary>Hint</summary>
 
 Debian Tomcat uses **`/manager/text`** - without `set PATH /manager/text` the exploit fails.  
-If Manual Check fails after a working shell, run one more msf command or exit `msfconsole` cleanly, then re-check.
+If Manual Check fails, confirm that the session is still open and connected to
+the displayed Meta IP, then retry Manual Check. A command-history entry alone
+does not count as a successful exploit.
 
 </details>
 

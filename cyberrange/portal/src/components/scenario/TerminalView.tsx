@@ -17,6 +17,11 @@ import { SiemAlertViewer } from '@/components/scenario/SiemAlertViewer'
 import { DVWA_PREFIX } from '@/lib/dvwaProxy'
 import { podIps } from '@/lib/podIps'
 import { copyToClipboard } from '@/lib/copyToClipboard'
+import {
+  isScenarioComplete,
+  passedMilestoneIdsForScenario,
+  scenarioProgressKey,
+} from '@/lib/scenarioCompletion'
 
 type TermTab = 'kali-cli' | 'meta' | 'dvwa'
 
@@ -41,6 +46,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const token = session?.accessToken as string | undefined
   const { success, warning, error: toastError } = useToastContext()
   const [completed, setCompleted] = useState<Set<number>>(new Set())
+  const [loadedProgressKey, setLoadedProgressKey] = useState<string | null>(null)
   const [verifying, setVerifying] = useState<Set<number>>(new Set())
   const [milestonesLoading, setMilestonesLoading] = useState(true)
   const [ending, setEnding] = useState(false)
@@ -51,6 +57,9 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const [showCompletion, setShowCompletion] = useState(false)
   const [labUrls, setLabUrls] = useState<Awaited<ReturnType<typeof provisioning.getLabUrls>> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const currentProgressKey = scenarioProgressKey(pod.pod_id, scenario.id)
+  const currentProgressKeyRef = useRef(currentProgressKey)
+  currentProgressKeyRef.current = currentProgressKey
 
   const ips = useMemo(() => {
     try {
@@ -83,25 +92,31 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   // Fetch already completed milestones to restore score state
   useEffect(() => {
     let active = true
+    const requestKey = scenarioProgressKey(pod.pod_id, scenario.id)
+    setCompleted(new Set())
+    setVerifying(new Set())
+    setLoadedProgressKey(null)
+    setShowCompletion(false)
     setMilestonesLoading(true)
     provisioning.getMilestones(pod.pod_id).then((res) => {
-      if (!active) return
+      if (!active || currentProgressKeyRef.current !== requestKey) return
       if (res && res.milestones) {
-        setCompleted(new Set(
-          res.milestones.filter((m) => m.status === 'PASS').map((m) => m.milestone_id)
-        ))
+        setCompleted(passedMilestoneIdsForScenario(res.milestones, scenario.id))
       }
+      setLoadedProgressKey(requestKey)
       setMilestonesLoading(false)
     }).catch((err) => {
+      if (!active || currentProgressKeyRef.current !== requestKey) return
       console.error('Failed to fetch initial milestones:', err)
       toastError('Could not load previous progress - showing current session only.')
+      setLoadedProgressKey(requestKey)
       setMilestonesLoading(false)
     })
 
     return () => {
       active = false
     }
-  }, [pod.pod_id])
+  }, [pod.pod_id, scenario.id, toastError])
 
   // Auto-detect milestones: poll backend every 3s for new PASS results (BUG-040,
   // shortened from 15s, then 5s, per issue #12 - matches the backend score
@@ -111,13 +126,13 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   // completion-modal effect below, issue #8).
   useEffect(() => {
     if (!pod?.pod_id) return
+    let active = true
+    const requestKey = scenarioProgressKey(pod.pod_id, scenario.id)
     const interval = setInterval(async () => {
       try {
         const res = await provisioning.getMilestones(pod.pod_id)
-        if (!res?.milestones) return
-        const newPassed = res.milestones
-          .filter((m) => m.status === 'PASS')
-          .map((m) => m.milestone_id)
+        if (!active || currentProgressKeyRef.current !== requestKey || !res?.milestones) return
+        const newPassed = passedMilestoneIdsForScenario(res.milestones, scenario.id)
 
         setCompleted((prev) => {
           const next = new Set(prev)
@@ -138,31 +153,42 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       }
     }, 3000) // Poll every 3 seconds
 
-    return () => clearInterval(interval)
-  }, [pod.pod_id, scenario.milestones, success])
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
+  }, [pod.pod_id, scenario.id, scenario.milestones, success])
 
   const totalPoints = scenario.milestones.reduce((sum, m) => sum + m.points, 0)
   const earnedPoints = scenario.milestones
     .filter((m) => completed.has(m.id))
     .reduce((sum, m) => sum + m.points, 0)
 
-  // Fires exactly once when the score first reaches max: this effect only
-  // re-runs when earnedPoints/totalPoints actually change, and once at max
-  // they don't change again, so closing the modal doesn't reopen it (issue #8).
+  // The current progress-key gate prevents stale or unloaded progress from
+  // completing this scenario. Polling returns the previous state when nothing
+  // changes (`changed ? next : prev`), so closing the modal does not reopen it.
   // milestonesLoading guards against firing on mount for a fresh pod with
   // totalPoints already computed but completed still empty for one tick.
   useEffect(() => {
     if (milestonesLoading) return
-    if (totalPoints > 0 && earnedPoints === totalPoints) {
+    if (isScenarioComplete({
+      scenarioId: scenario.id,
+      requiredMilestoneIds: scenario.milestones.map((milestone) => milestone.id),
+      completedMilestoneIds: completed,
+      currentProgressKey,
+      loadedProgressKey,
+    })) {
       setShowCompletion(true)
     }
-  }, [earnedPoints, totalPoints, milestonesLoading])
+  }, [completed, currentProgressKey, loadedProgressKey, milestonesLoading, scenario.id, scenario.milestones])
 
   const handleVerify = useCallback(async (milestoneId: number) => {
     if (completed.has(milestoneId)) return
+    const requestKey = scenarioProgressKey(pod.pod_id, scenario.id)
     setVerifying((prev) => new Set(prev).add(milestoneId))
     try {
       const result = await provisioning.verifyMilestone(pod.pod_id, scenario.id, milestoneId)
+      if (currentProgressKeyRef.current !== requestKey) return
       if (result.status === 'PASS') {
         setCompleted((prev) => new Set(prev).add(milestoneId))
         const pts = scenario.milestones.find((m) => m.id === milestoneId)?.points ?? 0
@@ -558,7 +584,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         </ModalFooter>
       </Modal>
 
-      <Modal isOpen={showCompletion} onClose={() => setShowCompletion(false)}>
+      <Modal isOpen={showCompletion && loadedProgressKey === currentProgressKey} onClose={() => setShowCompletion(false)}>
         <ModalHeader title="Scenario complete!" />
         <ModalBody>
           <p className="text-text-secondary mb-3">

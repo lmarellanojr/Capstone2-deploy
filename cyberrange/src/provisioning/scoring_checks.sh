@@ -113,6 +113,91 @@ check_msf_history() {
     return 1
 }
 
+# Scenario 1 M4 requires a currently live Metasploit session, not merely a
+# command in readline history. The portal puts the student in a persistent
+# tmux session named "lab". We observe that pane without sending keys and
+# correlate three facts: the pane is running Metasploit, its output records a
+# Tomcat-manager session opened to this pod's meta IP, and the Metasploit child
+# process still owns an established socket to that IP.
+#
+# Direct-bash tests use replace-only fixture files. The verifier never sets
+# SCORING_TEST_MODE, and test mode fails closed unless every fixture is named.
+check_live_tomcat_msf_session() {
+    local prefix="$1"
+    [[ -n "$prefix" ]] || return 1
+    local target="${prefix}.20"
+    local pane_info pane_output socket_output pane_pid pane_cmd msf_pid msf_cmdline session_peer
+
+    if [[ "${SCORING_TEST_MODE:-0}" == "1" ]]; then
+        [[ -n "${SCORING_TEST_PANE_INFO_FILE:-}" && -f "$SCORING_TEST_PANE_INFO_FILE" ]] || return 1
+        [[ -n "${SCORING_TEST_PANE_OUTPUT_FILE:-}" && -f "$SCORING_TEST_PANE_OUTPUT_FILE" ]] || return 1
+        [[ -n "${SCORING_TEST_SOCKET_OUTPUT_FILE:-}" && -f "$SCORING_TEST_SOCKET_OUTPUT_FILE" ]] || return 1
+        pane_info=$(cat "$SCORING_TEST_PANE_INFO_FILE")
+        pane_output=$(cat "$SCORING_TEST_PANE_OUTPUT_FILE")
+        socket_output=$(cat "$SCORING_TEST_SOCKET_OUTPUT_FILE")
+    else
+        command -v runuser >/dev/null 2>&1 || return 1
+        command -v tmux >/dev/null 2>&1 || return 1
+        command -v ss >/dev/null 2>&1 || return 1
+        pane_info=$(runuser -u student -- tmux list-panes -t lab -F '#{pane_pid}|#{pane_current_command}' 2>/dev/null || true)
+        pane_output=$(runuser -u student -- tmux capture-pane -p -J -S - -t lab 2>/dev/null || true)
+        socket_output=$(ss -Htnp state established 2>/dev/null || true)
+    fi
+
+    # Exactly one active lab pane is expected. Reject ambiguous/malformed data.
+    [[ $(printf '%s\n' "$pane_info" | grep -c .) -eq 1 ]] || return 1
+    IFS='|' read -r pane_pid pane_cmd <<< "$pane_info"
+    [[ "$pane_pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$pane_cmd" =~ ^(ruby|msfconsole)$ ]] || return 1
+
+    # Arm only on an explicit run/exploit at the Tomcat module prompt. Any other
+    # Metasploit prompt clears arming, so an echo entered after module selection
+    # cannot forge the session-open event. Pane text itself remains untrusted;
+    # the strict full-prompt spoof regression tracks the RPC provenance gap.
+    session_peer=$(printf '%s\n' "$pane_output" | awk -v target="$target" '
+        /(^|[[:space:]])msf[0-9]* .* >[[:space:]]/ {
+            armed = ($0 ~ /exploit\(multi\/http\/tomcat_mgr_deploy\)[[:space:]]*>[[:space:]]*(run|exploit)([[:space:]]|$)/)
+            next
+        }
+        armed && /(Meterpreter|Command shell) session [0-9]+ opened/ {
+            arrow=index($0, "-> ")
+            if (!arrow) next
+            peer=substr($0, arrow+3)
+            sub(/[[:space:])].*$/, "", peer)
+            if (peer ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) {
+                split(peer, endpoint, ":")
+                if (endpoint[1] == target) found=peer
+            }
+        }
+        END { if (found) print found; else exit 1 }
+    ') || return 1
+
+    # tmux pane_pid is normally the shell; msfconsole's Ruby process is its
+    # child. Accept the pane PID itself or a direct child, then require ss to
+    # attribute the target-bound established connection to that PID.
+    local candidate_pids="$pane_pid"
+    if [[ "${SCORING_TEST_MODE:-0}" == "1" ]]; then
+        candidate_pids+=" ${SCORING_TEST_MSF_PID:-}"
+    else
+        candidate_pids+=" $(pgrep -P "$pane_pid" 2>/dev/null || true)"
+    fi
+    for msf_pid in $candidate_pids; do
+        [[ "$msf_pid" =~ ^[0-9]+$ ]] || continue
+        if [[ "${SCORING_TEST_MODE:-0}" == "1" ]]; then
+            msf_cmdline="${SCORING_TEST_MSF_CMDLINE:-}"
+        else
+            [[ -r "/proc/$msf_pid/cmdline" ]] || continue
+            msf_cmdline=$(tr '\0' ' ' < "/proc/$msf_pid/cmdline" 2>/dev/null || true)
+        fi
+        [[ "$msf_cmdline" =~ (^|[[:space:]/])msfconsole([[:space:]]|$) ]] || continue
+        if printf '%s\n' "$socket_output" | grep -F "$session_peer" | grep -qE "pid=${msf_pid}([,\)])"; then
+            log "PASS: live tomcat_mgr_deploy Metasploit session to $target (pid=$msf_pid)"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # === VALIDATION ===
 [[ -n "$SCENARIO_ID" ]] || error "SCENARIO_ID required"
 [[ -n "$MILESTONE_ID" ]] || error "MILESTONE_ID required"
@@ -185,9 +270,8 @@ check_scenario_1() {
             ;;
         4)
             # M4: Exploit Tomcat manager on the meta target (merged from scenario 3;
-            # checked via msf console history on kali — SCENARIO_TARGETS[1]=kali)
-            if check_msf_history "tomcat_mgr_deploy|exploit/multi/http/tomcat_mgr_deploy"; then echo "PASS"; return; fi
-            if check_behavior "tomcat_mgr_deploy|msfconsole.*tomcat"; then echo "PASS"; return; fi
+            # require a live target-correlated Metasploit session on Kali.)
+            if check_live_tomcat_msf_session "$prefix"; then echo "PASS"; return; fi
             echo "FAIL"
             ;;
     esac
