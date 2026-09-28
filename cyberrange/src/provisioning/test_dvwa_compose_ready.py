@@ -4,6 +4,7 @@ from dvwa_compose import (
     ENSURE_COMPOSE_SH,
     compose_missing_db,
     ensure_dvwa_compose,
+    login_body_has_form,
     login_body_is_db_failure,
     official_dvwa_compose,
 )
@@ -51,6 +52,13 @@ def test_login_body_db_failure():
     assert login_body_is_db_failure("ok login form") is False
 
 
+def test_login_body_has_form_rejects_empty_and_requires_token():
+    assert login_body_has_form("") is False
+    assert login_body_has_form("<html>Login</html>") is False
+    assert login_body_has_form("Connection refused user_token Login") is False
+    assert login_body_has_form("<form>user_token Login</form>") is True
+
+
 def test_users_table_present():
     assert users_table_present("guestbook\nusers\n") is True
     assert users_table_present("guestbook\n") is False
@@ -70,6 +78,8 @@ def test_ensure_compose_script_replaces_all_dvwa_and_requires_db_server():
     assert "--network-alias db" in ENSURE_COMPOSE_SH
     assert "DB_SERVER=db" in ENSURE_COMPOSE_SH
     assert "Connection refused|mysqli_sql_exception" in ENSURE_COMPOSE_SH
+    assert "user_token" in ENSURE_COMPOSE_SH
+    assert 'login_ok=1' in ENSURE_COMPOSE_SH
     assert "grep -q ':80 '" not in ENSURE_COMPOSE_SH
 
 
@@ -91,7 +101,7 @@ def test_ensure_compose_returns_true_when_health_script_ok():
     inst = FakeInst(
         [
             (0, official_dvwa_compose()),
-            (0, "<html>Login</html>"),
+            (0, "<html><form>user_token<input name='Login'></form></html>"),
         ]
     )
     assert ensure_dvwa_compose(inst) is True
@@ -117,9 +127,22 @@ def test_ensure_ready_imports_then_confirms_users():
             (0, ""),  # init sql exists
             (0, ""),  # import
             (0, "users\nguestbook\n"),  # re-probe
-            (0, ""),  # security low
+            (
+                0,
+                "$_DVWA[ 'default_security_level' ] = 'low';\n",
+            ),
         ]
     )
     assert ensure_dvwa_ready(inst) is True
     scripts = [c[2] for c in inst.calls if len(c) >= 3 and c[0] == "sh"]
     assert any("dvwa-init.sql" in s for s in scripts)
+
+
+def test_ensure_ready_returns_false_when_security_not_low():
+    inst = FakeInst(
+        [
+            (0, "users\n"),
+            (1, "$_DVWA[ 'default_security_level' ] = 'impossible';\n"),
+        ]
+    )
+    assert ensure_dvwa_ready(inst) is False

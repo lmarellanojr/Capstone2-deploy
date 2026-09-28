@@ -100,8 +100,22 @@ docker run -d --name vulnerable-apps_dvwa_1 --restart always \
   -e DB_SERVER=db -p 80:80 \
   ghcr.io/digininja/dvwa >/dev/null
 docker exec vulnerable-apps_dvwa_1 printenv DB_SERVER | grep -qx db
-body=$(curl -sS -m 10 http://127.0.0.1/login.php || true)
-printf '%s' "$body" | grep -qiE 'Connection refused|mysqli_sql_exception' && exit 1
+login_ok=0
+body=
+for _j in 1 2 3 4 5 6 7 8; do
+  body=$(curl -fsS -m 8 http://127.0.0.1/login.php 2>/dev/null || true)
+  if printf '%s' "$body" | grep -qiE 'Connection refused|mysqli_sql_exception'; then
+    printf '%s' "$body"
+    exit 1
+  fi
+  if [ -n "$body" ] && printf '%s' "$body" | grep -qi 'user_token' && printf '%s' "$body" | grep -qi 'Login'; then
+    login_ok=1
+    break
+  fi
+  sleep 2
+done
+[ "$login_ok" = 1 ]
+printf '%s' "$body"
 exit 0
 """
 
@@ -111,11 +125,22 @@ def login_body_is_db_failure(body: str) -> bool:
     return "connection refused" in lower or "mysqli_sql_exception" in lower
 
 
+def login_body_has_form(body: str) -> bool:
+    """Positive signal: non-empty DigiNinja login HTML, not merely 'no error yet'."""
+    text = body or ""
+    if not text.strip():
+        return False
+    if login_body_is_db_failure(text):
+        return False
+    lower = text.lower()
+    return "user_token" in lower and "login" in lower
+
+
 def ensure_dvwa_compose(inst: Any) -> bool:
     """Write official compose when db is missing, then start a healthy stack.
 
-    Returns False if MariaDB is unreachable or the login page still shows a
-    mysqli connection failure. Port 80 alone is not success.
+    Returns False if MariaDB is unreachable, curl never returns a login form,
+    or the page shows a mysqli connection failure. Port 80 alone is not success.
     """
     try:
         code, out = _exec_out(inst, ["cat", COMPOSE_PATH])
@@ -128,7 +153,11 @@ def ensure_dvwa_compose(inst: Any) -> bool:
             b64 = base64.b64encode(payload.encode()).decode("ascii")
             inst.execute(["sh", "-c", f"echo {b64} | base64 -d > {COMPOSE_PATH}"])
         probe_code, probe_out = _exec_out(inst, ["sh", "-c", ENSURE_COMPOSE_SH])
-        if probe_code != 0 or login_body_is_db_failure(probe_out):
+        if (
+            probe_code != 0
+            or login_body_is_db_failure(probe_out)
+            or not login_body_has_form(probe_out)
+        ):
             logger.warning(
                 "ensure_dvwa_compose unhealthy code=%s", probe_code
             )

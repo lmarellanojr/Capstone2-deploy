@@ -77,17 +77,19 @@ def _exec_out(inst: Any, argv: list[str]) -> tuple[int, str]:
     return code, out
 
 
-# Patch default security inside the running DVWA container. Idempotent.
-_SECURITY_LOW_SH = (
-    "DVWA=$(docker ps --format '{{.Names}}' | grep vulnerable-apps_dvwa | head -1); "
-    "[ -n \"$DVWA\" ] || exit 0; "
-    "CONF=$(docker exec \"$DVWA\" sh -c "
-    "'ls /var/www/html/config/config.inc.php /var/www/html/dvwa/config/config.inc.php 2>/dev/null | head -1'); "
-    "[ -n \"$CONF\" ] || exit 0; "
-    "docker exec \"$DVWA\" sh -c "
-    "\"grep -q \\\"default_security_level' ] = 'low'\\\" \\\"$CONF\\\" || "
-    "sed -i \\\"s/default_security_level.*/default_security_level' ] = 'low';/\\\" \\\"$CONF\\\"\""
-)
+# Patch default security inside the running DVWA container, then print the line.
+# Non-zero when the container, config, or Low level is missing.
+_SECURITY_LOW_SH = r"""
+set -eu
+DVWA=$(docker ps --format '{{.Names}}' | grep vulnerable-apps_dvwa | head -1)
+[ -n "$DVWA" ]
+CONF=$(docker exec "$DVWA" sh -c 'ls /var/www/html/config/config.inc.php /var/www/html/dvwa/config/config.inc.php 2>/dev/null | head -1')
+[ -n "$CONF" ]
+docker exec "$DVWA" sh -c "grep -q \"default_security_level' ] = 'low'\" \"\$CONF\" || sed -i \"s/default_security_level.*/default_security_level' ] = 'low';/\" \"\$CONF\""
+line=$(docker exec "$DVWA" grep -E "default_security_level" "$CONF" | head -1)
+printf '%s\n' "$line"
+printf '%s' "$line" | grep -qi "low"
+"""
 
 
 def ensure_dvwa_ready(inst: Any) -> bool:
@@ -135,7 +137,10 @@ def ensure_dvwa_ready(inst: Any) -> bool:
             if not users_table_present(tables):
                 logger.warning("ensure_dvwa_ready: users table still missing")
                 return False
-        inst.execute(["sh", "-c", _SECURITY_LOW_SH])
+        sec_code, sec_out = _exec_out(inst, ["sh", "-c", _SECURITY_LOW_SH])
+        if sec_code != 0 or not security_level_is_low(sec_out):
+            logger.warning("ensure_dvwa_ready: default security is not Low")
+            return False
         return True
     except Exception as exc:
         logger.warning("ensure_dvwa_ready failed: %s", exc, exc_info=True)
