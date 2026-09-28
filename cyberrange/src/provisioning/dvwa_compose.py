@@ -64,8 +64,95 @@ def _exec_out(inst: Any, argv: list[str]) -> tuple[int, str]:
     return code, out
 
 
+# Port 80 listening is not enough: compose 1.29 can leave a hash-prefixed
+# DVWA container bound on :80 without DB_SERVER=db.
+ENSURE_COMPOSE_SH = r"""
+set -eu
+cd /opt/vulnerable-apps
+ids=$(docker ps -aq --filter name=vulnerable-apps_dvwa || true)
+if [ -n "$ids" ]; then
+  docker rm -f $ids || true
+fi
+docker network create vulnerable-apps_default >/dev/null 2>&1 || true
+if ! docker ps --format '{{.Names}}' | grep -qx vulnerable-apps_db_1; then
+  docker rm -f vulnerable-apps_db_1 >/dev/null 2>&1 || true
+  docker run -d --name vulnerable-apps_db_1 --restart always \
+    --network vulnerable-apps_default --network-alias db \
+    -e MYSQL_ROOT_PASSWORD=dvwa \
+    -e MYSQL_DATABASE=dvwa \
+    -e MYSQL_USER=dvwa \
+    -e MYSQL_PASSWORD='p@ssw0rd' \
+    docker.io/library/mariadb:10 >/dev/null
+else
+  docker network connect --alias db vulnerable-apps_default vulnerable-apps_db_1 >/dev/null 2>&1 || true
+fi
+ok=0
+for _i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if docker exec vulnerable-apps_db_1 mysqladmin ping -udvwa -pp@ssw0rd --silent; then
+    ok=1
+    break
+  fi
+  sleep 2
+done
+[ "$ok" = 1 ]
+docker run -d --name vulnerable-apps_dvwa_1 --restart always \
+  --network vulnerable-apps_default \
+  -e DB_SERVER=db -p 80:80 \
+  ghcr.io/digininja/dvwa >/dev/null
+docker exec vulnerable-apps_dvwa_1 printenv DB_SERVER | grep -qx db
+# Wait until PHP can open MySQL on hostname db (DNS + mysqli), then require a
+# real DigiNinja login form. Empty/failed curl is not success.
+php_ok=0
+for _j in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if docker exec vulnerable-apps_dvwa_1 php -r 'try { new mysqli("db","dvwa","p@ssw0rd","dvwa",3306); exit(0);} catch (Throwable $e) { exit(1); }'; then
+    php_ok=1
+    break
+  fi
+  sleep 2
+done
+[ "$php_ok" = 1 ]
+login_ok=0
+body=
+for _j in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  body=$(curl -fsS -m 8 http://127.0.0.1/login.php 2>/dev/null || true)
+  if printf '%s' "$body" | grep -qiE 'Connection refused|mysqli_sql_exception'; then
+    sleep 2
+    continue
+  fi
+  if [ -n "$body" ] && printf '%s' "$body" | grep -qi 'user_token' && printf '%s' "$body" | grep -qi 'Login'; then
+    login_ok=1
+    break
+  fi
+  sleep 2
+done
+[ "$login_ok" = 1 ]
+printf '%s' "$body"
+exit 0
+"""
+
+
+def login_body_is_db_failure(body: str) -> bool:
+    lower = (body or "").lower()
+    return "connection refused" in lower or "mysqli_sql_exception" in lower
+
+
+def login_body_has_form(body: str) -> bool:
+    """Positive signal: non-empty DigiNinja login HTML, not merely 'no error yet'."""
+    text = body or ""
+    if not text.strip():
+        return False
+    if login_body_is_db_failure(text):
+        return False
+    lower = text.lower()
+    return "user_token" in lower and "login" in lower
+
+
 def ensure_dvwa_compose(inst: Any) -> bool:
-    """Write official compose when db is missing. Fail-open (False)."""
+    """Write official compose when db is missing, then start a healthy stack.
+
+    Returns False if MariaDB is unreachable, curl never returns a login form,
+    or the page shows a mysqli connection failure. Port 80 alone is not success.
+    """
     try:
         code, out = _exec_out(inst, ["cat", COMPOSE_PATH])
         text = out if code == 0 else ""
@@ -75,24 +162,17 @@ def ensure_dvwa_compose(inst: Any) -> bool:
             import base64
 
             b64 = base64.b64encode(payload.encode()).decode("ascii")
-            inst.execute(
-                ["sh", "-c", f"echo {b64} | base64 -d > {COMPOSE_PATH}"]
+            inst.execute(["sh", "-c", f"echo {b64} | base64 -d > {COMPOSE_PATH}"])
+        probe_code, probe_out = _exec_out(inst, ["sh", "-c", ENSURE_COMPOSE_SH])
+        if (
+            probe_code != 0
+            or login_body_is_db_failure(probe_out)
+            or not login_body_has_form(probe_out)
+        ):
+            logger.warning(
+                "ensure_dvwa_compose unhealthy code=%s", probe_code
             )
-        inst.execute(
-            [
-                "sh",
-                "-c",
-                # compose 1.29 often exits 0 after renaming/stopping dvwa (SIGWINCH)
-                # and never binds :80. Fall back to docker run with DB_SERVER=db.
-                "cd /opt/vulnerable-apps && (docker-compose up -d || docker compose up -d || true); "
-                "if ! (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ':80 '; then "
-                "docker rm -f vulnerable-apps_dvwa_1 44686fb3f49e_vulnerable-apps_dvwa_1 2>/dev/null || true; "
-                "docker network create vulnerable-apps_default 2>/dev/null || true; "
-                "docker run -d --name vulnerable-apps_dvwa_1 --network vulnerable-apps_default "
-                "--restart unless-stopped -p 80:80 -e DB_SERVER=db ghcr.io/digininja/dvwa || true; "
-                "fi",
-            ]
-        )
+            return False
         return True
     except Exception as exc:
         logger.warning("ensure_dvwa_compose failed: %s", exc, exc_info=True)

@@ -175,9 +175,50 @@ services:
     image: ${dvwa_image}
     restart: always
     ports: [\"80:80\"]
+    environment:
+      - DB_SERVER=db
+    depends_on:
+      - db
+  db:
+    image: docker.io/library/mariadb:10
+    restart: always
+    environment:
+      - MYSQL_ROOT_PASSWORD=dvwa
+      - MYSQL_DATABASE=dvwa
+      - MYSQL_USER=dvwa
+      - MYSQL_PASSWORD=p@ssw0rd
 EOF
     cd /opt/vulnerable-apps && docker-compose up -d
   "
+  # Seed schema and default security Low before publish (issue #124 review).
+  # Provision ensure remains the repair path for already-baked hosts.
+  lxc exec "$c" -- bash -s <<'SEED'
+set -euo pipefail
+cd /opt/vulnerable-apps
+for i in $(seq 1 24); do
+  docker exec "$(docker ps -qf name=vulnerable-apps_db)" mysqladmin ping -udvwa -pp@ssw0rd --silent && break
+  sleep 5
+  [ "$i" = 24 ] && { echo "[!] mariadb did not become ready"; exit 1; }
+done
+HTML=$(curl -fsS -c /tmp/c -b /tmp/c -m 20 http://127.0.0.1/setup.php)
+TOKEN=$(printf '%s' "$HTML" | grep -oE "value=['\"][a-f0-9]{8,}['\"]" | head -1 | tr -d "\"'" | sed 's/^value=//')
+[ -n "$TOKEN" ]
+curl -fsS -c /tmp/c -b /tmp/c -m 90 -X POST \
+  --data-urlencode "create_db=Create / Reset Database" \
+  --data-urlencode "user_token=${TOKEN}" \
+  http://127.0.0.1/setup.php >/dev/null
+docker exec "$(docker ps -qf name=vulnerable-apps_db)" \
+  mysql -udvwa -pp@ssw0rd -N -e "SHOW TABLES FROM dvwa" | grep -qx users
+docker exec "$(docker ps -qf name=vulnerable-apps_db)" \
+  mysqldump -udvwa -pp@ssw0rd dvwa > /opt/vulnerable-apps/dvwa-init.sql
+test -s /opt/vulnerable-apps/dvwa-init.sql
+DVWA=$(docker ps --format '{{.Names}}' | grep vulnerable-apps_dvwa | head -1)
+[ -n "$DVWA" ]
+CONF=$(docker exec "$DVWA" sh -c 'ls /var/www/html/config/config.inc.php /var/www/html/dvwa/config/config.inc.php 2>/dev/null | head -1')
+[ -n "$CONF" ]
+docker exec "$DVWA" sh -c "grep -q \"default_security_level' ] = 'low'\" \"\$CONF\" || sed -i \"s/default_security_level.*/default_security_level' ] = 'low';/\" \"\$CONF\""
+docker exec "$DVWA" grep -q "default_security_level' ] = 'low'" "$CONF"
+SEED
   reset_identity "$c"
   export_image "$c" dvwa-base
 }

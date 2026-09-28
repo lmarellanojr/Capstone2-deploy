@@ -259,8 +259,23 @@ write_files:
             if ensure_dvwa_compose(dvwa_inst):
                 log_event("DVWA_COMPOSE_OK", student_id, pod_id, vmid=dvwa_name)
             else:
-                log_event("DVWA_COMPOSE_FAIL", student_id, pod_id, vmid=dvwa_name)
-            ensure_dvwa_ready(dvwa_inst)
+                log_event(
+                    "DVWA_COMPOSE_FAIL",
+                    student_id,
+                    pod_id,
+                    vmid=dvwa_name,
+                    detail="DB_SERVER=db health check failed",
+                )
+            if ensure_dvwa_ready(dvwa_inst):
+                log_event("DVWA_READY_OK", student_id, pod_id, vmid=dvwa_name)
+            else:
+                log_event(
+                    "DVWA_READY_FAIL",
+                    student_id,
+                    pod_id,
+                    vmid=dvwa_name,
+                    detail="users table missing after seed",
+                )
         except Exception as e:
             logger.warning(f"DVWA compose ensure skipped/failed: {e}")
             log_event("DVWA_COMPOSE_FAIL", student_id, pod_id, detail=str(e))
