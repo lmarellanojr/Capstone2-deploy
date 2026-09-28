@@ -50,8 +50,12 @@ def official_dvwa_compose() -> str:
     return OFFICIAL_COMPOSE
 
 
-def _exec_out(inst: Any, argv: list[str]) -> tuple[int, str]:
-    raw = inst.execute(argv)
+def _exec_out(inst: Any, argv: list[str], timeout: int = 180) -> tuple[int, str]:
+    # Health waits (MariaDB + PHP mysqli + login form) can exceed pylxd defaults.
+    try:
+        raw = inst.execute(argv, timeout=timeout)
+    except TypeError:
+        raw = inst.execute(argv)
     if isinstance(raw, tuple) and len(raw) >= 2:
         code, out = raw[0], raw[1]
         if isinstance(out, bytes):
@@ -95,11 +99,20 @@ for _i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   sleep 2
 done
 [ "$ok" = 1 ]
+docker rm -f vulnerable-apps_dvwa_1 >/dev/null 2>&1 || true
 docker run -d --name vulnerable-apps_dvwa_1 --restart always \
   --network vulnerable-apps_default \
   -e DB_SERVER=db -p 80:80 \
   ghcr.io/digininja/dvwa >/dev/null
-docker exec vulnerable-apps_dvwa_1 printenv DB_SERVER | grep -qx db
+ready=0
+for _j in 1 2 3 4 5 6 7 8 9 10; do
+  if docker exec vulnerable-apps_dvwa_1 printenv DB_SERVER 2>/dev/null | grep -qx db; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+[ "$ready" = 1 ]
 # Wait until PHP can open MySQL on hostname db (DNS + mysqli), then require a
 # real DigiNinja login form. Empty/failed curl is not success.
 php_ok=0

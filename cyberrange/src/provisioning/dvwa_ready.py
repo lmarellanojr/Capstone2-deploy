@@ -63,8 +63,11 @@ def patch_default_security_low(config_text: str) -> str:
     return (config_text or "") + "\n$_DVWA[ 'default_security_level' ] = 'low';\n"
 
 
-def _exec_out(inst: Any, argv: list[str]) -> tuple[int, str]:
-    raw = inst.execute(argv)
+def _exec_out(inst: Any, argv: list[str], timeout: int = 180) -> tuple[int, str]:
+    try:
+        raw = inst.execute(argv, timeout=timeout)
+    except TypeError:
+        raw = inst.execute(argv)
     if isinstance(raw, tuple) and len(raw) >= 2:
         code, out = raw[0], raw[1]
         if isinstance(out, bytes):
