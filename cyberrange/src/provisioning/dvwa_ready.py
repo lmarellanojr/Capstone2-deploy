@@ -88,7 +88,8 @@ DVWA=$(docker ps --format '{{.Names}}' | grep vulnerable-apps_dvwa | head -1)
 [ -n "$DVWA" ]
 CONF=$(docker exec "$DVWA" sh -c 'ls /var/www/html/config/config.inc.php /var/www/html/dvwa/config/config.inc.php 2>/dev/null | head -1')
 [ -n "$CONF" ]
-docker exec "$DVWA" sh -c "grep -q \"default_security_level' ] = 'low'\" \"\$CONF\" || sed -i \"s/default_security_level.*/default_security_level' ] = 'low';/\" \"\$CONF\""
+# Expand CONF on the LXC host before docker exec (do not pass literal $CONF into the container shell).
+docker exec "$DVWA" sh -c "grep -q \"default_security_level' ] = 'low'\" '$CONF' || sed -i \"s/default_security_level.*/default_security_level' ] = 'low';/\" '$CONF'"
 line=$(docker exec "$DVWA" grep -E "default_security_level" "$CONF" | head -1)
 printf '%s\n' "$line"
 printf '%s' "$line" | grep -qi "low"
