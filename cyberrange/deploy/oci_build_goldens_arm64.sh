@@ -175,6 +175,18 @@ services:
     image: ${dvwa_image}
     restart: always
     ports: [\"80:80\"]
+    environment:
+      - DB_SERVER=db
+    depends_on:
+      - db
+  db:
+    image: docker.io/library/mariadb:10
+    restart: always
+    environment:
+      - MYSQL_ROOT_PASSWORD=dvwa
+      - MYSQL_DATABASE=dvwa
+      - MYSQL_USER=dvwa
+      - MYSQL_PASSWORD=p@ssw0rd
 EOF
     cd /opt/vulnerable-apps && docker-compose up -d
   "
