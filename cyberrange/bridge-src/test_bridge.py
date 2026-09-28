@@ -48,7 +48,7 @@ def test_launch_command_configures_history_before_cold_lab_window_creation():
 def test_tmux_cold_server_applies_history_limit_before_lab_window(tmp_path):
     tmux = shutil.which("tmux")
     assert tmux is not None
-    socket_name = f"codex-history-{os.getpid()}"
+    socket_name = f"bridge-history-{os.getpid()}"
     env = os.environ.copy()
     env["TMUX_TMPDIR"] = str(tmp_path)
     tmux_cmd = [tmux, "-L", socket_name, "-f", "/dev/null"]
