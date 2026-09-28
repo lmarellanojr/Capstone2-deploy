@@ -108,4 +108,55 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     expect(body).toContain('href="/lab/dvwa/dvwa/css/main.css"')
     expect(body).not.toContain('/dvwa-theme/css/main.css')
   })
+
+  it('rewrites DigiNinja relative theme URLs on sandboxed sqli under CSP sandbox', async () => {
+    const upstreamHtml = [
+      '<html><head>',
+      '<link rel="stylesheet" type="text/css" href="../../dvwa/css/main.css">',
+      '<script type="text/javascript" src="../../dvwa/js/dvwaPage.js"></script>',
+      '<link rel="icon" href="../../favicon.ico">',
+      '</head><body>',
+      '<img src="../../dvwa/images/logo.png" />',
+      '<form action="../../vulnerabilities/sqli/" method="GET">',
+      '<input type="text" name="id" />',
+      '<input type="submit" name="Submit" value="Submit" />',
+      '</form>',
+      '<h2>Vulnerability: SQL Injection</h2>',
+      '</body></html>',
+    ].join('')
+    mockActivePodAndUpstream(upstreamHtml)
+    const req = makeRequest('/lab/dvwa/vulnerabilities/sqli/')
+    const res = await GET(req, { params: Promise.resolve({ path: ['vulnerabilities', 'sqli'] }) })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-security-policy')).toBe(
+      'sandbox allow-scripts allow-forms allow-modals'
+    )
+    expect(res.headers.get('content-security-policy')).not.toMatch(/same-origin/)
+    const body = await res.text()
+    expect(body).toContain('href="/dvwa-theme/css/main.css"')
+    expect(body).toContain('src="/dvwa-theme/js/dvwaPage.js"')
+    expect(body).toContain('src="/dvwa-theme/images/logo.png"')
+    expect(body).toContain('href="/dvwa-theme/favicon.ico"')
+    expect(body).toContain('action="../../vulnerabilities/sqli/"')
+    expect(body).not.toContain('../../dvwa/css/main.css')
+    expect(body).not.toContain('/lab/dvwa/dvwa/css/main.css')
+  })
+
+  it('does not mirror DigiNinja relative theme URLs on safe security.php', async () => {
+    const upstreamHtml = [
+      '<html><head>',
+      '<link rel="stylesheet" type="text/css" href="../../dvwa/css/main.css">',
+      '</head><body>DVWA Security</body></html>',
+    ].join('')
+    mockActivePodAndUpstream(upstreamHtml)
+    const req = makeRequest('/lab/dvwa/security.php')
+    const res = await GET(req, { params: Promise.resolve({ path: ['security.php'] }) })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-security-policy')).toBeNull()
+    const body = await res.text()
+    expect(body).toContain('href="../../dvwa/css/main.css"')
+    expect(body).not.toContain('/dvwa-theme/css/main.css')
+  })
 })
