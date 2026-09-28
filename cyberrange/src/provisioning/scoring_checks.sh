@@ -155,7 +155,7 @@ check_live_tomcat_msf_session() {
     # cannot forge the session-open event. Pane text itself remains untrusted;
     # the strict full-prompt spoof regression tracks the RPC provenance gap.
     session_peer=$(printf '%s\n' "$pane_output" | awk -v target="$target" '
-        /(^|[[:space:]])msf[0-9]+ .* >[[:space:]]/ {
+        /(^|[[:space:]])msf[0-9]* .* >[[:space:]]/ {
             armed = ($0 ~ /exploit\(multi\/http\/tomcat_mgr_deploy\)[[:space:]]*>[[:space:]]*(run|exploit)([[:space:]]|$)/)
             next
         }
