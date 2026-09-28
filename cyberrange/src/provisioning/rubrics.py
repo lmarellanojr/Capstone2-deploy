@@ -189,24 +189,53 @@ def list_rubrics(conn: sqlite3.Connection, scenario_id: int) -> List[dict]:
 
 
 def validate_flag(
-    conn: sqlite3.Connection, scenario_id: int, milestone_id: int, submitted_flag: str
+    conn: sqlite3.Connection,
+    scenario_id: int,
+    milestone_id: int,
+    submitted_flag: str,
+    student_id: Optional[str] = None,
 ) -> Tuple[bool, Optional[dict]]:
-    """Validate a submitted flag against stored rubric criteria.
+    """Validate a submitted flag against rubric criteria.
 
-    Uses secrets.compare_digest in constant time to prevent timing attacks.
+    - When student_id is provided, resolution is dynamic-first: checks
+      pod_milestone_flags table, falling back to deterministic generation
+      via generate_milestone_flag(). Under no circumstances does a provided
+      student_id fall back to static git seed flags (anti-leakage guard).
+    - When student_id is None, falls back to milestone_rubrics["expected_flag"]
+      as a backward-compatible bridge for legacy test fixtures.
+    - Uses secrets.compare_digest in constant time to prevent timing attacks.
     Returns (is_valid, rubric_dict).
     """
     rubric = get_rubric(conn, scenario_id, milestone_id)
     if not rubric:
         return False, None
 
-    expected = rubric.get("expected_flag", "")
-    if not expected or not submitted_flag:
+    if not submitted_flag or not submitted_flag.strip():
         return False, rubric
 
-    clean_submitted = submitted_flag.strip().upper()
-    clean_expected = expected.strip().upper()
+    from flag_planting import generate_milestone_flag, get_student_expected_flag
 
-    # Constant-time comparison
-    is_valid = secrets.compare_digest(clean_submitted, clean_expected)
-    return is_valid, rubric
+    clean_submitted = submitted_flag.strip().upper()
+
+    if student_id and student_id.strip():
+        clean_sid = student_id.strip()
+        # 1. If student has a provisioned dynamic flag in pod_milestone_flags, that is authoritative.
+        # Static v5.sql git answer keys MUST NOT pass for a provisioned student.
+        planted_expected = get_student_expected_flag(conn, clean_sid, scenario_id, milestone_id)
+        if planted_expected:
+            is_valid = secrets.compare_digest(clean_submitted, planted_expected.strip().upper())
+            return is_valid, rubric
+
+        # 2. If student is not yet in pod_milestone_flags, check deterministic dynamic generation:
+        dynamic_expected = generate_milestone_flag(clean_sid, scenario_id, milestone_id)
+        if secrets.compare_digest(clean_submitted, dynamic_expected.strip().upper()):
+            return True, rubric
+
+    # 3. Backward-compatible bridge: fall back to static rubric expected_flag only when
+    # the student has no provisioned dynamic flag (e.g. legacy test fixtures without pod_milestone_flags).
+    static_expected = rubric.get("expected_flag", "")
+    if static_expected:
+        is_valid = secrets.compare_digest(clean_submitted, static_expected.strip().upper())
+        return is_valid, rubric
+
+    return False, rubric

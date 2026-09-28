@@ -303,6 +303,29 @@ write_files:
             logger.warning(f"Wazuh enroll skipped/failed: {e}")
             log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))
 
+        # Plant dynamic per-student milestone flags for hybrid scoring (SCORE-HYBRID #111)
+        try:
+            scen_int = int(str(scenario_id).strip())
+            from flag_planting import generate_all_scenario_flags, plant_scenario_flags, save_pod_flags
+            flags_map = generate_all_scenario_flags(student_id, scen_int)
+            conn_flags = get_db_connection()
+            try:
+                save_pod_flags(conn_flags, pod_id, student_id, scen_int, flags_map)
+            finally:
+                conn_flags.close()
+
+            plant_scenario_flags(client, student_id, pod_id, vmids, scen_int, flags_map)
+            # Security invariant: audit log detail must NEVER include plaintext flags
+            log_event(
+                "FLAGS_PLANTED_OK",
+                student_id,
+                pod_id,
+                detail=f"scenario={scen_int}, milestones={sorted(list(flags_map.keys()))}",
+            )
+        except Exception as e:
+            logger.warning(f"Scenario flag generation/planting skipped/failed: {e}")
+            log_event("FLAGS_PLANTED_FAIL", student_id, pod_id, detail=str(e))
+
         conn = get_db_connection()
         with conn:
             conn.execute(
