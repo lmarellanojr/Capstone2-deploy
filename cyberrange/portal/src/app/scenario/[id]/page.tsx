@@ -53,8 +53,14 @@ export default function ScenarioDetailPage({ params }: PageProps) {
     startLab()
   }
 
+  // LAB-LAYOUT: hide the desktop nav only while a terminal is actually on
+  // screen. `!!pod` excludes expired-with-no-pod, which renders
+  // SessionExpiredOverlay instead of TerminalView and doesn't need the extra
+  // width.
+  const hideSidebar = (phase === 'active' || phase === 'expired') && !!pod
+
   return (
-    <LayoutWrapper>
+    <LayoutWrapper hideSidebar={hideSidebar}>
       {/* Header bar */}
       <div className="bg-secondary border border-border rounded-lg flex-shrink-0 shadow-card mb-4 -mt-2">
         <div className="px-3 sm:px-4 py-3 flex flex-wrap items-center gap-2 sm:gap-4">

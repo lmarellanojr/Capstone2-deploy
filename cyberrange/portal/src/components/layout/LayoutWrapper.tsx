@@ -15,9 +15,12 @@ interface LayoutWrapperProps {
   /** Explicit, independent of sectionLabel: a section can have its own sidebar label
    *  without losing a working search box. Instructor/Admin pages set this themselves. */
   hideSearch?: boolean;
+  /** When true, the persistent desktop sidebar column is not rendered, and
+   *  `children` reclaims its width. Mobile overlay nav is unaffected. */
+  hideSidebar?: boolean;
 }
 
-export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hideSearch = false }: LayoutWrapperProps) {
+export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hideSearch = false, hideSidebar = false }: LayoutWrapperProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const pathname = usePathname();
 
@@ -25,9 +28,11 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hide
 
   return (
     <div className="flex h-screen min-h-[100dvh] bg-primary overflow-hidden">
-      <div className="hidden lg:block w-64 flex-shrink-0">
-        <Sidebar navItems={navItems} sectionLabel={sectionLabel} />
-      </div>
+      {!hideSidebar && (
+        <div className="hidden lg:block w-64 flex-shrink-0">
+          <Sidebar navItems={navItems} sectionLabel={sectionLabel} />
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col min-w-0">
         <TopNav
