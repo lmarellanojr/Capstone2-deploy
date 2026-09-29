@@ -38,6 +38,7 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hide
         <TopNav
           onSearch={onSearch}
           showLogo
+          desktopBrand={hideSidebar}
           onMenuClick={() => setMenuOpen(true)}
           hideSearch={hideSearch}
         />

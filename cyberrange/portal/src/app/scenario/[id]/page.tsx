@@ -59,23 +59,29 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   // width.
   const hideSidebar = (phase === 'active' || phase === 'expired') && !!pod
 
+  const shellClass = hideSidebar ? 'mx-auto w-full max-w-7xl' : undefined
+
   return (
     <LayoutWrapper hideSidebar={hideSidebar}>
+      <div className={shellClass}>
       {/* Header bar */}
       <div className="bg-secondary border border-border rounded-lg flex-shrink-0 shadow-card mb-4 -mt-2">
         <div className="px-3 sm:px-4 py-3 flex flex-wrap items-center gap-2 sm:gap-4">
-          <button
-            onClick={() => router.push('/scenarios')}
-            className="text-text-muted hover:text-brand transition text-sm font-medium"
-          >
-            ← My Labs
-          </button>
-          <span className="text-border">|</span>
-          {/* GUIDE-UX-TRIAL / SCEN-UX #116: same "Scenario N -- Name" label
-              as the catalog card and the lab info page. */}
-          <span className="font-semibold text-text-main min-w-0 break-words">
-            {scenarioDisplayTitle(scenario)}
-          </span>
+          <nav aria-label="Breadcrumb" className="flex items-center gap-2 min-w-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => router.push('/scenarios')}
+              className="text-text-muted hover:text-brand transition text-sm font-medium"
+            >
+              My Labs
+            </button>
+            <span className="text-border" aria-hidden="true">›</span>
+            {/* GUIDE-UX-TRIAL / SCEN-UX #116: same "Scenario N -- Name" label
+                as the catalog card and the lab info page. */}
+            <span className="font-semibold text-text-main min-w-0 break-words">
+              {scenarioDisplayTitle(scenario)}
+            </span>
+          </nav>
           {phase === 'active' && pod && (
             <span className="sm:ml-auto text-xs text-success font-semibold bg-green-50 px-2 py-1 rounded-full border border-green-200 whitespace-nowrap">
               Pod {pod.pod_id} · ACTIVE
@@ -87,7 +93,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
         </div>
       </div>
 
-      {/* Content area */}
+      {/* Content area — BUG-035 height stays on this sibling, not the max-w wrapper */}
       <div
         className={
           phase === 'active' || phase === 'expired'
@@ -195,6 +201,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
             )}
           </div>
         )}
+      </div>
       </div>
     </LayoutWrapper>
   )

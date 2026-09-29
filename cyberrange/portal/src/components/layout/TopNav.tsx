@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import { useState } from "react";
 import { Logo } from "./Logo";
@@ -7,16 +8,25 @@ import { Logo } from "./Logo";
 interface TopNavProps {
   onSearch?: (query: string) => void;
   showLogo?: boolean;
+  /** When true (active lab with sidebar hidden), keep the logo visible at lg+ too. */
+  desktopBrand?: boolean;
   onMenuClick?: () => void;
   /** Instructor/Admin shells have no lab catalog to search — hide the box entirely there
    *  instead of rendering an input with no wired-up handler. */
   hideSearch?: boolean;
 }
 
-export function TopNav({ onSearch, showLogo = false, onMenuClick, hideSearch = false }: TopNavProps) {
+export function TopNav({
+  onSearch,
+  showLogo = false,
+  desktopBrand = false,
+  onMenuClick,
+  hideSearch = false,
+}: TopNavProps) {
   const { data: session } = useSession();
   const [showDropdown, setShowDropdown] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const logoVisibility = desktopBrand ? "hidden sm:block" : "hidden sm:block lg:hidden";
 
   return (
     <header className="bg-secondary border-b border-border min-h-16 flex items-center justify-between px-3 sm:px-6 py-2 shadow-card gap-2">
@@ -24,9 +34,13 @@ export function TopNav({ onSearch, showLogo = false, onMenuClick, hideSearch = f
         <span aria-hidden="true" className="text-xl leading-none">☰</span>
       </button>
       {showLogo && (
-        <div className="hidden sm:block lg:hidden mr-2 shrink-0">
+        <Link
+          href="/dashboard"
+          aria-label="MMDC Cyber Range home"
+          className={`${logoVisibility} mr-2 shrink-0`}
+        >
           <Logo size="sm" />
-        </div>
+        </Link>
       )}
 
       {!hideSearch && (
