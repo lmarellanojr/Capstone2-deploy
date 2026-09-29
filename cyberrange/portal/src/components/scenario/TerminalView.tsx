@@ -258,7 +258,10 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         style={{ visibility: expired ? 'hidden' : 'visible' }}
       >
         {/* Card header: active target title + Open DVWA/SIEM */}
-        <div className="mb-2 flex flex-wrap items-start justify-between gap-2 bg-secondary border border-border rounded-lg px-3 py-2">
+        <div
+          data-testid="lab-terminal-card-header"
+          className="mb-2 flex flex-wrap items-start justify-between gap-2 bg-secondary border border-border rounded-lg px-3 py-2"
+        >
           <div className="min-w-0">
             <h2 className="text-lg sm:text-xl font-bold text-text-main leading-tight">
               {activeTabTitle}
@@ -388,13 +391,19 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         {/* Connection Tabs */}
         <div className="flex bg-secondary border border-border rounded-t-xl overflow-hidden shrink-0">
           <button
-            onClick={() => setInfoModal('kali')}
+            onClick={() => {
+              setActiveTab('kali-cli')
+              setInfoModal('kali')
+            }}
             className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'kali-cli' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
           >
             Kali Linux (CLI)
           </button>
           <button
-            onClick={() => setInfoModal('meta')}
+            onClick={() => {
+              setActiveTab('meta')
+              setInfoModal('meta')
+            }}
             className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'meta' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
           >
             Target: meta (lab)

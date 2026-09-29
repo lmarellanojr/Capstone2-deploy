@@ -40,7 +40,7 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hide
           showLogo
           desktopBrand={hideSidebar}
           onMenuClick={() => setMenuOpen(true)}
-          hideSearch={hideSearch}
+          hideSearch={hideSearch || hideSidebar}
         />
         <main className="flex-1 overflow-y-auto">
           <div className="p-3 sm:p-6 lg:p-8">{children}</div>

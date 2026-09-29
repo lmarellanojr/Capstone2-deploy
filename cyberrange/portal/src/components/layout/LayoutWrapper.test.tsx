@@ -57,6 +57,7 @@ describe("LayoutWrapper (LAB-LAYOUT-02)", () => {
     )
     expect(home.className.split(/\s+/)).not.toContain("lg:hidden")
     expect(screen.queryByText("Dashboard")).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText("Search labs...")).not.toBeInTheDocument()
   })
 
   it("keeps the logo tablet-only (lg:hidden) when the sidebar is visible", () => {
@@ -72,5 +73,6 @@ describe("LayoutWrapper (LAB-LAYOUT-02)", () => {
       expect.arrayContaining(["hidden", "sm:block", "lg:hidden"])
     )
     expect(screen.getByText("Dashboard")).toBeInTheDocument()
+    expect(screen.getByPlaceholderText("Search labs...")).toBeInTheDocument()
   })
 })

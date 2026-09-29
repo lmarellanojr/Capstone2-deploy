@@ -4,7 +4,7 @@
 
 import React from "react"
 import "@testing-library/jest-dom"
-import { act, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { TerminalView } from "./TerminalView"
 import type { Pod } from "@/lib/api"
 import type { Scenario } from "@/hooks/useScenarios"
@@ -114,9 +114,26 @@ describe("TerminalView (LAB-LAYOUT-02)", () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByRole("heading", { name: "Kali Linux (CLI)" })).toBeInTheDocument()
+    const cardHeader = screen.getByTestId("lab-terminal-card-header")
+    expect(within(cardHeader).getByRole("heading", { name: "Kali Linux (CLI)" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /Open SIEM/i })).toBeInTheDocument()
     expect(screen.getByText(/Target:\s*10\.0\.51\.10/)).toBeInTheDocument()
+    unmount()
+  })
+
+  it("syncs the card title when the Meta strip tab is clicked", async () => {
+    const { unmount } = render(<TerminalView pod={pod} scenario={scenario} onEnd={jest.fn()} />)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Target: meta (lab)" }))
+
+    const cardHeader = screen.getByTestId("lab-terminal-card-header")
+    expect(within(cardHeader).getByRole("heading", { name: "Target: meta (lab)" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Close modal" })).toBeInTheDocument()
+    expect(within(cardHeader).getByText(/Target:\s*10\.0\.51\.20/)).toBeInTheDocument()
     unmount()
   })
 })
