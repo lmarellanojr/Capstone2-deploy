@@ -236,8 +236,23 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     else warning(`Could not copy ${label}`)
   }, [success, warning])
 
+  const activeTabTitle =
+    activeTab === 'kali-cli'
+      ? 'Kali Linux (CLI)'
+      : activeTab === 'meta'
+        ? 'Target: meta (lab)'
+        : 'Target: dvwa (CLI)'
+  const activeTargetIp =
+    activeTab === 'kali-cli'
+      ? ips?.kali
+      : activeTab === 'meta'
+        ? ips?.meta
+        : ips?.dvwa
+  const activeTargetLabel =
+    activeTab === 'kali-cli' ? 'Kali' : activeTab === 'meta' ? 'Meta' : 'DVWA'
+
   return (
-    <div className="flex flex-1 w-full h-full relative">
+    <div className="flex flex-col lg:flex-row flex-1 w-full h-full min-h-0 relative">
       {ttlGrace && !expired && (
         <div className="absolute top-0 left-0 right-0 z-20 px-3 py-2 bg-amber-50 border-b border-amber-200 text-sm text-amber-900">
           Time limit reached. This lab will close within about 10 minutes. You can keep working until it stops.
@@ -265,14 +280,54 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
 
       <div
         ref={wrapperRef}
-        className="flex-1 min-w-0 mr-4 relative flex flex-col"
+        className="w-full min-h-[40vh] lg:min-h-0 flex-1 min-w-0 mb-4 lg:mb-0 lg:mr-4 relative flex flex-col"
         style={{ visibility: expired ? 'hidden' : 'visible' }}
       >
-        {/* Connection / context strip */}
+        {/* Card header: active target title + Open DVWA/SIEM */}
+        <div
+          data-testid="lab-terminal-card-header"
+          className="mb-2 flex flex-wrap items-start justify-between gap-2 bg-secondary border border-border rounded-lg px-3 py-2"
+        >
+          <div className="min-w-0">
+            <h2 className="text-lg sm:text-xl font-bold text-text-main leading-tight">
+              {activeTabTitle}
+            </h2>
+            {activeTargetIp && (
+              <button
+                type="button"
+                className="mt-0.5 text-xs sm:text-sm text-text-secondary hover:text-brand font-mono"
+                onClick={() => copyText(activeTargetIp, `${activeTargetLabel} IP`)}
+              >
+                Target: {activeTargetIp}
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {showOpenDvwa && (
+              <button
+                type="button"
+                onClick={() => setShowAccessHelp('dvwa')}
+                className="px-2 py-1 rounded border border-brand/40 text-brand text-sm font-semibold hover:bg-brand/5"
+              >
+                Open DVWA ↗
+              </button>
+            )}
+            {showOpenSiem && (
+              <button
+                type="button"
+                onClick={() => setShowAccessHelp('siem')}
+                className="px-2 py-1 rounded border border-brand/40 text-brand text-sm font-semibold hover:bg-brand/5"
+              >
+                Open SIEM ↗
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Compact copyable pod IPs */}
         {ips && (
-          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary bg-secondary border border-border rounded-lg px-3 py-2">
+          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
             <span className="font-semibold text-text-main">Pod {pod.pod_id}</span>
-            <span className="text-border">|</span>
             <button type="button" className="hover:text-brand font-mono" onClick={() => copyText(ips.subnet, 'subnet')}>
               {ips.subnet}
             </button>
@@ -286,25 +341,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
               DVWA {ips.dvwa}
             </button>
             {scenario.id === '11' && (
-              <span className="ml-auto text-brand font-semibold">Remediate on: meta tab</span>
-            )}
-            {showOpenDvwa && (
-              <button
-                type="button"
-                onClick={() => setShowAccessHelp('dvwa')}
-                className="ml-auto px-2 py-1 rounded border border-brand/40 text-brand font-semibold hover:bg-brand/5"
-              >
-                Open DVWA ↗
-              </button>
-            )}
-            {showOpenSiem && (
-              <button
-                type="button"
-                onClick={() => setShowAccessHelp('siem')}
-                className="ml-auto px-2 py-1 rounded border border-brand/40 text-brand font-semibold hover:bg-brand/5"
-              >
-                Open SIEM ↗
-              </button>
+              <span className="text-brand font-semibold">Remediate on: meta tab</span>
             )}
           </div>
         )}
@@ -380,13 +417,19 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         {/* Connection Tabs */}
         <div className="flex bg-secondary border border-border rounded-t-xl overflow-hidden shrink-0">
           <button
-            onClick={() => setInfoModal('kali')}
+            onClick={() => {
+              setActiveTab('kali-cli')
+              setInfoModal('kali')
+            }}
             className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'kali-cli' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
           >
             Kali Linux (CLI)
           </button>
           <button
-            onClick={() => setInfoModal('meta')}
+            onClick={() => {
+              setActiveTab('meta')
+              setInfoModal('meta')
+            }}
             className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'meta' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
           >
             Target: meta (lab)
@@ -419,8 +462,11 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         </div>
       </div>
 
-      {/* Right: Milestone sidebar */}
-      <div className="w-96 flex-shrink-0 flex flex-col card-surface p-5">
+      {/* Right: Milestone / Guide panel (~40-45% on lg+) */}
+      <div
+        data-testid="lab-right-panel"
+        className="w-full lg:w-[42%] xl:w-[45%] lg:min-w-[20rem] flex-shrink-0 flex flex-col card-surface p-5"
+      >
         {/* Score */}
         <div className="mb-5 pb-4 border-b border-border">
           <div className="text-xs text-text-secondary uppercase tracking-wide mb-1">Score</div>
