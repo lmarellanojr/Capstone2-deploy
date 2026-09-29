@@ -188,7 +188,9 @@ async def evaluate_hybrid_submission(
     HybridScoreResult.outcome retains Literal "ESCALATED" for compatibility; student-visible
     responses for Case 2/3 stay INCOMPLETE while still escalating server-side.
     """
-    flag_valid, rubric = validate_flag(conn, scenario_id, milestone_id, submitted_flag)
+    flag_valid, rubric = validate_flag(
+        conn, scenario_id, milestone_id, submitted_flag, student_id=student_id
+    )
     if not rubric:
         raise ValueError(f"Rubric not found for scenario {scenario_id}, milestone {milestone_id}")
 
