@@ -83,14 +83,16 @@ What you can do with this You've proven the field trusts your input — that's t
 
 #### In the User ID box, submit:
 ```bash
-1' UNION SELECT user(), database() -- -
+1' UNION SELECT null, database() -- -
 ```
 
-About `-- -` That's dash‑dash‑**space** ‑dash. It comments out DVWA's leftover `'` so the query stays valid. This module shows **two** columns, so every `UNION SELECT` must return exactly two values. 
+About `-- -` That's dash‑dash‑**space** ‑dash. It comments out DVWA's leftover `'` so the query stays valid. This module shows **two** columns, so every `UNION SELECT` must return exactly two values. Using `null, database()` puts the name **`dvwa` alone in the Surname cell**, which matches what beginners should look for (and what browser scoring checks).
 
-**Done when:** a row shows the database name `dvwa` and **Database Extraction** ticks.
+Optional (playground): try `1' UNION SELECT user(), database() -- -` to also print the DB user in the First name cell — useful for learning, not required for this milestone.
 
-What you can do with this Knowing the database name (`dvwa`), the DB user, and the exact MySQL/MariaDB version lets you aim at the right tables and look up version-specific exploits. Next, use `information_schema` (see the playground) to list every table and column — the map you need before stealing the good stuff in Task 3. 
+**Done when:** a row shows the database name `dvwa` (Surname) and **Database Extraction** ticks.
+
+What you can do with this Knowing the database name (`dvwa`) lets you aim at the right tables next. Use `information_schema` (see the playground) to list every table and column — the map you need before stealing the good stuff in Task 3. 
 
 **Task 3 — Admin Hash · 100 pts**
 

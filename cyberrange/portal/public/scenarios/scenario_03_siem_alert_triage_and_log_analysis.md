@@ -34,7 +34,7 @@ The #1 thing to get right Scoring reads three files **on the meta host** , not o
 
 Unlike the attack scenarios, there's nothing to “exploit.” You demonstrate analyst skill by producing three **artifact files on meta**. The checker reads those files; then you click **Manual Check** for each milestone.
 
-Templates always work If the SIEM table is empty or the manager is busy, you can still finish. Each file below has a ready template — fill it with the best values you can see (or the example values) and it still scores. Getting real values from Wazuh makes it a better exercise, not a scoring requirement. 
+Templates are a starting point only If the SIEM table is empty or the manager is busy, you can still finish — but **copying a template without editing it does not pass**. Replace placeholders with times and rule IDs from **your** run (SIEM table or meta `auth.log`). Getting real Wazuh values is both better practice and what Manual Check looks for on Milestone 2. 
 
 ## 3. Set up your lab
 
@@ -113,7 +113,9 @@ cat > /home/msfadmin/incident_timeline.md << 'EOF'
 EOF
 ```
 
-**Done when:** `incident_timeline.md` exists on meta with at least one classified, time-ordered event.
+Replace every `HH:MM` with a real time from the SIEM table (or `auth.log`), and delete lines for events you did not see. To pass, at least one line needs a **rule ID** and a **real clock time** (e.g. `rule: 5710 — time: 14:32`). **The template as written does not pass** — leaving `HH:MM` in the file fails Manual Check.
+
+**Done when:** `incident_timeline.md` exists on meta with at least one classified, time-ordered event that includes a rule ID and a real time (`HH:MM` fully replaced).
 
 **Then:** **Manual Check** on the timeline milestone.
 
@@ -174,7 +176,8 @@ Note your **time-to-first-alert** after Task 0 | A real SOC metric — how fast 
 Problem | Fix  
 --- | ---  
 Manual Check FAIL | Your files are on **Kali** — re-create them on the **meta** tab. Scoring runs on meta.  
-SIEM table empty / no 5710 | Re-run the Task 0 SSH line and wait 1–2 min (auto-refreshes every 15s). If it says “No alerts match,” click **Clear filters**. 5710 is optional — use the templates and you still pass.  
+SIEM table empty / no 5710 | Re-run the Task 0 SSH line and wait 1–2 min (auto-refreshes every 15s). If it says “No alerts match,” click **Clear filters**. If still empty, take times from `sudo grep "Invalid user" /var/log/auth.log` on meta. Unedited templates do **not** pass.  
+Milestone 2 FAIL with a timeline file | At least one line needs a rule ID and a real time (`rule: 5710 — time: 14:32`); leaving `HH:MM` means the template was not filled in.  
 Lots of 19007 / 19008 / 19004 rows | Those are CIS/SCA config scans — classify them as **noise**. Focus on 5710 (failed SSH) or 510 (rootcheck).  
 nmap made no alert | Correct — `nmap -sn`/`-F` usually creates no Wazuh row. It's not a primary signal.  
 Shared SIEM, many agents | Only trust rows for **your** `pod-<you>-meta` agent. Manager is `10.0.40.10`.  
