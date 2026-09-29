@@ -32,8 +32,8 @@ When you type an ID, DVWA drops it inside a database question — right between 
 SELECT first_name, last_name FROM users WHERE user_id = 'YOUR INPUT';
 ```
 
-  * Type `1'` → it becomes `… = '1'';` → one extra quote nothing closes → **syntax error**. That error proves your text reached the query.
-  * Type `1' OR '1'='1` → it becomes `… = '1' OR '1'='1';` → always true → returns **every user**.
+  * Type `1' OR '1'='1` → it becomes `… = '1' OR '1'='1';` → always true → returns **every user**. **This is the payload that scores here.**
+  * Type `1'` alone → it becomes `… = '1'';` → a broken quote. In textbooks that shows a SQL error; on this lab the page often shows little or nothing useful, so **do not rely on bare `1'` for Task 1**.
 
 The whole trick is the single quote Only a single quote can break this query, because the query is wrapped in single quotes. A double quote `"` does nothing here. 
 
@@ -58,18 +58,16 @@ For each one: open the module, paste the payload, submit, and watch the mileston
 
 ### Task 1 — prove the field is injectable
 
-**Goal:** make the query misbehave.
+**Goal:** make the query return every user (always-true injection).
 
-> **What you're doing & why:** You slip a single quote into the ID field. Either you get a database error (proof your input reached the SQL) or you flip the logic to always-true and get every row back. The portal scores either outcome. 
+> **What you're doing & why:** You close the quote early and add `OR '1'='1` so the `WHERE` clause is always true. DVWA then lists **every** user row — that multi-row reply is what the portal scores for Injection Point. Bare `1'` is not enough on this lab (you often get no usable error page), so use the OR payload.
 
-#### Open SQL Injection → in the User ID box, submit one of:
+#### Open SQL Injection → in the User ID box, submit:
 ```bash
 1' OR '1'='1
-
-1'
 ```
 
-**Done when:** several user rows appear (or a SQL syntax error shows) and **Injection Point** ticks.
+**Done when:** several user rows appear (First name / Surname repeated) and **Injection Point** ticks.
 
 What you can do with this You've proven the field trusts your input — that's the foothold everything else builds on. The same hole now lets you read the _whole_ database, not just user 1. The names you see (admin, Gordon Brown, …) are the app's user records; in the next tasks you'll pull the sensitive columns hiding behind them. 
 
@@ -141,7 +139,8 @@ Once you've earned the four milestones, try these to actually _understand_ the t
 
 Payload | What it teaches / what you'll see  
 --- | ---  
-`1'` | Breaks the quote → SQL syntax error. The error text confirms injection.  
+`1' OR '1'='1` | **Scored Task 1 path** — always-true; every user row appears.  
+`1'` | Broken quote only. May show little on this lab — **not** the Task 1 payload to use for scoring.  
 `1' AND '1'='1` vs `1' AND '1'='2` | **Boolean logic:** the first returns user 1, the second returns nothing — the page answers true/false to your condition.  
 `1' ORDER BY 2 -- -` then `1' ORDER BY 3 -- -` | **Column counting:** 2 works, 3 errors → the query has **2 columns** (why UNION needs two values).  
 `1' UNION SELECT null, null -- -` | Confirms UNION works and both columns are printable.  
