@@ -1,87 +1,78 @@
-## Scenario 3 — SIEM Alert Triage
+## Scenario 3 — SIEM Alert Triage & Log Analysis
 
-> **Network:** Generate traffic from Kali `$TARGET_KALI` toward meta `$TARGET_META` (and optionally DVWA). SIEM manager: `10.0.40.10` (shared). Your agents are named like `pod-<you>-meta` and `pod-<you>-dvwa`.
+> **Network:** Generate traffic from Kali `$TARGET_KALI` toward meta `$TARGET_META`. SIEM manager: `10.0.40.10` (shared). Agents look like `pod-<you>-meta`. Write triage files on the **Target: meta** tab.
 
-**Difficulty:** Intermediate  
-**Estimated time:** 45–60 minutes  
-**Role:** Defender (SOC analyst)  
-**Tools:** Kali (noise), portal **meta** tab (write triage files), **Open SIEM** in-portal alert table (Wazuh events, live when agents exist)
+A guided, beginner walkthrough — this time you're the **defender**. You'll create some suspicious activity, watch it light up the SIEM, tell the real threats from the noise, and write the report a supervisor would act on. Read each _“What you're doing & why”_ box as you go.
 
-### Learning outcomes
+Medium Defensive 45–60 min · MITRE T1595 · Defender (SOC analyst) · 3 milestones
 
-- Generate realistic noisy events that Wazuh can detect  
-- Classify true positives vs noise  
-- Reconstruct a short attack timeline  
-- Write a concise incident summary for a supervisor  
+## 0. Before you start — the big picture
 
-### How this lab works (no instructor preload)
+The first scenarios were the _attacker's_ view. This one is the **blue team's** view of the same kind of activity: an analyst watching alerts roll in and deciding what matters.
 
-You create your own alert activity, then triage it. There is **no** required instructor “30-alert dump.”
+You work across three portal tabs: **Kali** (to generate activity), **Open SIEM** (the Wazuh alert table), and **Target: meta** (where you write your triage files). Everything runs inside your own **isolated pod**.
 
-1. **Kali tab** — run the noise steps below.  
-2. **Open SIEM** — in-portal table showing live Wazuh events. It refreshes itself every 15 seconds (paused while the browser tab is hidden); **Refresh** fetches immediately. After Task 0, alerts usually appear within 1–2 minutes. The table displays real events from Wazuh **grouped by rule** (Count, Last seen, Rule, Agent, Lvl, Description). Click a group to expand events; click an expanded row to copy its timestamp and rule ID. Use the **rule**, **agent** and **severity** filters to narrow the table; **Clear filters** returns to all rows.  
-   The lab runs Wazuh in **manager-only** mode: there is no Wazuh Dashboard or Indexer on the 12 GiB host, so this table is the SIEM view.  
-   Rule **5710** (failed SSH login) is optional. CIS/SCA rows (agent config scans: 19007, 19008, 19004) appear as noise. **Rule 510** (rootcheck, often LXD hidden files) may fire automatically. Rule **1007** (filesystem full) is API-hidden and won’t clutter the window.  
-   The table only shows alerts from **your current pod** (nothing from before it was created, even if you had an earlier pod).  
-   If alerts don’t appear or the manager is unavailable, triage from meta’s own SSH log instead (see the hint under Task 0). The template files below are a starting point only: scoring checks that you replaced the placeholders with times and rule IDs from **your** run.  
-3. **Meta tab** — write the scored artifact files (paths below). Scoring runs **on meta**.
+## 1. The pieces you'll use
 
----
+### Wazuh — the SIEM
 
-### Task 0 — Generate detection noise (do this first)
+A **SIEM** (Security Information and Event Management) collects logs from many machines and raises an **alert** when something matches a detection rule. Here it's **Wazuh**. The portal's **Open SIEM** button shows a live alert table (grouped by rule: Count, Last seen, Rule, Agent, Level, Description). It auto-refreshes every ~15 seconds.
 
-On **Kali**:
+### Kali & meta
 
+**Kali** is where you generate the suspicious activity (a failed SSH login, a scan). **meta** is the monitored target — and, importantly, the place you **write your triage files**. Your Wazuh agents are named like `pod-<you>-meta`.
+
+The #1 thing to get right Scoring reads three files **on the meta host** , not on Kali. Generate noise on Kali, but **write your triage files on the meta tab**. Files created on Kali will not score. 
+
+# | Milestone | What you produce (on meta)  
+--- | --- | ---  
+**Task 1** |  Triage start | `alert_triage.json` — a structured record of an alert  
+**Task 2** |  True-positive classification / timeline | `incident_timeline.md` — events in order  
+**Task 3** |  Incident summary | `incident_report.txt` — the supervisor report  
+  
+## 2. How scoring works
+
+Unlike the attack scenarios, there's nothing to “exploit.” You demonstrate analyst skill by producing three **artifact files on meta**. The checker reads those files; then you click **Manual Check** for each milestone.
+
+Templates are a starting point only If the SIEM table is empty or the manager is busy, you can still finish — but **copying a template without editing it does not pass**. Replace placeholders with times and rule IDs from **your** run (SIEM table or meta `auth.log`). Getting real Wazuh values is both better practice and what Manual Check looks for on Milestone 2. 
+
+## 3. Set up your lab
+
+  1. Provision the **SIEM Alert Triage** lab and wait for the pod to go **ACTIVE**.
+  2. Open three tabs: **Kali Linux (CLI)** , **Target: meta (lab)** , and **Open SIEM**.
+  3. In the SIEM table, set the **agent filter** to your own `pod-<you>-meta` so you only see your events.
+
+## 4. Do the tasks
+
+Task 0not scored · do this first
+
+### Task 0 — generate the alerts
+
+**Goal:** create the activity you'll triage.
+
+> **What you're doing & why:** Before you can triage alerts, there have to be some. A failed SSH login as a non-existent user is a classic detection (Wazuh rule **5710**). You'll add a little scan noise too, so you have both “signal” and “noise” to sort later. 
 ```bash
-ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 nosuchuser@$TARGET_META exit 2>/dev/null || true
-```
+# Failed / unknown-user SSH login → Wazuh rule 5710
+ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 nosuchuser@$TARGET_META exit
 
-> If pasting this inserts a literal `^[[200~` in front of the command (or the command otherwise fails to run), run this **once** in the Kali terminal, then paste again — or just type the line by hand:
-> ```bash
-> bind 'set enable-bracketed-paste off'    # bash (default on this pod)
-> ```
-> If that reports `command not found`, your shell is zsh, not bash — use this instead:
-> ```zsh
-> unset zle_bracketed_paste
-> ```
-> Prefer the code block's **Copy** button over hand-selecting the text above, so you get the exact command even if it wraps on screen.
-
-Then, light recon noise (separate block, does **not** trigger the primary 5710 signal by itself):
-
-```bash
+# Light recon noise
 nmap -sn $TARGET_META
 nmap -F $TARGET_META
 ```
 
-Click **Open SIEM**. New alerts appear within about 15 seconds of reaching the manager (usually 1–2 minutes after the command). 
+Open **SIEM** and wait ~1–2 minutes. Look for rule **5710** (failed SSH) — that's your primary signal. If it's missing, re-run the SSH line and wait.
 
-The table is **grouped by rule** (count + last seen). **5710** (failed SSH) should appear and is your primary signal. CIS Ubuntu / SCA scans (rules 19007, 19008, 19004) appear as noise; **Rule 510** (rootcheck) may also fire. Click a group to expand events. Click an expanded row to copy timestamp + rule ID. **Raw events** shows the flat log view. Set the agent filter to your `pod-<you>-meta` agent to separate your events. If 5710 is missing, re-run the SSH command and wait 1–2 minutes. nmap (`-sn` or `-F`) usually does **not** create a Wazuh detection row.
+What's signal vs noise here **5710** (failed SSH) and **510** (rootcheck) are the interesting rows. CIS/SCA rows (**19007, 19008, 19004**) are routine config scans — noise. `nmap` usually creates _no_ Wazuh row at all. 
 
-<details>
-<summary>Hint</summary>
+**Task 1 — Triage start**
 
-If the table is empty or says "Manager unavailable," read the failed SSH attempts straight from meta's log and use those times in Tasks 1–3 (5710 is Wazuh's rule for these lines):
+### Task 1 — open a triage record
 
-```bash
-# On meta
-sudo grep "Invalid user" /var/log/auth.log | tail -5
-# If auth.log is missing:
-sudo journalctl -u ssh --since "1 hour ago" | grep "Invalid user" | tail -5
-```
+**Goal:** write a structured record of one alert, on meta.
 
-Copying a template without changing it does **not** pass: fill it in with what you found.
+> **What you're doing & why:** Analysts don't triage in their heads — they capture each alert in a structured form (id, severity, rule, classification) so it can be tracked and handed off. You're creating that first record as JSON. 
 
-</details>
-
----
-
-### Task 1 — Access / start triage (Milestone 1)
-
-**Goal:** Produce a machine-readable triage starter file **on meta**.
-
-1. Open the portal **Target: meta** tab.  
-2. Create `/home/msfadmin/alert_triage.json` (or `/tmp/alert_triage.json`):
-
+#### On the **meta** tab:
 ```bash
 cat > /home/msfadmin/alert_triage.json << 'EOF'
 {
@@ -91,99 +82,103 @@ cat > /home/msfadmin/alert_triage.json << 'EOF'
   "description": "sshd: attempt to login using a non-existent user",
   "agent": "pod-STUDENT-meta",
   "classification": "needs_investigation",
-  "notes": "Replace fields with what you see in Wazuh after Task 0"
+  "notes": "Replace with the real values you see in Wazuh"
 }
 EOF
 ```
 
-Edit the file with real values when you have them (`nano` / `vi`). In the **Open SIEM** table, click a row to copy its timestamp and rule ID as a toast notification; paste them into your triage file.
+Make it real In the SIEM table, click a row to copy its timestamp and rule ID (a toast pops up), then edit the file (`nano` / `vi`) to match what you actually saw. 
 
-**Manual Check** on Access Wazuh Dashboard / triage start.
+**Done when:** `alert_triage.json` exists on meta with sensible values.
 
----
+**Then:** Portal → Tasks → **Manual Check** on the triage-start milestone.
 
-### Task 2 — True positives & timeline (Milestone 2)
+What you can do with this This JSON is the seed of a **case file**. As you triage more events you append records; a real SOC feeds these into a ticketing system so nothing is lost and the next analyst can pick up where you left off. 
 
-**Goal:** Classify at least a few events and order them in time.
+**Task 2 — True positives & timeline**
 
-Replace every `HH:MM` with the real time from the SIEM table (or `auth.log`), and delete lines for events you didn't see. To pass, at least one line needs a **rule ID** and a **real time** (e.g. `rule: 5710 — time: 14:32`). The template as written does **not** pass.
+### Task 2 — build the timeline
 
-On **meta**, create a timeline:
+**Goal:** classify a few events and put them in order.
 
+> **What you're doing & why:** A list of alerts isn't a story. Ordering them by time turns scattered events into an **attack narrative** (recon → login attempt → …) and lets you label which are real threats (true positives) versus routine noise (false positives). 
+
+#### On the **meta** tab:
 ```bash
 cat > /home/msfadmin/incident_timeline.md << 'EOF'
 # Incident timeline
-1. phase: recon — rule: (nmap/scan if seen) — time: HH:MM
+1. phase: recon — rule: (scan if seen) — time: HH:MM
 2. phase: initial_access_attempt — rule: 5710 — time: HH:MM — true_positive
 3. phase: (add more if present)
 EOF
 ```
 
-You may also mark classifications inside `alert_triage.json` using words like `true_positive` or `TP`. This only counts once the Task 1 placeholders (`example-1`, `pod-STUDENT-meta`, the "Replace fields…" note) are replaced with your own values.
+Replace every `HH:MM` with a real time from the SIEM table (or `auth.log`), and delete lines for events you did not see. To pass, at least one line needs a **rule ID** and a **real clock time** (e.g. `rule: 5710 — time: 14:32`). **The template as written does not pass** — leaving `HH:MM` in the file fails Manual Check.
 
-**Manual Check** on True Positive Classification / timeline.
+**Done when:** `incident_timeline.md` exists on meta with at least one classified, time-ordered event that includes a rule ID and a real time (`HH:MM` fully replaced).
 
-<details>
-<summary>Hint</summary>
+**Then:** **Manual Check** on the timeline milestone.
 
-Look for failed SSH (unknown user), port scans, and web noise if you also hit DVWA. Benign package updates (if any) are false positives.
+What you can do with this A timeline is what responders use to judge **scope** and decide what to contain first. It also becomes the backbone of the report in Task 3 — you're already halfway to the deliverable. 
 
-</details>
+**Task 3 — Incident summary**
 
----
+### Task 3 — write the incident report
 
-### Task 3 — Incident summary (Milestone 3)
+**Goal:** a short supervisor-ready summary on meta (make it clearly longer than a tweet — 200+ characters).
 
-**Goal:** Write a short supervisor-ready report **on meta** (>200 characters, include action words).
+> **What you're doing & why:** Detection only matters if someone acts on it. The report translates your triage into decisions: what happened, what's affected, and what to do next. Use action words (block, rotate, isolate, tune). 
 
+#### On the **meta** tab:
 ```bash
 cat > /home/msfadmin/incident_report.txt << 'EOF'
 Incident summary
 ================
 What happened:
   (plain language — e.g. failed SSH and recon against our meta host)
-
 Systems affected:
   (agent / host names)
-
 Attacker apparent objective:
   (recon / credential attack / …)
-
 Evidence:
   - rule IDs and timestamps
-
 Recommended actions:
   - (block source, rotate creds, tune rules, …)
 EOF
 ```
 
-Expand each section until the file is clearly longer than a tweet.  
-**Manual Check** on Attack Timeline / incident summary milestone as labeled in the portal.
+**Done when:** `incident_report.txt` exists on meta, filled out and 200+ characters.
+
+**Then:** **Manual Check** on the incident-summary milestone.
+
+What you can do with this This is the deliverable that drives the response — who to notify, what to block, which credentials to rotate. In a real SOC it's attached to the ticket and read by an on-call lead, so clarity beats length. 
+
+**Scenario complete** when all three milestones pass — you generated, triaged, and reported an incident end to end. 
 
 ---
+## 5. SOC playground (explore — not scored)
 
-### Artifact checklist (scoring)
+Once your three milestones are green, try these to build real analyst instincts. Safe here — it's your isolated pod.
 
-| File (on **meta**) | Used for |
-|---|---|
-| `/home/msfadmin/alert_triage.json` or `/tmp/alert_triage.json` | Milestone 1 (+ helps M2) |
-| `/home/msfadmin/incident_timeline.md` or `/tmp/…` | Milestone 2 |
-| `/home/msfadmin/incident_report.txt` or `/tmp/…` | Milestone 3 |
+Try this | What it teaches  
+--- | ---  
+Set the **agent** filter to your `pod-<you>-meta` | Separating your events from a shared manager's — the first skill in a busy SOC.  
+Click a rule group to **expand** , then a row to copy its timestamp + rule ID | Pivoting from a summary count to the individual events behind it.  
+Open **Raw events** for a 5710 row | Reading the underlying log line — the ground truth behind a rule.  
+Re-run the failed SSH a few times, then watch the **Count** climb | Spotting brute-force patterns by volume, not single events.  
+Also hit DVWA from Kali (curl the SQLi/XSS pages) and look for web rows | How different attacks produce different detections (or none).  
+Compare **5710/510** against **19007/19008/19004** |  Telling true positives from routine CIS/SCA config-scan noise.  
+Note your **time-to-first-alert** after Task 0 | A real SOC metric — how fast detection actually is.  
+  
+---
+## 6. Common problems & fixes
 
-### Common failures
-
-| Symptom | Fix |
-|---|---|
-| Manual Check FAIL | Files written on **Kali** — move them to **meta** |
-| Empty SIEM table (no 5710) | Re-run Task 0 SSH; wait 1–2 min (the table auto-refreshes every 15s). If it says "No alerts match …", click **Clear filters**. If still empty, take the times from `sudo grep "Invalid user" /var/log/auth.log` on meta. Unedited templates do **not** pass. CIS/SCA and Rule 510 may appear alongside 5710. |
-| Milestone 2 FAIL with a timeline file | At least one line needs a rule ID and a real time (`rule: 5710 — time: 14:32`); `HH:MM` left in means the template wasn't filled in. |
-| Seeing many CIS/SCA rows (19007, 19008, 19004) | These are agent config scans (noise to classify). Focus on **5710** (failed SSH) or **510** (rootcheck) as true positives. |
-| nmap is not creating alerts | Correct—nmap `-sn` / `-F` usually does **not** create Wazuh rows. It is not a primary detection signal. |
-| Shared SIEM (multi-student) | Only trust agents named with **your** student/pod id (e.g., `pod-alice-meta`). Manager IP is `10.0.40.10`. |
-| Kali tab disconnects / intermittent "Session Expired" during this lab (~20–30 min in) | Known issue, cause not yet confirmed — tracked in [REG-01 #39](https://github.com/lmarellanojr/Capstone2-deploy/issues/39). Reload the Kali tab (or the page) and re-authenticate; your triage files on **meta** are not affected. |
-
-### Reflection (optional)
-
-- How did you tell a true positive failed login from benign admin activity?  
-- What was your time to first alert after Task 0? Did you see **5710** (failed SSH)? Or **510** (rootcheck)? Or only CIS/SCA (19007/19008/19004) config scans? (Typical: CIS/SCA appear immediately; failed SSH takes 1–2 minutes. Or: “triaged from auth.log.”)  
-- Which rows were noise and why? (CIS Ubuntu / SCA = agent config scans; rootcheck = legitimate system checks. Failed SSH = true positive recon signal.)
+Problem | Fix  
+--- | ---  
+Manual Check FAIL | Your files are on **Kali** — re-create them on the **meta** tab. Scoring runs on meta.  
+SIEM table empty / no 5710 | Re-run the Task 0 SSH line and wait 1–2 min (auto-refreshes every 15s). If it says “No alerts match,” click **Clear filters**. If still empty, take times from `sudo grep "Invalid user" /var/log/auth.log` on meta. Unedited templates do **not** pass.  
+Milestone 2 FAIL with a timeline file | At least one line needs a rule ID and a real time (`rule: 5710 — time: 14:32`); leaving `HH:MM` means the template was not filled in.  
+Lots of 19007 / 19008 / 19004 rows | Those are CIS/SCA config scans — classify them as **noise**. Focus on 5710 (failed SSH) or 510 (rootcheck).  
+nmap made no alert | Correct — `nmap -sn`/`-F` usually creates no Wazuh row. It's not a primary signal.  
+Shared SIEM, many agents | Only trust rows for **your** `pod-<you>-meta` agent. Manager is `10.0.40.10`.  
+MMDC Cyber Range · Scenario 3 student guide · for use only inside your assigned lab pod.
