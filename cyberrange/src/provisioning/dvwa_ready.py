@@ -63,8 +63,11 @@ def patch_default_security_low(config_text: str) -> str:
     return (config_text or "") + "\n$_DVWA[ 'default_security_level' ] = 'low';\n"
 
 
-def _exec_out(inst: Any, argv: list[str]) -> tuple[int, str]:
-    raw = inst.execute(argv)
+def _exec_out(inst: Any, argv: list[str], timeout: int = 180) -> tuple[int, str]:
+    try:
+        raw = inst.execute(argv, timeout=timeout)
+    except TypeError:
+        raw = inst.execute(argv)
     if isinstance(raw, tuple) and len(raw) >= 2:
         code, out = raw[0], raw[1]
         if isinstance(out, bytes):
@@ -85,7 +88,8 @@ DVWA=$(docker ps --format '{{.Names}}' | grep vulnerable-apps_dvwa | head -1)
 [ -n "$DVWA" ]
 CONF=$(docker exec "$DVWA" sh -c 'ls /var/www/html/config/config.inc.php /var/www/html/dvwa/config/config.inc.php 2>/dev/null | head -1')
 [ -n "$CONF" ]
-docker exec "$DVWA" sh -c "grep -q \"default_security_level' ] = 'low'\" \"\$CONF\" || sed -i \"s/default_security_level.*/default_security_level' ] = 'low';/\" \"\$CONF\""
+# Expand CONF on the LXC host before docker exec (do not pass literal $CONF into the container shell).
+docker exec "$DVWA" sh -c "grep -q \"default_security_level' ] = 'low'\" '$CONF' || sed -i \"s/default_security_level.*/default_security_level' ] = 'low';/\" '$CONF'"
 line=$(docker exec "$DVWA" grep -E "default_security_level" "$CONF" | head -1)
 printf '%s\n' "$line"
 printf '%s' "$line" | grep -qi "low"
