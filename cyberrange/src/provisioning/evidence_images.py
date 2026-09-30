@@ -7,8 +7,9 @@ Safety model (uploads are untrusted bytes from students):
     (EXIF, GPS location from phone photos, embedded profiles, trailing data).
   * Store under EVIDENCE_IMAGE_DIR, outside the release tree, with an opaque
     uuid filename so a student can't choose a path or overwrite anything.
-  * Enforce per-file size, per-review count, and max pixel dimensions (the last
-    guards against decompression-bomb images).
+  * Enforce per-file size, per-review count, and max pixel dimensions. The pixel
+    limits are checked from the header, before any pixel data is decoded, so a
+    tiny decompression-bomb file never gets expanded in memory.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from typing import Optional
 MAX_BYTES = int(os.getenv("EVIDENCE_IMAGE_MAX_BYTES", str(5 * 1024 * 1024)))  # 5 MiB
 MAX_PER_REVIEW = int(os.getenv("EVIDENCE_IMAGE_MAX_PER_REVIEW", "5"))
 MAX_DIMENSION = int(os.getenv("EVIDENCE_IMAGE_MAX_DIMENSION", "4000"))  # px, each side
+MAX_PIXELS = int(os.getenv("EVIDENCE_IMAGE_MAX_PIXELS", str(4000 * 4000)))  # total, whatever the sides
 DEFAULT_DIR = "/home/llms_admin/cyberrange-data/review_images"
 
 # Pillow format -> (our content type, on-disk extension). The set here is the
@@ -72,9 +74,17 @@ def validate_and_store(raw: bytes) -> SavedImage:
     from PIL import Image, UnidentifiedImageError
 
     try:
-        probe = Image.open(io.BytesIO(raw))
+        probe = Image.open(io.BytesIO(raw))  # parses the header only
         fmt = probe.format
+        # Reject on size before verify()/load() touch any pixel data.
+        if probe.width > MAX_DIMENSION or probe.height > MAX_DIMENSION:
+            raise ImageRejected(f"image is larger than {MAX_DIMENSION}px on a side")
+        if probe.width * probe.height > MAX_PIXELS:
+            raise ImageRejected("image has too many pixels")
         probe.verify()  # detects truncated / malformed data
+    except Image.DecompressionBombError:
+        # Pillow's own hard limit, raised by open() itself; it isn't an OSError.
+        raise ImageRejected("image has too many pixels")
     except (UnidentifiedImageError, OSError, ValueError):
         raise ImageRejected("file is not a valid PNG, JPEG, or WebP image")
 
@@ -82,20 +92,26 @@ def validate_and_store(raw: bytes) -> SavedImage:
         raise ImageRejected("only PNG, JPEG, and WebP images are allowed")
     content_type, ext = _ALLOWED[fmt]
 
-    # verify() leaves the image unusable; reopen to re-encode.
+    # verify() leaves the image unusable; reopen to re-encode. Same bytes, so the
+    # size checked above still holds.
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
-    except (OSError, ValueError):
+    except (OSError, ValueError, Image.DecompressionBombError):
         raise ImageRejected("image could not be read")
-
-    if img.width > MAX_DIMENSION or img.height > MAX_DIMENSION:
-        raise ImageRejected(f"image is larger than {MAX_DIMENSION}px on a side")
     width, height = img.width, img.height
 
     # Re-encode with no metadata. Pasting the pixels into a fresh image copies
     # no EXIF/GPS/ICC/comment chunks (img.info is left behind entirely).
     clean = Image.new(img.mode, img.size)
+    if img.palette is not None:
+        # paste() copies only palette indices and a fresh "P" image starts with a
+        # default palette, so carry the real palette across (plus tRNS
+        # transparency, which is pixel data, not metadata) or every color changes.
+        # Kept as a palette image: converting to RGB can double the file size.
+        clean.putpalette(img.getpalette(img.palette.mode), img.palette.mode)
+        if "transparency" in img.info:
+            clean.info["transparency"] = img.info["transparency"]
     clean.paste(img)
     buf = io.BytesIO()
     save_fmt = "JPEG" if fmt == "JPEG" else fmt

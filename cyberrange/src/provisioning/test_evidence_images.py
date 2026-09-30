@@ -75,6 +75,62 @@ class TestValidateAndStore:
         with pytest.raises(evidence_images.ImageRejected):
             evidence_images.path_for("../../etc/passwd")
 
+    def test_palette_png_keeps_colors_and_transparency(self):
+        # Re-encoding used to paste palette indices into a fresh "P" image with a
+        # default palette: red and green both came back black.
+        img = Image.new("P", (4, 1))
+        img.putpalette([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255])
+        img.putdata([0, 1, 2, 3])
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", transparency=3)  # index 3 fully transparent
+        saved = evidence_images.validate_and_store(buf.getvalue())
+        stored = Image.open(io.BytesIO(evidence_images.read_file(saved.stored_name)))
+        assert stored.mode == "P"  # still a palette image, so the file doesn't grow
+        original = Image.open(io.BytesIO(buf.getvalue()))
+        before = [original.convert("RGBA").getpixel((x, 0)) for x in range(4)]
+        after = [stored.convert("RGBA").getpixel((x, 0)) for x in range(4)]
+        assert after == before == [(255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255), (255, 255, 255, 0)]
+
+    def test_palette_png_still_loses_its_metadata(self):
+        from PIL import PngImagePlugin
+
+        img = Image.new("P", (8, 8))
+        img.putpalette([10, 20, 30])
+        meta = PngImagePlugin.PngInfo()
+        meta.add_text("Comment", "SecretCameraModel")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", pnginfo=meta)
+        saved = evidence_images.validate_and_store(buf.getvalue())
+        assert b"SecretCameraModel" not in evidence_images.read_file(saved.stored_name)
+
+    def test_oversized_image_is_rejected_before_any_pixel_decoding(self, monkeypatch):
+        # A 9000x9000 PNG compresses to ~10 KB: well under the byte limit, but
+        # hundreds of MB once decoded. The size check must come before load().
+        from PIL import ImageFile
+
+        decoded = []
+        real_load = ImageFile.ImageFile.load
+        monkeypatch.setattr(ImageFile.ImageFile, "load", lambda im: decoded.append(im.size) or real_load(im))
+        buf = io.BytesIO()
+        Image.new("1", (9000, 9000)).save(buf, format="PNG")
+        assert len(buf.getvalue()) < evidence_images.MAX_BYTES
+        with pytest.raises(evidence_images.ImageRejected, match="4000px"):
+            evidence_images.validate_and_store(buf.getvalue())
+        assert decoded == []
+
+    def test_total_pixel_limit(self, monkeypatch):
+        monkeypatch.setattr(evidence_images, "MAX_PIXELS", 1000)
+        with pytest.raises(evidence_images.ImageRejected, match="too many pixels"):
+            evidence_images.validate_and_store(_png((40, 30)))  # 1200 px, both sides small
+
+    def test_pillow_decompression_bomb_error_is_a_clean_rejection(self):
+        # Past 2x Image.MAX_IMAGE_PIXELS, Image.open() itself raises
+        # DecompressionBombError; it used to escape as a 500.
+        buf = io.BytesIO()
+        Image.new("1", (14000, 14000)).save(buf, format="PNG")
+        with pytest.raises(evidence_images.ImageRejected):
+            evidence_images.validate_and_store(buf.getvalue())
+
 
 # ── endpoints ────────────────────────────────────────────────────────────────
 

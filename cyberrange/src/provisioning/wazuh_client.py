@@ -1,6 +1,7 @@
 """Wazuh manager API client helpers."""
 import json
 import logging
+import re
 
 import requests
 
@@ -119,17 +120,25 @@ def get_manager_agent_status(token: str, timeout: float = 10):
     return items[0].get("status") if items else None
 
 
-def delete_wazuh_agent(token: str, agent_id: str):
+def delete_wazuh_agent(token: str, agent_id) -> bool:
+    """Delete one lab agent. Returns False, without calling the API, for
+    anything that isn't a single real agent id: never the manager (000), and
+    never a comma list or the `all` keyword, which `agents_list` would expand."""
+    aid = "" if agent_id is None else str(agent_id).strip()
+    if not re.fullmatch(r"[0-9]+", aid) or int(aid) == 0:
+        logger.warning(f"refusing to delete Wazuh agent {agent_id!r}: not a single lab agent id")
+        return False
     # purge=true also drops the key-store entry, so the agent's name is free for
     # the student's next lab straight away.
     r = requests.delete(
         f"{WAZUH_URL}/agents",
         headers={"Authorization": f"Bearer {token}"},
-        params={"agents_list": agent_id, "older_than": "0s", "status": "all", "purge": "true"},
+        params={"agents_list": aid, "older_than": "0s", "status": "all", "purge": "true"},
         verify=_wazuh_verify(),
         timeout=10,
     )
     r.raise_for_status()
+    return True
 
 
 def pod_agent_names(student_id: str) -> list:
@@ -166,8 +175,8 @@ def remove_agents_named(student_id: str) -> list:
         removed = []
         for name in pod_agent_names(student_id):
             for aid in find_agent_ids_by_name(token, name):
-                delete_wazuh_agent(token, aid)
-                removed.append(aid)
+                if delete_wazuh_agent(token, aid):
+                    removed.append(aid)
         return removed
     except Exception as e:
         logger.warning(f"agent cleanup by name skipped for {student_id!r}: {e}")
@@ -189,7 +198,7 @@ def deregister_agents(wazuh_agent_id, student_id=None):
         if ids:
             token = get_provision_token()
             for aid in ids.values():
-                if aid and str(aid) != "000":
+                if aid:  # machines without an agent store null; 000 is refused inside
                     delete_wazuh_agent(token, aid)
     except Exception as e:
         logger.warning(f"agent de-registration skipped: {e}")

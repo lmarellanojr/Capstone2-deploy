@@ -79,6 +79,20 @@ def test_manager_agent_000_is_never_deleted(api):
     assert "000" not in api["deleted"]
 
 
+@pytest.mark.parametrize("bad", [None, "", "  ", "000", "0", "all", "001,000", "008,011", "abc", "-1", "٠٠٨"])
+def test_delete_refuses_anything_but_a_single_lab_agent_id(api, bad, caplog):
+    # The guard sits next to purge=true, so no future caller or bad stored id can
+    # delete the manager or widen the delete into a list / `all`.
+    assert wc.delete_wazuh_agent("tok-provisioner", bad) is False
+    assert api["delete_params"] == []  # the API was never called
+    assert "refusing to delete" in caplog.text
+
+
+def test_delete_sends_exactly_one_id(api):
+    assert wc.delete_wazuh_agent("tok-provisioner", " 008 ") is True
+    assert api["delete_params"] == [{"agents_list": "008", "older_than": "0s", "status": "all", "purge": "true"}]
+
+
 def test_scoring_token_cannot_delete(api):
     # The read-only user is what teardown used to use: it gets 403.
     with pytest.raises(wc.requests.HTTPError):
