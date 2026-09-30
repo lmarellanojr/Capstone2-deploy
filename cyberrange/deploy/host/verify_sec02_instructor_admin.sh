@@ -89,6 +89,8 @@ chk "instructor PUT admin_demo role -> student"         "$(status PUT "/admin/us
 chk "instructor PUT student_demo role -> instructor"    "$(status PUT "/admin/users/$SID/role" "$INSTR" '{"role":"instructor"}')" 403
 chk "  + forged X-Roles/X-Forwarded-User headers"       "$(status PUT "/admin/users/$IID/role" "$INSTR" '{"role":"admin"}' -H 'X-Roles: admin' -H 'X-Forwarded-User: admin_demo')" 403
 chk "  + ?role=admin query"                             "$(status PUT "/admin/users/$IID/role?role=admin" "$INSTR" '{"role":"admin"}')" 403
+chk "instructor PUT admin_demo password (takeover)"     "$(status PUT "/admin/users/$AID/password" "$INSTR" '{"password":"Probe!12345","temporary":false}')" 403
+chk "instructor PUT student_demo password"              "$(status PUT "/admin/users/$SID/password" "$INSTR" '{"password":"Probe!12345"}')" 403
 AFTER=$(realm_snapshot)
 if [ "$BEFORE" = "$AFTER" ] && [ -n "$BEFORE" ]; then
   echo "PASS  realm unchanged ($(echo "$AFTER" | wc -l | tr -d ' ') accounts; usernames, enabled flags and roles identical)"
@@ -100,6 +102,18 @@ echo "$AFTER" | grep -q '^sec02_backdoor ' && { echo "FAIL  sec02_backdoor accou
 INSTR2=$(token instructor_demo "$INSTRUCTOR_DEMO_PASSWORD")
 chk "fresh instructor token still denied GET /admin/users" "$(status GET /admin/users "$INSTR2")" 403
 chk "fresh instructor token still allowed /instructor/students" "$(status GET /instructor/students "$INSTR2")" 200
+# Passwords aren't in realm_snapshot: prove the denied resets changed nothing by
+# signing admin_demo in again with its original password.
+case "$(token admin_demo "$ADMIN_DEMO_PASSWORD")" in
+  ERR:*) echo "FAIL  admin_demo can no longer sign in with its original password"; FAILS=$((FAILS+1)) ;;
+  *)     echo "PASS  admin_demo password unchanged (fresh sign-in succeeded)" ;;
+esac
+
+echo; echo "=== 1b. Read-only Admin routes (disclosure)"
+chk "instructor GET /admin/audit-log"                   "$(status GET /admin/audit-log "$INSTR")" 403
+chk "instructor GET /admin/audit-log?event_type=..."    "$(status GET '/admin/audit-log?event_type=ADMIN_USER_ROLE_SET' "$INSTR")" 403
+chk "instructor GET /admin/infra-health"                "$(status GET /admin/infra-health "$INSTR")" 403
+chk "admin control: GET /admin/audit-log"               "$(status GET /admin/audit-log "$ADMIN")" 200
 
 echo; echo "=== 2. Force-destroy"
 chk "instructor DELETE /admin/pods/$NOPOD/force-destroy (403 before lookup)" "$(status DELETE "/admin/pods/$NOPOD/force-destroy" "$INSTR")" 403

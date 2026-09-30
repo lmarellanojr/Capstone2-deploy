@@ -69,7 +69,10 @@ lxc exec "$WORK" -- bash -c '
 '
 
 echo "[*] Fingerprint-anchored rollback alias, then publish"
-OLD_FP="$(lxc image list "$ALIAS" --format csv -c f | head -n1)"
+# Exact alias match. `lxc image list "$ALIAS"` is a prefix filter, so with
+# dvwa-base-predvwaready-* present it returned that image's fingerprint and the
+# rollback alias pointed at the wrong (older) image.
+OLD_FP="$(lxc image alias list --format csv | awk -F, -v a="$ALIAS" '$1==a {print $2; exit}')"
 if [ -n "$OLD_FP" ] && ! lxc image alias list | grep -q "${ALIAS}-prewazuh-${STAMP}"; then
   lxc image alias create "${ALIAS}-prewazuh-${STAMP}" "$OLD_FP"
 fi
@@ -78,4 +81,4 @@ lxc stop "$WORK" </dev/null
 lxc publish "$WORK" --alias "$ALIAS" --compression zstd \
   description="${ALIAS} + wazuh-agent 4.7.5 authd auto-enroll (S2 $STAMP)" </dev/null
 echo "[+] Rebaked $ALIAS ; rollback alias = ${ALIAS}-prewazuh-${STAMP} (fp ${OLD_FP:0:12})"
-lxc image list "$ALIAS" --format csv -c lf
+lxc image alias list --format csv | awk -F, -v a="$ALIAS" '$1==a || $1 ~ "^"a"-prewazuh-"'

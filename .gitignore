@@ -24,3 +24,6 @@ node_modules/
 
 # Temporary local-only authentication UI (never commit its contents).
 cyberrange/portal/src/app/dev-login/
+
+# macOS/iCloud duplicates like ".env 2.local"
+.env*.local
