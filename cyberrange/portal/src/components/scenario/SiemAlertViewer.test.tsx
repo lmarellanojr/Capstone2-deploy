@@ -7,10 +7,11 @@ import "@testing-library/jest-dom"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { SiemAlertViewer } from "./SiemAlertViewer"
 import { POLL_MS } from "./siemAlertQuery"
-import { provisioning } from "@/lib/api"
+import { instructor, provisioning } from "@/lib/api"
 
 jest.mock("@/lib/api", () => ({
   provisioning: { getAlerts: jest.fn() },
+  instructor: { getPodAlerts: jest.fn() },
 }))
 
 jest.mock("@/context/ToastContext", () => ({
@@ -18,6 +19,7 @@ jest.mock("@/context/ToastContext", () => ({
 }))
 
 const getAlerts = provisioning.getAlerts as jest.MockedFunction<typeof provisioning.getAlerts>
+const getPodAlerts = instructor.getPodAlerts as jest.MockedFunction<typeof instructor.getPodAlerts>
 
 const ALERTS = [
   {
@@ -173,5 +175,18 @@ describe("SiemAlertViewer (SIEM-POLL)", () => {
     render(<SiemAlertViewer podId={7} />)
     await flush()
     expect(screen.getByText(/Indexer and Dashboard are not deployed on the 12 GiB host profile/)).toBeInTheDocument()
+  })
+})
+
+describe("SiemAlertViewer staff source", () => {
+  it("reads the Instructor/Admin route, not the student-owner route", async () => {
+    getAlerts.mockReset()
+    getPodAlerts.mockReset().mockResolvedValue(ok())
+    render(<SiemAlertViewer podId={7} source="staff" />)
+    await flush()
+
+    expect(getPodAlerts).toHaveBeenCalledWith(7, expect.anything())
+    expect(getAlerts).not.toHaveBeenCalled()
+    expect(screen.getAllByText(/5710/).length).toBeGreaterThan(0)
   })
 })

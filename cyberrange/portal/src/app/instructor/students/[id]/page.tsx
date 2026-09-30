@@ -7,6 +7,8 @@ import { instructorNavItems } from "@/lib/navigation";
 import { useStudentProgress } from "@/hooks/useStudentProgress";
 import { podBadgeVariant } from "@/lib/instructorBadges";
 import { parseSqliteUtc } from "@/lib/sqliteTime";
+import { formatScenarioNumber } from "@/lib/scenarioLabels";
+import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
 
 interface PageProps {
   params: { id: string };
@@ -86,7 +88,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                 </div>
                 <div>
                   <p className="text-xs text-text-muted mb-0.5">Scenario</p>
-                  <p className="font-semibold text-text-main">{student.active_pod.scenario_id ?? "—"}</p>
+                  <p className="font-semibold text-text-main">{formatScenarioNumber(student.active_pod.scenario_id)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-text-muted mb-0.5">Expires</p>
@@ -98,6 +100,10 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
             ) : (
               <p className="text-text-muted text-sm">No active pod.</p>
             )}
+          </div>
+
+          <div className="mb-6">
+            <StudentAlertsPanel studentId={student.student_id} activePod={student.active_pod} />
           </div>
 
           <div className="card-surface overflow-hidden mb-6">
@@ -119,7 +125,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                   <tbody>
                     {student.milestones.map((m, idx) => (
                       <tr key={`${m.scenario_id}-${m.milestone_id}-${idx}`} className="border-b border-border last:border-0">
-                        <td className="py-3 px-6 text-text-main">{m.scenario_id}</td>
+                        <td className="py-3 px-6 text-text-main">{formatScenarioNumber(m.scenario_id)}</td>
                         <td className="py-3 px-4 text-text-muted">{m.milestone_id}</td>
                         <td className="py-3 px-4">
                           <Badge variant={milestoneBadgeVariant(m.status)}>{m.status}</Badge>
@@ -155,7 +161,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                   <tbody>
                     {student.reviews.map((r) => (
                       <tr key={r.review_id} className="border-b border-border last:border-0">
-                        <td className="py-3 px-6 text-text-main">{r.scenario_id}</td>
+                        <td className="py-3 px-6 text-text-main">{formatScenarioNumber(r.scenario_id)}</td>
                         <td className="py-3 px-4 text-text-muted">{r.case_type}</td>
                         <td className="py-3 px-4">
                           <Badge variant={reviewBadgeVariant(r.status)}>{r.status}</Badge>

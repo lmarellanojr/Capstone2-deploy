@@ -12,7 +12,7 @@ import { NextRequest } from "next/server"
 jest.mock("next-auth", () => ({ getServerSession: jest.fn() }))
 jest.mock("@/lib/auth", () => ({ authOptions: {} }))
 import { getServerSession } from "next-auth"
-import { proxyToApi } from "./apiProxy"
+import { forwardQuery, proxyToApi } from "./apiProxy"
 
 const mockedSession = getServerSession as jest.MockedFunction<typeof getServerSession>
 const fetchMock = jest.fn()
@@ -65,6 +65,49 @@ describe("proxyToApi", () => {
     const res = await proxyToApi(req("/api/admin/pods/1/force-destroy"), "/admin/pods/1/force-destroy", "DELETE")
     expect(res.status).toBe(503)
   })
+
+  it("raw mode passes a CSV body and its download headers through untouched", async () => {
+    mockedSession.mockResolvedValue({ accessToken: "t" } as never)
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      text: async () => "student,score\nabc,50\n",
+      headers: new Headers({
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": "attachment; filename=knowledge_gain_metrics.csv",
+        "set-cookie": "must-not-leak=1",
+      }),
+    } as unknown as Response)
+    const res = await proxyToApi(
+      req("/api/instructor/export/knowledge-gain?format=csv"),
+      "/instructor/export/knowledge-gain?format=csv",
+      "GET",
+      undefined,
+      { raw: true }
+    )
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("student,score\nabc,50\n")
+    expect(res.headers.get("content-type")).toBe("text/csv; charset=utf-8")
+    expect(res.headers.get("content-disposition")).toBe("attachment; filename=knowledge_gain_metrics.csv")
+    expect(res.headers.get("set-cookie")).toBeNull()
+  })
+
+  it("raw mode still refuses a request with no session", async () => {
+    mockedSession.mockResolvedValue(null)
+    const res = await proxyToApi(req("/api/instructor/export/knowledge-gain"), "/instructor/export/knowledge-gain", "GET", undefined, { raw: true })
+    expect(res.status).toBe(401)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("forwardQuery", () => {
+  it("forwards only allow-listed, non-empty params", () => {
+    const r = req("/api/admin/users?search=ana&max=50&evil=1&first=")
+    expect(forwardQuery(r, ["search", "first", "max"])).toBe("?search=ana&max=50")
+  })
+
+  it("returns an empty string when nothing is allowed through", () => {
+    expect(forwardQuery(req("/api/instructor/pods?x=1"), [])).toBe("")
+  })
 })
 
 // --- inventory: every /api route delegates to the backend -------------------
@@ -116,5 +159,49 @@ describe("/api route inventory", () => {
     const src = fs.readFileSync(path.join(apiDir, "progress/[scenarioId]/flag/route.ts"), "utf8")
     expect(src).toMatch(/const body = await req\.json\(\)\.catch\(\(\) => \(\{\}\)\)/)
     expect(src).toMatch(/proxyToApi\(req,\s*`\/progress\/\$\{scenarioId\}\/flag`,\s*"POST",\s*body\)/)
+  })
+})
+
+describe("proxyToApi binary + passBody (evidence screenshots)", () => {
+  it("passes image bytes through with the backend's safety headers", async () => {
+    mockedSession.mockResolvedValue({ accessToken: "tok" } as never)
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff])
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      headers: new Headers({
+        "content-type": "image/png",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "x-internal": "should-not-leak",
+      }),
+      arrayBuffer: async () => bytes.buffer,
+    } as unknown as Response)
+
+    const res = await proxyToApi(req("/api/reviews/5/images/2"), "/reviews/5/images/2", "GET", undefined, { binary: true })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("image/png")
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(res.headers.get("content-security-policy")).toContain("sandbox")
+    expect(res.headers.get("x-internal")).toBeNull()
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes)
+  })
+
+  it("forwards a multipart body untouched with its own Content-Type", async () => {
+    mockedSession.mockResolvedValue({ accessToken: "tok" } as never)
+    upstream(200, { id: 1 })
+    const body = "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.png\"\r\n\r\nPNG\r\n--b--\r\n"
+    const incoming = new NextRequest(new URL("/api/reviews/5/images", "https://cyberrange.example.test"), {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=b" },
+      body,
+    })
+
+    await proxyToApi(incoming, "/reviews/5/images", "POST", undefined, { passBody: true })
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.headers["Content-Type"]).toBe("multipart/form-data; boundary=b")
+    expect(init.headers["Authorization"]).toBe("Bearer tok")
+    expect(new TextDecoder().decode(init.body as ArrayBuffer)).toBe(body)
   })
 })

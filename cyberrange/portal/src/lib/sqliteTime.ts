@@ -35,3 +35,21 @@ export function formatSqliteDate(dateStr?: string | null): string {
       })
     : dateStr;
 }
+
+/**
+ * Like formatSqliteDate but to the second, e.g. "Sep 30, 10:31:07 AM" --
+ * verifier attempts land seconds apart, so minutes alone read as duplicates.
+ */
+export function formatSqliteDateSeconds(dateStr?: string | null): string {
+  if (!dateStr) return "-";
+  const d = parseSqliteUtc(dateStr);
+  return d
+    ? d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+    : dateStr;
+}

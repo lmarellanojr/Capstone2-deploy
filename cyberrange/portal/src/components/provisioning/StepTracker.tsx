@@ -1,3 +1,5 @@
+import { Check } from "lucide-react";
+
 interface StepTrackerProps {
   currentStep: number;
   stepLabels: string[];
@@ -15,10 +17,10 @@ export function StepTracker({ currentStep, stepLabels }: StepTrackerProps) {
                   ? "bg-success text-white"
                   : index === currentStep
                   ? "bg-brand text-white"
-                  : "bg-muted text-gray-700 border border-border"
+                  : "bg-muted text-text-muted border border-border"
               }`}
             >
-              {index < currentStep ? "✓" : index + 1}
+              {index < currentStep ? <Check size={16} aria-label="Done" /> : index + 1}
             </div>
  
             <span

@@ -54,31 +54,37 @@ describe("LoginPage (AUTH-06)", () => {
   })
 
   describe("UI Rendering & Copy Simplification (Issue #94)", () => {
-    it("renders the primary button labeled 'Log in' and does NOT contain 'Continue with school SSO'", () => {
+    it("renders the primary button labeled 'Enter Cyber Range' and does NOT contain 'Continue with school SSO'", () => {
       render(<LoginPage />)
 
-      const logInButton = screen.getByRole("button", { name: "Log in" })
+      const logInButton = screen.getByRole("button", { name: "Enter Cyber Range" })
       expect(logInButton).toBeInTheDocument()
       expect(screen.queryByText(/continue with school sso/i)).not.toBeInTheDocument()
     })
 
-    it("renders clarified Keycloak demo account supporting text", () => {
+    it("shows the MMDC tagline", () => {
       render(<LoginPage />)
 
-      expect(
-        screen.getByText("Secure authentication via Keycloak demo accounts")
-      ).toBeInTheDocument()
-      expect(
-        screen.getByText("Sign in with your assigned student, instructor, or admin credentials")
-      ).toBeInTheDocument()
+      // Once in the desktop hero, once in the small-screen footer (CSS picks one).
+      expect(screen.getAllByText("Built for MMDC Network & Cybersecurity students.")).toHaveLength(2)
+      expect(screen.getAllByText("A safe space to learn, practice, grow, and protect.")).toHaveLength(2)
+      expect(screen.queryByText(/For MMDC, by MMDC students/)).not.toBeInTheDocument()
+    })
+
+    it("renders the Keycloak login footer note", () => {
+      render(<LoginPage />)
+
+      expect(screen.getByText("Secure login powered by Keycloak")).toBeInTheDocument()
+      expect(screen.queryByText(/Use your assigned MMDC/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Keycloak demo accounts/)).not.toBeInTheDocument()
     })
 
     it("renders standard Sign in header and lab subtitle", () => {
       render(<LoginPage />)
 
-      expect(screen.getByRole("heading", { level: 1, name: "Sign in" })).toBeInTheDocument()
+      expect(screen.getByRole("heading", { level: 1, name: "Sign in to Cyber Range" })).toBeInTheDocument()
       expect(
-        screen.getByText("Access your cybersecurity training labs")
+        screen.getByText("Start your hands-on cybersecurity labs and challenges.")
       ).toBeInTheDocument()
     })
   })
@@ -87,7 +93,7 @@ describe("LoginPage (AUTH-06)", () => {
     it("dispatches signIn('keycloak') with /login returnTo when no callbackUrl is provided", async () => {
       render(<LoginPage />)
 
-      const button = screen.getByRole("button", { name: "Log in" })
+      const button = screen.getByRole("button", { name: "Enter Cyber Range" })
       fireEvent.click(button)
 
       await waitFor(() => {
@@ -102,7 +108,7 @@ describe("LoginPage (AUTH-06)", () => {
       searchParamsStore["callbackUrl"] = "/scenario/06"
       render(<LoginPage />)
 
-      const button = screen.getByRole("button", { name: "Log in" })
+      const button = screen.getByRole("button", { name: "Enter Cyber Range" })
       fireEvent.click(button)
 
       await waitFor(() => {
@@ -113,7 +119,7 @@ describe("LoginPage (AUTH-06)", () => {
       })
     })
 
-    it("transitions button to disabled and displays 'Logging in...' during dispatch and stays loading on resolution", async () => {
+    it("transitions button to disabled and displays 'Entering Cyber Range...' during dispatch and stays loading on resolution", async () => {
       let resolveSignIn: () => void = () => {}
       mockSignIn.mockImplementation(
         () =>
@@ -124,12 +130,12 @@ describe("LoginPage (AUTH-06)", () => {
 
       render(<LoginPage />)
 
-      const button = screen.getByRole("button", { name: "Log in" })
+      const button = screen.getByRole("button", { name: "Enter Cyber Range" })
       fireEvent.click(button)
 
       // Button should now be disabled and show loading indicator
       expect(button).toBeDisabled()
-      expect(screen.getByText("Logging in...")).toBeInTheDocument()
+      expect(screen.getByText("Entering Cyber Range...")).toBeInTheDocument()
 
       // Concurrency guard: additional clicks should not trigger another signIn call
       fireEvent.click(button)
@@ -142,7 +148,7 @@ describe("LoginPage (AUTH-06)", () => {
       })
 
       expect(button).toBeDisabled()
-      expect(screen.getByText("Logging in...")).toBeInTheDocument()
+      expect(screen.getByText("Entering Cyber Range...")).toBeInTheDocument()
     })
 
     it("resets loading state, logs error to console, and renders alert when signIn rejects", async () => {
@@ -151,7 +157,7 @@ describe("LoginPage (AUTH-06)", () => {
 
       render(<LoginPage />)
 
-      const button = screen.getByRole("button", { name: "Log in" })
+      const button = screen.getByRole("button", { name: "Enter Cyber Range" })
       fireEvent.click(button)
 
       await waitFor(() => {
@@ -173,7 +179,7 @@ describe("LoginPage (AUTH-06)", () => {
       searchParamsStore["callbackUrl"] = "https://evil.example/steal"
       render(<LoginPage />)
 
-      const button = screen.getByRole("button", { name: "Log in" })
+      const button = screen.getByRole("button", { name: "Enter Cyber Range" })
       fireEvent.click(button)
 
       await waitFor(() => {
@@ -188,7 +194,7 @@ describe("LoginPage (AUTH-06)", () => {
       searchParamsStore["callbackUrl"] = "//evil.example"
       render(<LoginPage />)
 
-      const button = screen.getByRole("button", { name: "Log in" })
+      const button = screen.getByRole("button", { name: "Enter Cyber Range" })
       fireEvent.click(button)
 
       await waitFor(() => {
@@ -294,7 +300,7 @@ describe("LoginPage (AUTH-06)", () => {
       render(<LoginPage />)
 
       expect(screen.getByText("Loading...")).toBeInTheDocument()
-      expect(screen.queryByRole("button", { name: "Log in" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Enter Cyber Range" })).not.toBeInTheDocument()
     })
 
     it("renders Session Expired banner and does NOT auto-redirect when error=SessionExpired", () => {

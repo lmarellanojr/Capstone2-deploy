@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { CheckCircle2 } from "lucide-react";
 import { useStatusPoller } from "@/hooks/useStatusPoller";
 import { useToastContext } from "@/context/ToastContext";
 import { Button, LoadingSpinner } from "@/components/ui";
@@ -90,9 +91,7 @@ export function PodProvisioningProgress({ podId, onComplete, onError }: PodProvi
   if (isActive) {
     return (
       <div className="text-center py-8">
-        <div className="mb-4 text-success text-4xl" aria-hidden="true">
-          ✓
-        </div>
+        <CheckCircle2 size={40} className="mx-auto mb-4 text-success" aria-hidden="true" />
         <h3 className="text-lg font-bold text-text-main mb-2">Active</h3>
         <p className="text-text-muted text-sm">Your pod is ready. Closing...</p>
       </div>

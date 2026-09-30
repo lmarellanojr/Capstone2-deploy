@@ -4,6 +4,7 @@ import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, LoadingSpinner } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
+import { KnowledgeGainExport } from "@/components/instructor/KnowledgeGainExport";
 import { useInstructorStudents } from "@/hooks/useInstructorStudents";
 import { useInstructorReviews } from "@/hooks/useInstructorReviews";
 import { formatScenarioName } from "@/lib/scenarioLabels";
@@ -146,15 +147,23 @@ export default function InstructorDashboardPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-        <Link href="/instructor/students" className="card-surface p-6 hover:shadow-card-hover transition block">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+        <Link href="/instructor/pods" className="card-surface card-interactive p-6 block">
+          <h3 className="text-lg font-bold text-text-main mb-1">Live labs</h3>
+          <p className="text-sm text-text-muted">Who is in a lab right now, and how far along.</p>
+        </Link>
+        <Link href="/instructor/students" className="card-surface card-interactive p-6 block">
           <h3 className="text-lg font-bold text-text-main mb-1">Students</h3>
           <p className="text-sm text-text-muted">Roster, progress, and per-student pod status.</p>
         </Link>
-        <Link href="/instructor/reviews" className="card-surface p-6 hover:shadow-card-hover transition block">
+        <Link href="/instructor/reviews" className="card-surface card-interactive p-6 block">
           <h3 className="text-lg font-bold text-text-main mb-1">Reviews</h3>
           <p className="text-sm text-text-muted">Review queue, evidence, notes, approve/reject/retry.</p>
         </Link>
+      </div>
+
+      <div className="mt-6">
+        <KnowledgeGainExport />
       </div>
     </LayoutWrapper>
   );

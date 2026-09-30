@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { TopNav } from "./TopNav";
 import type { NavItem } from "@/lib/navigation";
@@ -25,6 +26,15 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hide
   const pathname = usePathname();
 
   useEffect(() => setMenuOpen(false), [pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   return (
     <div className="flex h-screen min-h-[100dvh] bg-primary overflow-hidden">
@@ -52,7 +62,9 @@ export function LayoutWrapper({ children, onSearch, navItems, sectionLabel, hide
           <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setMenuOpen(false)} aria-label="Close navigation menu" />
           <div className="relative w-64 max-w-[85vw] h-full">
             <Sidebar navItems={navItems} sectionLabel={sectionLabel} />
-            <button type="button" onClick={() => setMenuOpen(false)} className="absolute top-4 right-3 p-2 rounded-lg bg-secondary text-text-main hover:bg-muted" aria-label="Close navigation menu">✕</button>
+            <button type="button" onClick={() => setMenuOpen(false)} className="absolute top-4 right-3 p-2 rounded-lg bg-secondary text-text-main hover:bg-muted focus-ring" aria-label="Close navigation menu">
+              <X size={18} aria-hidden="true" />
+            </button>
           </div>
         </div>
       )}

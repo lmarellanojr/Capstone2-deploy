@@ -132,6 +132,6 @@ describe("matcher inventory", () => {
   })
 
   it("does not put the public pages behind auth (would loop /login or /no-role)", () => {
-    expect([...PUBLIC_PAGES].filter(matcherCovers)).toEqual([])
+    expect(Array.from(PUBLIC_PAGES).filter(matcherCovers)).toEqual([])
   })
 })

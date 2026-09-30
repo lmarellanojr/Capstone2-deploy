@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { Toast as ToastType } from "@/hooks/useToast";
 
 interface ToastProps {
@@ -16,26 +17,29 @@ export function Toast({ toast, onRemove }: ToastProps) {
   };
 
   const icons = {
-    success: "✓",
-    error: "✕",
-    info: "ℹ",
-    warning: "⚠",
+    success: CheckCircle2,
+    error: XCircle,
+    info: Info,
+    warning: AlertTriangle,
   };
+  const Icon = icons[toast.variant];
 
   return (
     <div
-      className={`p-4 flex items-center justify-between gap-4 shadow-card ${variants[toast.variant]}`}
+      className={`p-4 flex items-center justify-between gap-4 shadow-overlay animate-dialog-in ${variants[toast.variant]}`}
       role="alert"
     >
-      <div className="flex items-center gap-3">
-        <span className="text-base font-bold">{icons[toast.variant]}</span>
+      <div className="flex items-center gap-3 min-w-0">
+        <Icon size={18} aria-hidden="true" className="shrink-0" />
         <p className="text-sm">{toast.message}</p>
       </div>
       <button
+        type="button"
         onClick={() => onRemove(toast.id)}
-        className="hover:opacity-70 transition text-xs font-bold"
+        className="p-1 rounded hover:opacity-70 transition focus-ring shrink-0"
+        aria-label="Dismiss notification"
       >
-        ✕
+        <X size={14} aria-hidden="true" />
       </button>
     </div>
   );

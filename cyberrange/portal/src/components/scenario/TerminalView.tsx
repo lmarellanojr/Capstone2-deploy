@@ -1,18 +1,26 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { Notebook } from 'lucide-react'
+import { Clock, ExternalLink, FileDown, HelpCircle, Info, Wrench } from 'lucide-react'
+import { GuideExtraModal, type GuideExtra } from '@/components/scenario/GuideExtraModal'
 import { useRouter } from 'next/navigation'
 import { Pod, provisioning } from '@/lib/api'
 import { Scenario } from '@/hooks/useScenarios'
+// NOTE: TerminalView.test.tsx mocks '@/components/ui' with only Button and
+// Modal*, so import nothing else from that barrel here.
 import { Button, Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui'
 import { MilestoneItem } from '@/components/progress/MilestoneItem'
+import { VerificationRequestModal } from '@/components/reviews/VerificationRequestModal'
+import { useMyReviews } from '@/hooks/useMyReviews'
+import { uploadScreenshots } from '@/lib/screenshotUpload'
+import { scenarioDisplayTitle } from '@/hooks/useScenarios'
 import { useToastContext } from '@/context/ToastContext'
 
 import { useSession } from 'next-auth/react'
 import { XtermView } from '@/components/terminal/XtermView'
 import { destroySession, sessionKey } from '@/components/terminal/terminalSessionManager'
 import { GuideView } from '@/components/scenario/GuideView'
+import { LabCountdown } from '@/components/scenario/LabCountdown'
 import { SiemAlertViewer } from '@/components/scenario/SiemAlertViewer'
 import { DVWA_PREFIX } from '@/lib/dvwaProxy'
 import { podIps } from '@/lib/podIps'
@@ -30,6 +38,8 @@ function defaultTabForScenario(scenarioId: string): TermTab {
   return 'kali-cli'
 }
 
+const DVWA_LOGIN_URL = `${DVWA_PREFIX}/login.php`
+
 interface TerminalViewProps {
   pod: Pod
   scenario: Scenario
@@ -38,9 +48,14 @@ interface TerminalViewProps {
   onRestart?: () => void
   ttlGrace?: boolean
   canRestart?: boolean
+  /** When the pod's remaining_seconds was read, for the Score-card countdown. */
+  fetchedAtMs?: number
 }
 
-export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart, ttlGrace = false, canRestart = false }: TerminalViewProps) {
+const TERM_TAB_BASE =
+  'px-4 py-2 text-sm font-medium transition border-b-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/40'
+
+export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart, ttlGrace = false, canRestart = false, fetchedAtMs = Date.now() }: TerminalViewProps) {
   const router = useRouter()
   const { data: session } = useSession()
   const token = session?.accessToken as string | undefined
@@ -50,11 +65,20 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const [verifying, setVerifying] = useState<Set<number>>(new Set())
   const [milestonesLoading, setMilestonesLoading] = useState(true)
   const [ending, setEnding] = useState(false)
+  const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [activeTab, setActiveTab] = useState<TermTab>(() => defaultTabForScenario(scenario.id))
   const [sidebarTab, setSidebarTab] = useState<'tasks' | 'guide'>('guide')
   const [showAccessHelp, setShowAccessHelp] = useState<'dvwa' | 'siem' | null>(null)
   const [infoModal, setInfoModal] = useState<'kali' | 'meta' | null>(null)
+  // The Kali/meta explainer is useful the first time a student meets a tab,
+  // and an interruption every time after — show it once per lab visit.
+  const explainedTabs = useRef<Set<'kali' | 'meta'>>(new Set())
   const [showCompletion, setShowCompletion] = useState(false)
+  // Tools (terminal icon) and "How scoring works" (Score card) pop-ups.
+  const [guideExtra, setGuideExtra] = useState<GuideExtra | null>(null)
+  // "Ask an instructor to check" — the student half of the review workflow.
+  const myReviews = useMyReviews()
+  const [requestFor, setRequestFor] = useState<{ milestoneId: number; mode: 'new' | 'retry' } | null>(null)
   const [labUrls, setLabUrls] = useState<Awaited<ReturnType<typeof provisioning.getLabUrls>> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const currentProgressKey = scenarioProgressKey(pod.pod_id, scenario.id)
@@ -163,6 +187,11 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const earnedPoints = scenario.milestones
     .filter((m) => completed.has(m.id))
     .reduce((sum, m) => sum + m.points, 0)
+  const doneCount = scenario.milestones.filter((m) => completed.has(m.id)).length
+  const nextMilestoneId = milestonesLoading
+    ? undefined
+    : scenario.milestones.find((m) => !completed.has(m.id))?.id
+  const progressPct = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0
 
   // The current progress-key gate prevents stale or unloaded progress from
   // completing this scenario. Polling returns the previous state when nothing
@@ -192,7 +221,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       if (result.status === 'PASS') {
         setCompleted((prev) => new Set(prev).add(milestoneId))
         const pts = scenario.milestones.find((m) => m.id === milestoneId)?.points ?? 0
-        
+
         let msg = `Task complete! +${pts} pts`
         if (result.detection_score && result.detection_score > 0) {
           msg += ` (Real Alert Bonus${result.detection_data ? `: ${result.detection_data}` : ''})`
@@ -225,16 +254,20 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     router.push('/dashboard')
   }, [onEnd, router, pod.pod_id])
 
-  const handleEnd = useCallback(async () => {
-    if (!confirm('End this lab session? Your progress has been saved.')) return
-    teardown()
-  }, [teardown])
-
   const copyText = useCallback(async (text: string, label: string) => {
     const ok = await copyToClipboard(text)
     if (ok) success(`Copied ${label}`)
     else warning(`Could not copy ${label}`)
   }, [success, warning])
+
+  const selectTab = (tab: TermTab) => {
+    setActiveTab(tab)
+    const explainer = tab === 'kali-cli' ? 'kali' : tab === 'meta' ? 'meta' : null
+    if (explainer && !explainedTabs.current.has(explainer)) {
+      explainedTabs.current.add(explainer)
+      setInfoModal(explainer)
+    }
+  }
 
   const activeTabTitle =
     activeTab === 'kali-cli'
@@ -251,27 +284,41 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const activeTargetLabel =
     activeTab === 'kali-cli' ? 'Kali' : activeTab === 'meta' ? 'Meta' : 'DVWA'
 
+  // Newest request per milestone for this scenario (items are newest-first).
+  const latestRequest = (milestoneId: number) =>
+    myReviews.items.find((i) => i.tracked.scenarioId === scenario.id && i.tracked.milestoneId === milestoneId)
+  const activeRequest = requestFor ? latestRequest(requestFor.milestoneId) : undefined
+  const requestMilestone = requestFor ? scenario.milestones.find((m) => m.id === requestFor.milestoneId) : undefined
+
+  const termTabClass = (tab: TermTab) =>
+    `${TERM_TAB_BASE} ${activeTab === tab ? 'bg-muted text-text-main border-brand' : 'border-transparent text-text-muted hover:text-text-main hover:bg-muted/60'}`
+
+  const sideTabClass = (tab: 'tasks' | 'guide') =>
+    `flex-1 py-2 text-sm font-medium transition border-b-2 -mb-px rounded-t focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/40 ${sidebarTab === tab ? 'text-text-main border-brand' : 'text-text-muted border-transparent hover:text-text-main'}`
+
   return (
     <div className="flex flex-col lg:flex-row flex-1 w-full h-full min-h-0 relative">
       {ttlGrace && !expired && (
-        <div className="absolute top-0 left-0 right-0 z-20 px-3 py-2 bg-amber-50 border-b border-amber-200 text-sm text-amber-900">
+        <div role="status" className="absolute top-0 left-0 right-0 z-20 px-3 py-2 bg-amber-50 border-b border-amber-200 text-sm text-amber-900">
           Time limit reached. This lab will close within about 10 minutes. You can keep working until it stops.
         </div>
       )}
       {expired && (
         <div className="absolute inset-0 z-10 bg-white/95 flex items-center justify-center rounded-xl">
-          <div className="text-center max-w-sm">
-            <div className="text-5xl mb-4">⏱</div>
+          <div className="text-center max-w-sm" role="status">
+            <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-warning">
+              <Clock size={28} aria-hidden="true" />
+            </div>
             <h3 className="text-2xl font-bold mb-2">Session shutting down</h3>
             <p className="text-text-secondary mb-6">
               This lab session is shutting down. Your progress is saved.
             </p>
             <div className="flex gap-3 justify-center">
               {canRestart && onRestart && (
-                <Button variant="primary" onClick={onRestart}>Start New Session</Button>
+                <Button variant="primary" onClick={onRestart}>Start new session</Button>
               )}
               <Button variant="secondary" onClick={() => window.location.href = '/dashboard'}>
-                Back to Dashboard
+                Back to dashboard
               </Button>
             </div>
           </div>
@@ -286,7 +333,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         {/* Card header: active target title + Open DVWA/SIEM */}
         <div
           data-testid="lab-terminal-card-header"
-          className="mb-2 flex flex-wrap items-start justify-between gap-2 bg-secondary border border-border rounded-lg px-3 py-2"
+          className="mb-2 flex flex-wrap items-start justify-between gap-2 bg-secondary border border-border rounded-xl px-3 py-2"
         >
           <div className="min-w-0">
             <h2 className="text-lg sm:text-xl font-bold text-text-main leading-tight">
@@ -295,7 +342,8 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             {activeTargetIp && (
               <button
                 type="button"
-                className="mt-0.5 text-xs sm:text-sm text-text-secondary hover:text-brand font-mono"
+                title={`Copy ${activeTargetLabel} IP`}
+                className="mt-0.5 text-xs sm:text-sm text-text-secondary hover:text-brand font-mono rounded focus-ring"
                 onClick={() => copyText(activeTargetIp, `${activeTargetLabel} IP`)}
               >
                 Target: {activeTargetIp}
@@ -303,89 +351,119 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* The tools this lab uses, as a pop-up instead of a panel tab. */}
+            <button
+              type="button"
+              onClick={() => setGuideExtra('tools')}
+              aria-label="Tools for this lab"
+              title="Tools for this lab"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-sm font-semibold text-text-main hover:border-brand/40 hover:text-brand transition focus-ring"
+            >
+              <Wrench size={16} aria-hidden="true" />
+              <span className="hidden sm:inline">Tools</span>
+            </button>
             {showOpenDvwa && (
-              <button
-                type="button"
-                onClick={() => setShowAccessHelp('dvwa')}
-                className="px-2 py-1 rounded border border-brand/40 text-brand text-sm font-semibold hover:bg-brand/5"
-              >
-                Open DVWA ↗
-              </button>
+              <>
+                {/* Scenario 2 is done in the browser: one click opens DVWA in a
+                    new tab (session-gated through the portal proxy). */}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => window.open(DVWA_LOGIN_URL, '_blank', 'noopener,noreferrer')}
+                >
+                  Open DVWA
+                  <ExternalLink size={14} aria-hidden="true" />
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setShowAccessHelp(showAccessHelp === 'dvwa' ? null : 'dvwa')}
+                  aria-expanded={showAccessHelp === 'dvwa'}
+                  aria-label="DVWA help"
+                  title="DVWA help"
+                  className="p-1.5 rounded-lg text-text-muted hover:text-brand hover:bg-muted transition focus-ring"
+                >
+                  <HelpCircle size={18} aria-hidden="true" />
+                </button>
+              </>
             )}
             {showOpenSiem && (
               <button
                 type="button"
-                onClick={() => setShowAccessHelp('siem')}
-                className="px-2 py-1 rounded border border-brand/40 text-brand text-sm font-semibold hover:bg-brand/5"
+                onClick={() => setShowAccessHelp(showAccessHelp === 'siem' ? null : 'siem')}
+                aria-expanded={showAccessHelp === 'siem'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-brand/40 text-brand text-sm font-semibold hover:bg-brand/5 transition focus-ring"
               >
-                Open SIEM ↗
+                Open SIEM
+                <ExternalLink size={14} aria-hidden="true" />
               </button>
             )}
           </div>
         </div>
 
-        {/* Compact copyable pod IPs */}
+        {/* Pod IPs: most tasks use the $TARGET_* variables, so the raw
+            addresses are one click away instead of always on screen. */}
         {ips && (
-          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
-            <span className="font-semibold text-text-main">Pod {pod.pod_id}</span>
-            <button type="button" className="hover:text-brand font-mono" onClick={() => copyText(ips.subnet, 'subnet')}>
-              {ips.subnet}
-            </button>
-            <button type="button" className="hover:text-brand font-mono" onClick={() => copyText(ips.kali, 'Kali IP')}>
-              Kali {ips.kali}
-            </button>
-            <button type="button" className="hover:text-brand font-mono" onClick={() => copyText(ips.meta, 'Meta IP')}>
-              Meta {ips.meta}
-            </button>
-            <button type="button" className="hover:text-brand font-mono" onClick={() => copyText(ips.dvwa, 'DVWA IP')}>
-              DVWA {ips.dvwa}
-            </button>
+          <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-secondary">
+            <details className="group">
+              <summary className="cursor-pointer select-none font-semibold text-text-muted hover:text-text-main rounded w-fit focus-ring">
+                Connection details
+              </summary>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <button type="button" className="hover:text-brand font-mono rounded focus-ring" onClick={() => copyText(ips.subnet, 'subnet')}>
+                  {ips.subnet}
+                </button>
+                <button type="button" className="hover:text-brand font-mono rounded focus-ring" onClick={() => copyText(ips.kali, 'Kali IP')}>
+                  Kali {ips.kali}
+                </button>
+                <button type="button" className="hover:text-brand font-mono rounded focus-ring" onClick={() => copyText(ips.meta, 'Meta IP')}>
+                  Meta {ips.meta}
+                </button>
+                <button type="button" className="hover:text-brand font-mono rounded focus-ring" onClick={() => copyText(ips.dvwa, 'DVWA IP')}>
+                  DVWA {ips.dvwa}
+                </button>
+                <span className="text-text-faint">Click to copy</span>
+              </div>
+            </details>
             {scenario.id === '11' && (
-              <span className="text-brand font-semibold">Remediate on: meta tab</span>
+              <span className="text-brand font-semibold">Remediate on the meta tab</span>
             )}
           </div>
         )}
 
         {showAccessHelp === 'dvwa' && ips && (
-          <div className="mb-2 p-3 text-sm border border-border rounded-lg bg-secondary">
+          <div className="mb-2 p-3 text-sm border border-border rounded-xl bg-secondary">
             <div className="flex justify-between gap-2 mb-1">
-              <p className="font-semibold text-text-main">DVWA access</p>
-              <button type="button" className="text-text-muted hover:text-text-main text-xs" onClick={() => setShowAccessHelp(null)}>Close</button>
+              <p className="font-semibold text-text-main">Using DVWA</p>
+              <button type="button" className="text-text-muted hover:text-text-main text-xs rounded focus-ring" onClick={() => setShowAccessHelp(null)}>Close</button>
             </div>
-            <p className="text-text-secondary mb-2">
-              Open DVWA on this portal (<code className="bg-muted px-1 rounded">{DVWA_PREFIX}/</code>
-              ) - session required. Do not use the host <code className="bg-muted px-1 rounded">:18301</code> URL.
-              On Ampere that host URL is withheld on purpose (LAB_PUBLIC_HOST unset).
-            </p>
-            <code className="block text-xs bg-muted p-2 rounded break-all mb-2">{DVWA_PREFIX}/</code>
+            <ul className="text-text-secondary space-y-1 list-disc pl-5 mb-2">
+              <li>
+                <strong className="text-text-main">Open DVWA</strong> opens the practice site in a new tab, connected
+                to your lab session.
+              </li>
+              <li>
+                Log in with <code className="bg-muted px-1 rounded">admin</code> /{' '}
+                <code className="bg-muted px-1 rounded">password</code>, then set Security to <strong>Low</strong>.
+              </li>
+              <li>Each task is scored automatically as you work in the browser.</li>
+            </ul>
             <div className="flex flex-wrap gap-2 mb-2">
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => window.open(`${DVWA_PREFIX}/login.php`, '_blank', 'noopener,noreferrer')}
-              >
-                Open DVWA in new tab
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => copyText(`${DVWA_PREFIX}/login.php`, 'DVWA URL')}>
-                Copy path
+              <Button size="sm" variant="secondary" onClick={() => copyText(DVWA_LOGIN_URL, 'DVWA link')}>
+                Copy link
               </Button>
             </div>
-            <p className="text-text-secondary text-xs mb-1">Fallback from Kali (pod network only):</p>
-            <code className="block text-xs bg-muted p-2 rounded break-all mb-2">
-              curl -sI http://{ips.dvwa}/dvwa/
-            </code>
-            <p className="text-text-secondary text-xs">
-              Login <code className="bg-muted px-1 rounded">admin / password</code>, Security{' '}
-              <strong>Low</strong>. SQLMap on <strong>Kali</strong> for Milestone 3.
+            <p className="text-text-muted text-xs">
+              Page won&apos;t load? Check it from the Kali tab:{' '}
+              <code className="bg-muted px-1 rounded break-all">curl -sI http://{ips.dvwa}/dvwa/</code>
             </p>
           </div>
         )}
 
         {showAccessHelp === 'siem' && (
-          <div className="mb-2 p-3 text-sm border border-border rounded-lg bg-secondary">
+          <div className="mb-2 p-3 text-sm border border-border rounded-xl bg-secondary">
             <div className="flex justify-between gap-2 mb-1">
               <p className="font-semibold text-text-main">SIEM access</p>
-              <button type="button" className="text-text-muted hover:text-text-main text-xs" onClick={() => setShowAccessHelp(null)}>Close</button>
+              <button type="button" className="text-text-muted hover:text-text-main text-xs rounded focus-ring" onClick={() => setShowAccessHelp(null)}>Close</button>
             </div>
             {labUrls?.siem?.ready && labUrls.siem.url ? (
               <>
@@ -406,7 +484,15 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
                 </div>
               </>
             ) : (
-              <SiemAlertViewer podId={pod.pod_id} />
+              <>
+                {/* lab_proxy only offers the Wazuh dashboard when
+                    WAZUH_DASHBOARD_PUBLIC_URL is configured; otherwise the
+                    in-portal viewer is the SIEM for this lab — say so. */}
+                <p className="text-text-secondary mb-2">
+                  Your lab&apos;s SIEM alerts are shown here. (The full Wazuh dashboard isn&apos;t linked on this range.)
+                </p>
+                <SiemAlertViewer podId={pod.pod_id} />
+              </>
             )}
             <Button size="sm" variant="secondary" onClick={() => copyText(labUrls?.siem?.manager || '10.0.40.10', 'Wazuh IP')}>
               Copy Wazuh manager IP
@@ -417,27 +503,27 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         {/* Connection Tabs */}
         <div className="flex bg-secondary border border-border rounded-t-xl overflow-hidden shrink-0">
           <button
-            onClick={() => {
-              setActiveTab('kali-cli')
-              setInfoModal('kali')
-            }}
-            className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'kali-cli' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
+            type="button"
+            onClick={() => selectTab('kali-cli')}
+            aria-pressed={activeTab === 'kali-cli'}
+            className={termTabClass('kali-cli')}
           >
             Kali Linux (CLI)
           </button>
           <button
-            onClick={() => {
-              setActiveTab('meta')
-              setInfoModal('meta')
-            }}
-            className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'meta' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
+            type="button"
+            onClick={() => selectTab('meta')}
+            aria-pressed={activeTab === 'meta'}
+            className={termTabClass('meta')}
           >
             Target: meta (lab)
           </button>
           {showDvwaTab && (
             <button
-              onClick={() => setActiveTab('dvwa')}
-              className={`px-4 py-2 text-sm font-medium transition ${activeTab === 'dvwa' ? 'bg-muted text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main hover:bg-muted/60'}`}
+              type="button"
+              onClick={() => selectTab('dvwa')}
+              aria-pressed={activeTab === 'dvwa'}
+              className={termTabClass('dvwa')}
             >
               Target: dvwa (CLI)
             </button>
@@ -455,7 +541,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             <XtermView podId={pod.pod_id} podType="dvwa" token={token} />
           )}
           {!token && (
-            <div className="w-full h-full flex items-center justify-center text-text-muted">
+            <div className="w-full h-full flex items-center justify-center text-text-faint">
               Authenticating...
             </div>
           )}
@@ -468,31 +554,76 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         className="w-full lg:w-[42%] xl:w-[45%] lg:min-w-[20rem] flex-shrink-0 flex flex-col card-surface p-5"
       >
         {/* Score */}
-        <div className="mb-5 pb-4 border-b border-border">
-          <div className="text-xs text-text-secondary uppercase tracking-wide mb-1">Score</div>
-          <div className="text-2xl font-bold">
-            {milestonesLoading ? (
-              <span className="text-base text-text-muted font-normal">Loading…</span>
-            ) : (
-              <>
-                {earnedPoints}
-                <span className="text-text-muted font-normal text-base"> / {totalPoints} pts</span>
-              </>
-            )}
+        <div className="mb-4 pb-4 border-b border-border">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-text-muted uppercase tracking-wide font-semibold">Score</span>
+                {/* The guide's scoring explainer, as a pop-up where students
+                    look when a task doesn't tick. */}
+                <button
+                  type="button"
+                  onClick={() => setGuideExtra('scoring')}
+                  className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] font-semibold text-text-muted hover:border-brand/40 hover:text-brand transition focus-ring"
+                >
+                  <Info size={12} aria-hidden="true" />
+                  How scoring works
+                </button>
+              </div>
+              <div className="text-2xl font-bold tabular-nums">
+                {milestonesLoading ? (
+                  <span className="text-base text-text-muted font-normal">Loading…</span>
+                ) : (
+                  <>
+                    {earnedPoints}
+                    <span className="text-text-muted font-normal text-base"> / {totalPoints} pts</span>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col items-end gap-1 shrink-0 pb-1">
+              {!expired && pod.expires_at && (
+                <span className="inline-flex items-center gap-1 text-xs">
+                  <Clock size={13} className="text-text-muted" aria-hidden="true" />
+                  <LabCountdown remainingSeconds={pod.remaining_seconds} fetchedAtMs={fetchedAtMs} />
+                </span>
+              )}
+              {!milestonesLoading && (
+                <span className="text-xs font-semibold text-text-muted">
+                  {doneCount} of {scenario.milestones.length} tasks done
+                </span>
+              )}
+            </div>
+          </div>
+          <div
+            className="mt-3 h-1.5 w-full rounded-full bg-muted overflow-hidden"
+            role="progressbar"
+            aria-label="Lab progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={milestonesLoading ? 0 : progressPct}
+          >
+            <div className="h-full rounded-full bg-brand transition-all duration-500" style={{ width: `${milestonesLoading ? 0 : progressPct}%` }} />
           </div>
         </div>
 
         {/* Sidebar Tabs */}
-        <div className="flex items-center border-b border-border mb-4">
+        <div className="flex items-center border-b border-border mb-4" role="tablist" aria-label="Lab panel">
           <button
+            type="button"
+            role="tab"
+            aria-selected={sidebarTab === 'tasks'}
             onClick={() => setSidebarTab('tasks')}
-            className={`flex-1 py-2 text-sm font-medium transition ${sidebarTab === 'tasks' ? 'text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main'}`}
+            className={sideTabClass('tasks')}
           >
             Tasks
           </button>
           <button
+            type="button"
+            role="tab"
+            aria-selected={sidebarTab === 'guide'}
             onClick={() => setSidebarTab('guide')}
-            className={`flex-1 py-2 text-sm font-medium transition ${sidebarTab === 'guide' ? 'text-text-main border-b-2 border-brand' : 'text-text-muted hover:text-text-main'}`}
+            className={sideTabClass('guide')}
           >
             Guide
           </button>
@@ -500,18 +631,19 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             <button
               type="button"
               onClick={() => window.print()}
-              title="Export as PDF"
-              aria-label="Export as PDF"
-              className="p-1.5 mb-1 text-text-muted hover:text-brand rounded transition"
+              title="Export the guide as a PDF"
+              aria-label="Export guide as PDF"
+              className="ml-1 mb-1 inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-text-muted hover:text-brand rounded transition focus-ring"
             >
-              <Notebook size={14} />
+              <FileDown size={14} aria-hidden="true" />
+              PDF
             </button>
           )}
         </div>
 
         {/* Sidebar Content */}
         <div className="flex-1 overflow-y-auto flex flex-col gap-4 min-h-0">
-          <div className={`flex-1 overflow-y-auto ${sidebarTab === 'tasks' ? 'block' : 'hidden'}`}>
+          <div className={`flex-1 overflow-y-auto space-y-3 ${sidebarTab === 'tasks' ? 'block' : 'hidden'}`}>
             {scenario.milestones.map((m) => (
                 <div key={m.id}>
                   <MilestoneItem
@@ -520,19 +652,54 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
                     description={m.description}
                     points={m.points}
                     completed={completed.has(m.id)}
+                    inProgress={m.id === nextMilestoneId}
                   />
                   {!completed.has(m.id) && (
-                    <details className="mt-2">
-                      <summary className="text-xs text-text-muted cursor-pointer select-none">
+                    <details className="mt-1.5 px-1">
+                      <summary className="text-xs text-text-muted cursor-pointer select-none hover:text-text-main rounded w-fit focus-ring">
                         Not detected yet?
                       </summary>
                       <button
+                        type="button"
                         onClick={() => handleVerify(m.id)}
                         disabled={verifying.has(m.id) || milestonesLoading}
-                        className="mt-1 w-full py-1 text-xs font-medium text-text-muted border border-border rounded hover:border-brand/40 hover:text-brand transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="mt-1 w-full py-1.5 text-xs font-medium text-text-muted border border-border rounded-lg hover:border-brand/40 hover:text-brand transition disabled:opacity-50 disabled:cursor-not-allowed focus-ring"
                       >
                         {verifying.has(m.id) ? 'Checking…' : 'Manual Check'}
                       </button>
+                      {(() => {
+                        const req = latestRequest(m.id)
+                        const status = req?.case?.status
+                        // One open request per task: the backend has no
+                        // duplicate-PENDING guard, so the portal provides it.
+                        if (req && (status === 'PENDING' || !req.case)) {
+                          return (
+                            <p className="mt-2 text-xs text-text-muted">
+                              Instructor review requested — waiting for a reply.
+                            </p>
+                          )
+                        }
+                        if (status === 'RETRY') {
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => setRequestFor({ milestoneId: m.id, mode: 'retry' })}
+                              className="mt-2 text-xs font-semibold text-brand hover:underline rounded focus-ring"
+                            >
+                              Your instructor asked for more detail — send again
+                            </button>
+                          )
+                        }
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setRequestFor({ milestoneId: m.id, mode: 'new' })}
+                            className="mt-2 text-xs font-semibold text-brand hover:underline rounded focus-ring"
+                          >
+                            Still not detected? Ask an instructor to check
+                          </button>
+                        )
+                      })()}
                     </details>
                   )}
                 </div>
@@ -544,12 +711,12 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         </div>
 
         {!expired && (
-          <div className="mt-5 pt-4 border-t border-border">
+          <div className="mt-4 pt-4 border-t border-border">
             <Button
-              variant="danger"
+              variant="danger-outline"
               size="sm"
               loading={ending}
-              onClick={handleEnd}
+              onClick={() => setShowEndConfirm(true)}
               className="w-full"
             >
               End Session
@@ -583,6 +750,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
           <Button
             variant="primary"
             size="sm"
+            data-autofocus
             onClick={() => {
               setActiveTab('kali-cli')
               setInfoModal(null)
@@ -620,12 +788,79 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
           <Button
             variant="primary"
             size="sm"
+            data-autofocus
             onClick={() => {
               setActiveTab('meta')
               setInfoModal(null)
             }}
           >
             Open meta terminal
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <GuideExtraModal scenario={scenario} podId={pod.pod_id} which={guideExtra} onClose={() => setGuideExtra(null)} />
+
+      {requestFor && requestMilestone && (
+        <VerificationRequestModal
+          isOpen
+          onClose={() => setRequestFor(null)}
+          taskName={requestMilestone.name}
+          scenarioLabel={scenarioDisplayTitle(scenario)}
+          resubmit={
+            requestFor.mode === 'retry' && activeRequest?.case
+              ? {
+                  feedback: activeRequest.case.feedback,
+                  previousReason: activeRequest.case.conflict_reason,
+                  previousEvidence: activeRequest.case.report_text,
+                }
+              : undefined
+          }
+          onSubmit={async (data) => {
+            let reviewId: number
+            if (requestFor.mode === 'retry' && activeRequest) {
+              reviewId = activeRequest.tracked.reviewId
+              await myReviews.resubmit(reviewId, {
+                conflictReason: data.conflictReason,
+                reportText: data.reportText,
+              })
+            } else {
+              reviewId = await myReviews.submit({
+                scenarioId: scenario.id,
+                milestoneId: requestFor.milestoneId,
+                conflictReason: data.conflictReason,
+                reportText: data.reportText,
+              })
+            }
+            // The request is already saved; a screenshot that fails to attach is
+            // reported, not thrown (throwing would invite a duplicate re-send).
+            const failed = data.images.length ? await uploadScreenshots(reviewId, data.images) : []
+            success('Request sent. Your instructor will reply on your dashboard.')
+            if (failed.length) warning(`Some screenshots couldn't be attached: ${failed.join(' ')}`)
+          }}
+        />
+      )}
+
+      {/* In-app confirm replaces window.confirm(): consistent styling, and it
+          doesn't freeze the page or steal focus from the terminal session. */}
+      <Modal isOpen={showEndConfirm} onClose={() => setShowEndConfirm(false)}>
+        <ModalHeader title="End this lab session?" />
+        <ModalBody>
+          <p className="text-text-secondary mb-3">
+            Your score is already saved{earnedPoints > 0 ? (
+              <> — <strong className="text-text-main">{earnedPoints} / {totalPoints} pts</strong></>
+            ) : null}.
+          </p>
+          <p className="text-text-secondary">
+            The lab machines will shut down, and anything you created inside them (files, open shells) will be lost.
+          </p>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="secondary" size="sm" onClick={() => setShowEndConfirm(false)} data-autofocus>
+            Keep working
+          </Button>
+          <Button variant="danger" size="sm" loading={ending} onClick={teardown}>
+            End session
           </Button>
         </ModalFooter>
       </Modal>

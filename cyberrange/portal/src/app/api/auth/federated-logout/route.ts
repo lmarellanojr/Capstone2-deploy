@@ -1,17 +1,20 @@
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { publicOrigin } from "@/lib/publicOrigin"
 
 function trimSlash(v: string | undefined): string {
   return (v || "").replace(/\/$/, "")
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const portal = trimSlash(process.env.NEXTAUTH_URL)
   const issuerPublic = trimSlash(
     process.env.KEYCLOAK_PUBLIC_ISSUER || process.env.KEYCLOAK_ISSUER
   )
-  const home = portal || "http://10.115.77.12"
+  // GAP-11: with NEXTAUTH_URL unset, go back to the host the browser used
+  // instead of a hardcoded lab IP (10.115.77.12).
+  const home = portal || publicOrigin(req)
 
   try {
     const session = await getServerSession(authOptions)

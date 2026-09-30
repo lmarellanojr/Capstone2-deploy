@@ -25,6 +25,16 @@ export function formatScenarioName(scenarioId: number | string | null): string {
 }
 
 /**
+ * Short form for tight table cells: "Scenario 3" for scenario_id 9.
+ * Instructors know the labs as 1-4, never the internal ids 1/6/9/11.
+ */
+export function formatScenarioNumber(scenarioId: number | string | null | undefined): string {
+  if (scenarioId === null || scenarioId === undefined) return "—";
+  const label = SCENARIO_LABELS[Number(scenarioId)];
+  return label ? label.slice(0, label.indexOf(":")) : `Scenario ${scenarioId}`;
+}
+
+/**
  * Returns the milestone label for a review case.
  * A null milestone_id means the case covers the whole scenario
  * (INSTRUCTOR_API_HANDOFF.md §2.3: "Overall Report").

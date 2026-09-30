@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, LogOut, Menu, Search } from "lucide-react";
 import { Logo } from "./Logo";
 
 interface TopNavProps {
@@ -26,12 +27,35 @@ export function TopNav({
   const { data: session } = useSession();
   const [showDropdown, setShowDropdown] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const menuRef = useRef<HTMLDivElement>(null);
   const logoVisibility = desktopBrand ? "hidden sm:block" : "hidden sm:block lg:hidden";
 
+  // Close the account menu on an outside click or Escape.
+  useEffect(() => {
+    if (!showDropdown) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setShowDropdown(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowDropdown(false);
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showDropdown]);
+
   return (
-    <header className="bg-secondary border-b border-border min-h-16 flex items-center justify-between px-3 sm:px-6 py-2 shadow-card gap-2">
-      <button type="button" onClick={onMenuClick} className="lg:hidden shrink-0 p-2 rounded-lg text-text-main hover:bg-muted transition" aria-label="Open navigation menu">
-        <span aria-hidden="true" className="text-xl leading-none">☰</span>
+    <header className="bg-secondary border-b border-border min-h-16 flex items-center justify-between px-3 sm:px-6 py-2 gap-2">
+      <button
+        type="button"
+        onClick={onMenuClick}
+        className="lg:hidden shrink-0 p-2 rounded-lg text-text-main hover:bg-muted transition focus-ring"
+        aria-label="Open navigation menu"
+      >
+        <Menu size={20} aria-hidden="true" />
       </button>
       {showLogo && (
         <Link
@@ -44,59 +68,74 @@ export function TopNav({
       )}
 
       {!hideSearch && (
-        <div className="flex-1 min-w-0 max-w-lg">
+        <div className="flex-1 min-w-0 max-w-lg relative">
+          <Search
+            size={16}
+            aria-hidden="true"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-text-faint pointer-events-none"
+          />
           <input
-            type="text"
+            type="search"
+            aria-label="Search labs"
             placeholder="Search labs..."
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
               onSearch?.(e.target.value);
             }}
-            className="w-full bg-muted border border-border rounded-lg px-4 py-2 text-sm text-text-main placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40"
+            className="w-full bg-muted/60 border border-border rounded-lg pl-9 pr-4 py-2 text-sm text-text-main placeholder:text-text-faint transition focus:outline-none focus:bg-secondary focus:ring-2 focus:ring-brand/20 focus:border-brand/40"
           />
         </div>
       )}
 
       <div className="flex items-center gap-1 sm:gap-4 ml-auto shrink-0">
-        <button
-          className="hidden sm:block relative text-text-muted hover:text-text-main transition p-2"
-          aria-label="Notifications"
-        >
-          <span className="text-lg">🔔</span>
-          <span className="absolute top-1 right-1 h-2 w-2 bg-brand rounded-full" />
-        </button>
-
-        <div className="relative">
+        <div className="relative" ref={menuRef}>
           <button
+            type="button"
             onClick={() => setShowDropdown(!showDropdown)}
-            className="flex items-center gap-1 sm:gap-2 p-1.5 sm:px-3 sm:py-2 rounded-lg hover:bg-muted transition border border-transparent hover:border-border"
+            aria-haspopup="menu"
+            aria-expanded={showDropdown}
+            aria-label="Account menu"
+            className="flex items-center gap-1 sm:gap-2 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg hover:bg-muted transition border border-transparent hover:border-border focus-ring"
           >
-            <div className="w-8 h-8 rounded-full bg-brand flex items-center justify-center text-white font-bold text-sm">
+            <div
+              className="w-8 h-8 rounded-full bg-brand flex items-center justify-center text-white font-bold text-sm"
+              aria-hidden="true"
+            >
               {session?.user?.name?.charAt(0).toUpperCase() || "S"}
             </div>
             <span className="text-text-main font-semibold text-sm hidden md:inline max-w-[120px] truncate">
               {session?.user?.name || "Student"}
             </span>
-            <span className="text-text-muted text-xs">▼</span>
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              className={`text-text-muted transition-transform ${showDropdown ? "rotate-180" : ""}`}
+            />
           </button>
 
           {showDropdown && (
-            <div className="absolute top-full right-0 mt-2 w-52 bg-secondary border border-border rounded-lg shadow-card-hover overflow-hidden z-50">
-              <div className="px-4 py-3 border-b border-border bg-muted/30">
+            <div
+              role="menu"
+              className="absolute top-full right-0 mt-2 w-56 bg-secondary border border-border rounded-xl shadow-overlay overflow-hidden z-50 animate-dialog-in"
+            >
+              <div className="px-4 py-3 border-b border-border">
                 <p className="text-xs text-text-muted">Signed in as</p>
                 <p className="text-text-main font-semibold text-sm truncate">
                   {session?.user?.email}
                 </p>
               </div>
               <button
+                type="button"
+                role="menuitem"
                 onClick={() => {
                   signOut({ callbackUrl: "/api/auth/federated-logout" });
                   setShowDropdown(false);
                 }}
-                className="w-full text-left px-4 py-3 text-danger hover:bg-muted transition text-sm font-medium"
+                className="w-full flex items-center gap-2 text-left px-4 py-3 text-danger hover:bg-muted transition text-sm font-medium focus:outline-none focus-visible:bg-muted"
               >
-                Logout
+                <LogOut size={16} aria-hidden="true" />
+                Log out
               </button>
             </div>
           )}

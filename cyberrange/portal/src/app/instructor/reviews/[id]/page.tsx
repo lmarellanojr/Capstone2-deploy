@@ -15,14 +15,23 @@ import {
   ModalFooter,
 } from "@/components/ui";
 import { instructorNavItems } from "@/lib/navigation";
-import { instructor, InstructorMilestone, ReviewCase } from "@/lib/api";
+import { instructor, InstructorMilestone, InstructorPod, ReviewCase } from "@/lib/api";
 import { parseEvidenceData } from "@/lib/evidenceParser";
 import { mapErrorToMessage, isForbiddenError } from "@/lib/errorHandler";
 import { useToastContext } from "@/context/ToastContext";
-import { formatScenarioName, formatMilestoneLabel } from "@/lib/scenarioLabels";
+import { formatScenarioName, formatScenarioNumber, formatMilestoneLabel } from "@/lib/scenarioLabels";
 import { validateScore, resolveScorePayload } from "@/lib/scoreEvaluation";
-import { selectVerifierAttempts } from "@/lib/verifierEvidence";
-import { formatSqliteDate } from "@/lib/sqliteTime";
+import {
+  describeCorroboration,
+  groupVerifierAttempts,
+  selectVerifierAttempts,
+  summarizeVerifierAttempts,
+} from "@/lib/verifierEvidence";
+import { SCENARIOS } from "@/hooks/useScenarios";
+import { formatSqliteDate, formatSqliteDateSeconds } from "@/lib/sqliteTime";
+import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
+import { ReportAlertSnapshot } from "@/components/instructor/ReportAlertSnapshot";
+import { EvidenceScreenshots } from "@/components/instructor/EvidenceScreenshots";
 
 const STATUS_BADGE: Record<string, "warning" | "success" | "danger" | "info"> = {
   PENDING: "warning",
@@ -66,6 +75,9 @@ export default function ReviewDetailPage() {
   const [verifierLoading, setVerifierLoading] = useState(false);
   const [verifierError, setVerifierError] = useState<string | null>(null);
   const [verifierAttempt, setVerifierAttempt] = useState(0);
+  // Same progress call also says whether the student has a lab running, which
+  // is when their live SIEM alerts can be shown.
+  const [activePod, setActivePod] = useState<InstructorPod | null>(null);
 
   const fetchReview = useCallback(async () => {
     if (!params.id) return;
@@ -108,7 +120,9 @@ export default function ReviewDetailPage() {
     instructor
       .getStudentProgress(studentId)
       .then((detail) => {
-        if (!cancelled) setVerifierMilestones(detail.milestones);
+        if (cancelled) return;
+        setVerifierMilestones(detail.milestones);
+        setActivePod(detail.active_pod);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -130,6 +144,11 @@ export default function ReviewDetailPage() {
     reviewCase && verifierMilestones
       ? selectVerifierAttempts(verifierMilestones, reviewCase.scenario_id, reviewCase.milestone_id)
       : [];
+  const verifierGroups = groupVerifierAttempts(verifierAttempts);
+  const verifierSummary = summarizeVerifierAttempts(verifierAttempts);
+  const scenarioMilestones =
+    SCENARIOS.find((sc) => Number(sc.id) === Number(reviewCase?.scenario_id))?.milestones ?? [];
+  const milestoneName = (id: number) => scenarioMilestones.find((ms) => ms.id === Number(id))?.name;
 
   const handleOpenConfirm = (decision: "APPROVED" | "REJECTED" | "RETRY") => {
     const validation = validateScore(decision, score);
@@ -274,6 +293,9 @@ export default function ReviewDetailPage() {
                 </div>
               </div>
 
+              {/* Screenshots the student attached to the request */}
+              <EvidenceScreenshots reviewId={reviewCase.review_id} />
+
               {/* Automated Verifier Evidence */}
               <div className="card-surface p-6">
                 <div className="flex items-center justify-between mb-3">
@@ -303,40 +325,86 @@ export default function ReviewDetailPage() {
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
+                    <p className="text-sm text-text-main mb-3" data-testid="verifier-summary">
+                      <span className="font-semibold">{verifierSummary.total}</span> automated check
+                      {verifierSummary.total === 1 ? "" : "s"} ·{" "}
+                      {verifierSummary.passed ? (
+                        <>
+                          first passed{" "}
+                          <span className="font-semibold">{formatSqliteDateSeconds(verifierSummary.firstPassAt)}</span>
+                        </>
+                      ) : (
+                        <span className="font-semibold text-danger">never passed</span>
+                      )}{" "}
+                      · latest {verifierSummary.latestStatus} at {formatSqliteDateSeconds(verifierSummary.latestAt)}
+                    </p>
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-left text-text-muted border-b border-border">
                           <th className="py-2 px-3 font-semibold">Milestone</th>
                           <th className="py-2 px-3 font-semibold">Result</th>
-                          <th className="py-2 px-3 font-semibold">Wazuh Detection</th>
-                          <th className="py-2 px-3 font-semibold">Verified</th>
+                          <th className="py-2 px-3 font-semibold">Corroborating evidence</th>
+                          <th className="py-2 px-3 font-semibold">Lab</th>
+                          <th className="py-2 px-3 font-semibold">Checked</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {verifierAttempts.map((m, idx) => (
+                        {verifierGroups.map((g, idx) => (
                           <tr
-                            key={`${m.milestone_id}-${m.verified_at ?? idx}-${idx}`}
-                            className="border-b border-border last:border-0"
+                            key={`${g.milestone_id}-${g.latest ?? idx}-${idx}`}
+                            className="border-b border-border last:border-0 align-top"
                           >
-                            <td className="py-2 px-3 text-text-main">{m.milestone_id}</td>
-                            <td className="py-2 px-3">
-                              <Badge variant={verifierBadgeVariant(m.status)}>{m.status}</Badge>
+                            <td className="py-2 px-3 text-text-main">
+                              <span className="font-semibold">{g.milestone_id}</span>
+                              {milestoneName(g.milestone_id) && (
+                                <span className="block text-xs text-text-muted">{milestoneName(g.milestone_id)}</span>
+                              )}
+                            </td>
+                            <td className="py-2 px-3 whitespace-nowrap">
+                              <Badge variant={verifierBadgeVariant(g.status)}>{g.status}</Badge>
+                              {g.count > 1 && (
+                                <span className="ml-1.5 text-xs text-text-muted">×{g.count}</span>
+                              )}
                             </td>
                             <td className="py-2 px-3 text-text-main">
-                              {m.detection_score ? "Detected" : "None recorded"}
+                              {describeCorroboration(g.detection_data, g.detection_score)}
                             </td>
-                            <td className="py-2 px-3 text-text-muted">{formatSqliteDate(m.verified_at)}</td>
+                            <td className="py-2 px-3 text-text-muted whitespace-nowrap">
+                              {g.pod_id ? `Pod ${g.pod_id}` : "—"}
+                            </td>
+                            <td className="py-2 px-3 text-text-muted whitespace-nowrap">
+                              {g.count > 1 && g.earliest !== g.latest ? (
+                                <>
+                                  {formatSqliteDateSeconds(g.earliest)}
+                                  <span className="block">→ {formatSqliteDateSeconds(g.latest)}</span>
+                                </>
+                              ) : (
+                                formatSqliteDateSeconds(g.latest)
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                     <p className="text-xs text-text-muted mt-3">
-                      Pass/fail comes from the automated verifier. Wazuh detection is only
-                      recorded for milestones with a mapped detection rule.
+                      Pass/fail comes from the automated verifier, which re-checks unfinished
+                      milestones every few seconds; identical back-to-back results are merged
+                      (×N). Wazuh detection is only recorded for milestones with a mapped
+                      detection rule.
                     </p>
                   </div>
                 )}
               </div>
+
+              {/* SIEM evidence: frozen at submission, then live + past labs */}
+              <ReportAlertSnapshot reviewId={reviewCase.review_id} scenarioId={reviewCase.scenario_id} />
+              {!verifierLoading && !verifierPending && !verifierError && (
+                <StudentAlertsPanel
+                  studentId={reviewCase.student_id}
+                  activePod={activePod}
+                  scenarioId={reviewCase.scenario_id}
+                />
+              )}
 
               {/* Resolution History (if already resolved) */}
               {reviewCase.status.toUpperCase() !== "PENDING" && (
@@ -444,8 +512,8 @@ export default function ReviewDetailPage() {
                   <span className="font-mono text-text-main">{formatSqliteDate(reviewCase.updated_at)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Scenario ID:</span>
-                  <span className="font-mono text-text-main">{reviewCase.scenario_id}</span>
+                  <span>Scenario:</span>
+                  <span className="font-mono text-text-main">{formatScenarioNumber(reviewCase.scenario_id)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Milestone ID:</span>

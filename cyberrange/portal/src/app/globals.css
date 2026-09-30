@@ -4,6 +4,9 @@
   --color-bg-surface-raised: #FFFFFF;
   --color-bg-inset: #EEF0F3;
   --color-bg-accent: #A6192E;
+  /* Same crimson as --color-bg-accent, as RGB channels for Tailwind opacity
+     modifiers (bg-brand/10 etc.). Keep the two in sync. */
+  --color-bg-accent-rgb: 166 25 46;
   --color-bg-accent-hover: #8A1426;
   --color-bg-chip: #EEF0F3;
 
@@ -22,6 +25,17 @@
 
   --shadow-card: 0 1px 2px rgba(0,0,0,.05), 0 2px 6px rgba(0,0,0,.04);
   --shadow-card-hover: 0 4px 12px 0 rgb(0 0 0 / 0.08);
+  --shadow-overlay: 0 24px 64px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @tailwind base;
@@ -67,6 +81,16 @@
   .card-surface {
     @apply bg-secondary border border-border rounded-xl shadow-card;
   }
+
+  /* Clickable card: the border picks up the brand color on hover/focus
+     instead of lifting, so it reads as interactive without moving. */
+  .card-interactive {
+    @apply transition-colors hover:border-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:border-brand/40;
+  }
+
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:ring-offset-2 focus-visible:ring-offset-secondary;
+  }
 }
 
 /* Guide PDF export (issue #6). #guide-print-root is a React portal mounted
@@ -88,5 +112,58 @@
   }
   #guide-print-root {
     display: block !important;
+  }
+
+  /* Comfortable page margins so text isn't cramped against the paper edge.
+     (The date/URL header some browsers add is a print-dialog option, not
+     something CSS can remove.) */
+  @page {
+    margin: 16mm 15mm;
+  }
+
+  /* The portal renders the printable guide inside .prose.p-10; that 2.5rem
+     padding stacks on top of the @page margin and pushed the title far down
+     the first page. Reset it and start the title near the top. */
+  #guide-print-root .prose {
+    padding: 0 !important;
+    max-width: none !important;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: #111827;
+  }
+  #guide-print-root h1:first-child {
+    margin-top: 0 !important;
+  }
+
+  /* Code blocks were running off the right edge of the page (and drawing a
+     scrollbar into the PDF). On paper there is no scroll, so wrap instead. */
+  #guide-print-root pre {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    overflow: visible !important;
+    font-size: 9.5pt;
+    line-height: 1.4;
+  }
+  #guide-print-root code {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+  }
+
+  /* Keep a heading with the text that follows it, and never split a callout,
+     code block, or table row across a page. */
+  #guide-print-root h1,
+  #guide-print-root h2,
+  #guide-print-root h3 {
+    break-after: avoid;
+    break-inside: avoid;
+  }
+  #guide-print-root pre,
+  #guide-print-root table,
+  #guide-print-root tr,
+  #guide-print-root [role="note"] {
+    break-inside: avoid;
+  }
+  #guide-print-root img {
+    max-width: 100% !important;
   }
 }

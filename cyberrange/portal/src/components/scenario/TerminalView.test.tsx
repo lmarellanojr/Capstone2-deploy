@@ -27,6 +27,7 @@ jest.mock("@/components/terminal/terminalSessionManager", () => ({
   sessionKey: jest.fn(),
 }))
 jest.mock("@/components/scenario/GuideView", () => ({ GuideView: () => <div /> }))
+jest.mock("@/components/scenario/GuideExtraModal", () => ({ GuideExtraModal: () => null }))
 jest.mock("@/components/scenario/SiemAlertViewer", () => ({ SiemAlertViewer: () => <div /> }))
 jest.mock("@/components/progress/MilestoneItem", () => ({ MilestoneItem: () => <div /> }))
 jest.mock("@/components/ui", () => ({
