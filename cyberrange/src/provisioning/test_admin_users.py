@@ -174,6 +174,7 @@ ROUTES = [
     ("post", "/admin/users", NEW_USER),
     ("patch", f"/admin/users/{PLACEHOLDER_ID}/enabled", {"enabled": False}),
     ("put", f"/admin/users/{PLACEHOLDER_ID}/role", {"role": "student"}),
+    ("put", f"/admin/users/{PLACEHOLDER_ID}/password", {"password": "New!pass-5678"}),
 ]
 
 
@@ -583,7 +584,101 @@ def test_no_unauthenticated_route_can_create_users():
         ("/admin/users", "POST"),
         ("/admin/users/{user_id}/enabled", "PATCH"),
         ("/admin/users/{user_id}/role", "PUT"),
+        ("/admin/users/{user_id}/password", "PUT"),
     }
+
+
+# --- password reset (audit item 4) ----------------------------------------------
+
+
+def test_reset_password_sets_it_ends_sessions_and_evicts_tokens(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    token = _cache_token_for(uid, "student_demo")
+    r = client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["username"] == "student_demo"
+    assert "password" not in body
+    # temporary defaults to True: Keycloak forces a change at next sign-in.
+    assert kc.passwords[uid] == ("New!pass-5678", True)
+    assert kc.logged_out == [uid]
+    assert introspect_cache.get_cached(token) is None
+
+
+def test_reset_password_can_be_permanent(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    assert client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678", "temporary": False}).status_code == 200
+    assert kc.passwords[uid] == ("New!pass-5678", False)
+
+
+def test_reset_password_is_audited_without_the_password(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"})
+    rows = audit_rows("ADMIN_USER_PASSWORD_RESET")
+    assert [(r["student_id"], r["result"]) for r in rows] == [("student_demo", "OK")]
+    assert "actor=admin_demo" in rows[0]["detail"]
+    assert all("New!pass-5678" not in (r["detail"] or "") for r in audit_rows())
+
+
+def test_admin_cannot_reset_own_password(client, kc):
+    as_caller(ADMIN)
+    r = client.put(f"/admin/users/{kc.admin_id}/password", json={"password": "New!pass-5678"})
+    assert r.status_code == 409
+    assert kc.admin_id not in kc.passwords
+    assert kc.logged_out == []
+    assert audit_rows("ADMIN_USER_PASSWORD_RESET")[-1]["result"] == "DENIED"
+
+
+@pytest.mark.parametrize("body", [
+    {"password": "short"},
+    {"password": "x" * 129},
+    {},
+    {"password": "New!pass-5678", "credentials": [{"type": "password"}]},
+])
+def test_reset_password_validates_body(client, kc, body):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    assert client.put(f"/admin/users/{uid}/password", json=body).status_code == 422
+    assert uid not in kc.passwords
+
+
+def test_reset_password_policy_rejection_is_422_and_keeps_sessions(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.reject_password = True
+    r = client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"})
+    assert r.status_code == 422
+    assert r.json()["detail"] == "Password does not meet the Keycloak password policy"
+    assert kc.logged_out == []  # nothing changed, so nobody is signed out
+    assert audit_rows("ADMIN_USER_PASSWORD_RESET")[-1]["result"] == "FAILED"
+
+
+def test_reset_password_unknown_or_service_account_404(client, kc):
+    as_caller(ADMIN)
+    assert client.put(f"/admin/users/{PLACEHOLDER_ID}/password", json={"password": "New!pass-5678"}).status_code == 404
+    svc = kc.add("service-account-cyberrange-user-admin")
+    assert client.put(f"/admin/users/{svc}/password", json={"password": "New!pass-5678"}).status_code == 404
+    assert svc not in kc.passwords
+
+
+def test_demoted_admin_with_cached_claims_cannot_reset_passwords(client, kc):
+    # Same re-check as the other writes: a token that still says admin is not enough.
+    kc.add("ex_admin", "student")
+    as_caller(claims("ex_admin", "admin"))
+    uid = kc.add("student_demo", "student")
+    assert client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"}).status_code == 403
+    assert uid not in kc.passwords
+
+
+def test_reset_password_keycloak_down_is_503(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.fail_on.add("set_password")
+    assert client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"}).status_code == 503
+    assert audit_rows("ADMIN_USER_PASSWORD_RESET")[-1]["result"] == "FAILED"
 
 
 # --- KeycloakAdminClient HTTP behaviour -------------------------------------------

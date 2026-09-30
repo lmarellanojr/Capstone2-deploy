@@ -83,7 +83,10 @@ lxc exec "$WORK" -- bash -c '
   docker exec vulnerable-apps_dvwa_1 sh -c "sed -i \"s/default_security_level.*/default_security_level'\'' ] = '\''low'\'';/\" \"$CONF\""
 '
 
-OLD_FP="$(lxc image list "$ALIAS" --format csv -c f | head -n1)"
+# Exact alias match. `lxc image list "$ALIAS"` is a prefix filter, so with
+# dvwa-base-predvwaready-* present it returned that image's fingerprint and the
+# rollback alias pointed at the wrong (older) image.
+OLD_FP="$(lxc image alias list --format csv | awk -F, -v a="$ALIAS" '$1==a {print $2; exit}')"
 if [ -n "$OLD_FP" ] && ! lxc image alias list | grep -q "${ALIAS}-predvwaready-${STAMP}"; then
   lxc image alias create "${ALIAS}-predvwaready-${STAMP}" "$OLD_FP"
 fi

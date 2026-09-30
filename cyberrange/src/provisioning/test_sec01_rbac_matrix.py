@@ -96,7 +96,22 @@ ROUTE_POLICY = {
     # INST-03 (#86): owner-or-staff read, owner-only resubmit (see IDOR tests below).
     ("GET", "/reviews/{review_id}"): (ANY_APP_ROLE, "/reviews/1", None),
     ("POST", "/reviews/{review_id}/resubmit"): (ANY_APP_ROLE, "/reviews/1/resubmit", {"report_text": "matrix probe"}),
+    # Evidence screenshots: owner-or-staff, self-scoped like the other /reviews routes.
+    ("POST", "/reviews/{review_id}/images"): (ANY_APP_ROLE, "/reviews/1/images", None),
+    ("GET", "/reviews/{review_id}/images"): (ANY_APP_ROLE, "/reviews/1/images", None),
+    ("GET", "/reviews/{review_id}/images/{image_id}"): (ANY_APP_ROLE, "/reviews/1/images/1", None),
+    ("DELETE", "/reviews/{review_id}/images/{image_id}"): (ANY_APP_ROLE, "/reviews/1/images/1", None),
     ("GET", "/instructor/pods"): (INSTRUCTOR, "/instructor/pods", None),
+    # Read-only SIEM view for staff (SIEM audit gap 6); same safe fields as the Student route.
+    ("GET", "/instructor/pods/{pod_id}/alerts"): (INSTRUCTOR, f"/instructor/pods/{POD}/alerts", None),
+    # SIEM history for ended labs + the alerts frozen with a report.
+    ("GET", "/instructor/students/{student_id}/labs"): (INSTRUCTOR, "/instructor/students/student_demo/labs", None),
+    ("GET", "/instructor/students/{student_id}/labs/{pod_id}/alerts"): (
+        INSTRUCTOR,
+        f"/instructor/students/student_demo/labs/{POD}/alerts?started_at=2026-01-01%2000:00:00",
+        None,
+    ),
+    ("GET", "/instructor/reviews/{review_id}/alert-snapshot"): (INSTRUCTOR, "/instructor/reviews/1/alert-snapshot", None),
     ("GET", "/instructor/students"): (INSTRUCTOR, "/instructor/students", None),
     ("GET", "/instructor/students/{student_id}"): (INSTRUCTOR, "/instructor/students/student_demo", None),
     ("GET", "/instructor/reviews"): (INSTRUCTOR, "/instructor/reviews", None),
@@ -113,6 +128,8 @@ ROUTE_POLICY = {
     ("POST", "/admin/users"): (ADMIN, "/admin/users", {"username": "matrix_probe", "role": "student", "password": "Probe!12345"}),
     ("PATCH", "/admin/users/{user_id}/enabled"): (ADMIN, f"/admin/users/{ANY_UUID}/enabled", {"enabled": True}),
     ("PUT", "/admin/users/{user_id}/role"): (ADMIN, f"/admin/users/{ANY_UUID}/role", {"role": "student"}),
+    ("PUT", "/admin/users/{user_id}/password"): (ADMIN, f"/admin/users/{ANY_UUID}/password", {"password": "Probe!12345"}),
+    ("GET", "/admin/audit-log"): (ADMIN, "/admin/audit-log", None),
 }
 
 _observed: dict = {}

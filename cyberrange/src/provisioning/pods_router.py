@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile, status
 
 import auth
 from auth import caller_identity, require_owner, verify_token
@@ -38,6 +38,8 @@ from models import (
 from hybrid_scoring import evaluate_hybrid_submission
 from rubrics import CATALOG_SCENARIO_IDS, list_rubrics
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
+import lab_history
+import evidence_images
 from scoring import record_browser_milestone, verify_milestone
 from ttl import ttl_payload
 
@@ -280,6 +282,13 @@ async def provision_pod(
                     detail=f"STORAGE_FULL: Insufficient space ({free_mb:.0f} MB free, need {pod_storage_mb} MB)",
                 )
         else:
+            # Live LXD reading failed (see get_lxd_free_mb's own warning), so only
+            # the coarser DB accounting guards disk here. Say so: a hard-coded
+            # pool name once left this fallback in use on the live host unnoticed.
+            logger.warning(
+                "STORAGE gate: LXD free-space reading unavailable; falling back to "
+                "DB accounting against STORAGE_LIMIT_MB=%s", STORAGE_LIMIT_MB
+            )
             cursor2 = conn.execute("SELECT COALESCE(SUM(size_mb), 0) FROM storage_reservations")
             db_used_mb = cursor2.fetchone()[0]
             if db_used_mb + pod_storage_mb > STORAGE_LIMIT_MB:
@@ -293,6 +302,9 @@ async def provision_pod(
             "INSERT INTO pods (student_id, pod_id, vmid_kali, vmid_meta, vmid_dvwa, status, scenario_id) VALUES (?,?,?,?,?,?,?)",
             (student_id, pod_id, vmids["kali"], vmids["meta"], vmids["dvwa"], "PROVISIONING", request.scenario_id),
         )
+        # Real start of this lab for the instructor SIEM history (v8). Same
+        # transaction, so a refused/rolled-back provision leaves no session.
+        lab_history.record_lab_start(conn, pod_id)
         # Same unit the gate above compared. A literal here (was 15360) drifts
         # from POD_STORAGE_MB, and this row is exactly what the DB-accounting
         # fallback sums (branch-review Issue 4).
@@ -460,12 +472,19 @@ async def destroy_pod(
 async def admin_force_destroy_pod(
     pod_id: int, background_tasks: BackgroundTasks, claims: dict = Depends(verify_token)
 ):
-    """Admin-only destroy via existing teardown (ACTIVE / FAILED_ROLLBACK_COMPLETE)."""
+    """Admin-only destroy via existing teardown (ACTIVE / FAILED_ROLLBACK_COMPLETE).
+
+    Audited like user-management writes (ADMIN_POD_FORCE_DESTROY), recording
+    which Admin destroyed whose pod. The role check runs first, so a denied
+    non-Admin attempt writes nothing (SEC-02 asserts audit_log is unchanged).
+    """
     auth.require_role(["admin"], claims)
+    actor = caller_identity(claims, None) or "unknown"
     conn = get_db_connection()
     pod = conn.execute("SELECT * FROM pods WHERE pod_id=?", (pod_id,)).fetchone()
     if not pod:
         conn.close()
+        _audit_force_destroy(None, pod_id, "FAILED", f"actor={actor} reason=not_found")
         raise HTTPException(status_code=404, detail="Pod not found")
 
     # PROVISIONING excluded: in-flight perform_provisioning can still flip to ACTIVE.
@@ -479,6 +498,9 @@ async def admin_force_destroy_pod(
     if cur.rowcount == 0:
         status = pod["status"]
         conn.close()
+        _audit_force_destroy(
+            pod["student_id"], pod_id, "FAILED", f"actor={actor} reason=state status={status}"
+        )
         raise HTTPException(
             status_code=409,
             detail=f"Pod is {status}, cannot force-destroy from this state",
@@ -486,8 +508,27 @@ async def admin_force_destroy_pod(
     conn.commit()
     conn.close()
 
+    _audit_force_destroy(
+        pod["student_id"], pod_id, "OK", f"actor={actor} previous_status={pod['status']}"
+    )
     background_tasks.add_task(perform_destruction, dict(pod))
     return {"status": "destroying", "pod_id": pod_id}
+
+
+def _audit_force_destroy(student_id: Optional[str], pod_id: int, result: str, detail: str) -> None:
+    # Records the request (who asked, for whose pod, from what state). The
+    # teardown itself runs in the background and is logged by provision.py.
+    try:
+        log_event(
+            "ADMIN_POD_FORCE_DESTROY",
+            student_id=student_id or "",
+            pod_id=pod_id,
+            result=result,
+            detail=detail,
+        )
+    except Exception:
+        # Never let an audit-DB hiccup turn an accepted destroy into a 500.
+        logger.exception("ADM-POD audit write failed: pod_id=%s result=%s", pod_id, result)
 
 
 @router.post(
@@ -811,8 +852,11 @@ def instructor_get_student_progress(student_id: str, claims: dict = Depends(veri
     ).fetchone()
     active_pod = serialize_instructor_pod(active_pod_row) if active_pod_row else None
 
+    # pod_id + detection_data let the review page show which lab an attempt
+    # ran on and what corroborated it (Wazuh rule/agent, browser label,
+    # hybrid flag agreement, instructor approval) -- evidence, not just PASS/FAIL.
     milestone_rows = conn.execute(
-        "SELECT scenario_id, milestone_id, status, detection_score, verified_at "
+        "SELECT pod_id, scenario_id, milestone_id, status, detection_score, detection_data, verified_at "
         "FROM milestone_verification "
         "WHERE student_id = ? "
         "ORDER BY verified_at DESC",
@@ -924,7 +968,9 @@ class ReviewSubmitRequest(BaseModel):
 
 @router.post("/reviews/submit")
 def submit_student_review(
-    body: ReviewSubmitRequest, claims: dict = Depends(verify_token)
+    body: ReviewSubmitRequest,
+    background_tasks: BackgroundTasks,
+    claims: dict = Depends(verify_token),
 ):
     """Student endpoint to submit review cases (written reports, scoring conflicts, manual reviews)."""
     student_id = caller_identity(claims, None)
@@ -987,6 +1033,9 @@ def submit_student_review(
     conn.commit()
     conn.close()
 
+    # Freeze this lab's SIEM alerts alongside the report (runs after the
+    # response; a Wazuh problem is recorded on the snapshot, never raised).
+    background_tasks.add_task(lab_history.capture_review_snapshot, review_id)
     return {"status": "submitted", "review_id": review_id}
 
 
@@ -1205,6 +1254,7 @@ def resolve_student_review(
 def resubmit_student_review(
     review_id: int,
     body: ReviewResubmitRequest,
+    background_tasks: BackgroundTasks,
     claims: dict = Depends(verify_token),
 ):
     """Student endpoint to resubmit a review case that was returned for RETRY."""
@@ -1339,6 +1389,8 @@ def resubmit_student_review(
             exc_info=True,
         )
 
+    # Re-snapshot: the resubmitted report may cover a newer lab.
+    background_tasks.add_task(lab_history.capture_review_snapshot, review_id)
     return ReviewResubmitResponse(
         status="resubmitted",
         review_id=review_id,
@@ -1380,3 +1432,154 @@ def get_review_detail(
 
 
 
+
+
+# === Review evidence screenshots (student uploads; staff + owner can view) ===
+
+
+def _review_row_for_access(conn, review_id: int, claims: dict, owner_only: bool):
+    """Return the review_cases row if the caller may act on its images, else raise.
+
+    Owner (the student who filed it) always may. Instructors/Admins may unless
+    owner_only. A student who is not the owner gets 404 (no existence probing).
+    """
+    row = conn.execute(
+        "SELECT review_id, student_id FROM review_cases WHERE review_id=?", (review_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Review case not found")
+    caller = caller_identity(claims, None)
+    if caller and caller == row["student_id"]:
+        return row
+    if not owner_only:
+        try:
+            auth.require_role(["instructor", "admin"], claims)
+            return row
+        except HTTPException:
+            pass
+    # Not owner and (owner_only or not staff): hide existence.
+    raise HTTPException(status_code=404, detail="Review case not found")
+
+
+def _serialize_image(r) -> dict:
+    return {
+        "id": r["id"],
+        "review_id": r["review_id"],
+        "original_name": r["original_name"],
+        "content_type": r["content_type"],
+        "byte_size": r["byte_size"],
+        "width": r["width"],
+        "height": r["height"],
+        "caption": r["caption"],
+        "created_at": r["created_at"],
+    }
+
+
+@router.post("/reviews/{review_id}/images")
+async def upload_review_image(
+    review_id: int,
+    file: UploadFile = File(...),
+    caption: Optional[str] = Form(None),
+    claims: dict = Depends(verify_token),
+):
+    """Student attaches a screenshot to their own review case."""
+    conn = get_db_connection()
+    try:
+        review = _review_row_for_access(conn, review_id, claims, owner_only=True)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM review_evidence_images WHERE review_id=?", (review_id,)
+        ).fetchone()[0]
+        if count >= evidence_images.MAX_PER_REVIEW:
+            raise HTTPException(
+                status_code=400,
+                detail=f"You can attach at most {evidence_images.MAX_PER_REVIEW} images to a report.",
+            )
+        raw = await file.read()
+        try:
+            saved = evidence_images.validate_and_store(raw)
+        except evidence_images.ImageRejected as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except ImportError:
+            raise HTTPException(status_code=503, detail="Image support is not configured on the server.")
+
+        clean_caption = (caption or "").strip()[:300] or None
+        orig = (file.filename or "").strip()[:200] or None
+        cur = conn.execute(
+            "INSERT INTO review_evidence_images "
+            "(review_id, student_id, stored_name, original_name, content_type, byte_size, width, height, caption) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (review_id, review["student_id"], saved.stored_name, orig, saved.content_type,
+             saved.byte_size, saved.width, saved.height, clean_caption),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM review_evidence_images WHERE id=?", (cur.lastrowid,)
+        ).fetchone()
+        return _serialize_image(row)
+    finally:
+        conn.close()
+
+
+@router.get("/reviews/{review_id}/images")
+def list_review_images(review_id: int, claims: dict = Depends(verify_token)):
+    """List image metadata for a review (owner or instructor/admin)."""
+    conn = get_db_connection()
+    try:
+        _review_row_for_access(conn, review_id, claims, owner_only=False)
+        rows = conn.execute(
+            "SELECT * FROM review_evidence_images WHERE review_id=? ORDER BY created_at, id",
+            (review_id,),
+        ).fetchall()
+        return {"review_id": review_id, "images": [_serialize_image(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+@router.get("/reviews/{review_id}/images/{image_id}")
+def get_review_image(review_id: int, image_id: int, claims: dict = Depends(verify_token)):
+    """Serve one image's bytes (owner or instructor/admin)."""
+    conn = get_db_connection()
+    try:
+        _review_row_for_access(conn, review_id, claims, owner_only=False)
+        row = conn.execute(
+            "SELECT * FROM review_evidence_images WHERE id=? AND review_id=?",
+            (image_id, review_id),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Image not found")
+    data = evidence_images.read_file(row["stored_name"])
+    if data is None:
+        raise HTTPException(status_code=404, detail="Image file missing")
+    return Response(
+        content=data,
+        media_type=row["content_type"],
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "private, max-age=3600",
+            # Defence in depth: never let a served upload be interpreted as a page.
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.delete("/reviews/{review_id}/images/{image_id}")
+def delete_review_image(review_id: int, image_id: int, claims: dict = Depends(verify_token)):
+    """Owner removes one of their own attached images."""
+    conn = get_db_connection()
+    try:
+        _review_row_for_access(conn, review_id, claims, owner_only=True)
+        row = conn.execute(
+            "SELECT stored_name FROM review_evidence_images WHERE id=? AND review_id=?",
+            (image_id, review_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Image not found")
+        conn.execute("DELETE FROM review_evidence_images WHERE id=?", (image_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    evidence_images.delete_file(row["stored_name"])
+    return {"status": "deleted", "image_id": image_id}
