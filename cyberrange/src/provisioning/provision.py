@@ -345,6 +345,19 @@ write_files:
             scen_int = int(str(scenario_id).strip())
             from flag_planting import generate_all_scenario_flags, plant_scenario_flags, save_pod_flags
             flags_map = generate_all_scenario_flags(student_id, scen_int)
+            # Scenario 1 Milestone 5 is "whoami" in the Kali terminal: its flag is
+            # the student's live Kali login name read from the container (not an
+            # HMAC, not hardcoded), so the student simply types what `whoami` prints.
+            if scen_int == 1:
+                from flag_planting import read_kali_whoami
+                flags_map[5] = read_kali_whoami(client, vmids, student_id)
+            # Scenario 6 (portal "Scenario 2") Milestone 5 is the capture-the-flag:
+            # a single human-readable code (e.g. brave-otter-7421) shown on the XSS
+            # (Reflected) result page, not an HMAC FLAG{...} token. Easier to read,
+            # and only this one value is displayed, so there's no ambiguity.
+            if scen_int == 6:
+                from flag_planting import generate_capture_flag
+                flags_map[5] = generate_capture_flag(student_id, scen_int, 5)
             conn_flags = get_db_connection()
             try:
                 save_pod_flags(conn_flags, pod_id, student_id, scen_int, flags_map)

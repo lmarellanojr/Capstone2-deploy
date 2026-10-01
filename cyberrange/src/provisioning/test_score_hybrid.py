@@ -1354,3 +1354,22 @@ def test_pure_flag_no_duplicate_scoring(client, hybrid_db: str):
     ).fetchone()[0]
     conn.close()
     assert n == 1
+
+
+def test_pure_flag_accepts_pasted_line_with_single_token(client, hybrid_db: str):
+    """A pasted terminal line that contains exactly one FLAG{...} token scores."""
+    student = "student_pasteline"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=108, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=5, pod_id=108)
+    res = client.post("/progress/1/flag", json={"milestone_id": 5, "flag": f"tomcat$ cat flag.txt {flag}"})
+    assert res.json()["status"] == "PASS"
+
+
+def test_extract_flag_token_does_not_unpack_multiple_guesses():
+    from rubrics import extract_flag_token
+    assert extract_flag_token("  FLAG{abc}  ") == "FLAG{abc}"
+    assert extract_flag_token("label: FLAG{abc}") == "FLAG{abc}"
+    # Several tokens are compared as raw text (no "try every guess at once").
+    assert extract_flag_token("FLAG{a} FLAG{b}") == "FLAG{a} FLAG{b}"
+    assert extract_flag_token("no token here") == "no token here"

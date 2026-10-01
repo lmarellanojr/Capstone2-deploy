@@ -50,24 +50,16 @@ export function createSession(key: string, wsUrl: string): TermSession {
   const ws = new WebSocket(wsUrl);
   const session: TermSession = { key, term, fit, ws, host };
 
-  // COPY/PASTE FIX (SIEM-breaks-terminal bug): keep clipboard working no matter
-  // where focus is. The reported bug was that after opening the SIEM (an overlay
-  // that trapped focus and returned it to a button on close), the xterm helper
-  // textarea no longer had focus, so paste silently did nothing. These handlers
-  // read/write the clipboard directly, so copy/paste works regardless of focus
-  // history, and TerminalView also re-focuses the terminal when an overlay closes.
+  // COPY FIX (SIEM-breaks-terminal bug): copy the xterm selection explicitly so
+  // it works regardless of focus history. TerminalView re-focuses the terminal
+  // when an overlay (SIEM) closes, which is what makes paste work again.
   //   - Ctrl/Cmd+Shift+C : copy selection
   //   - Ctrl/Cmd+C       : copy selection if one exists, else pass through (SIGINT)
-  //   - Ctrl/Cmd+V or Ctrl/Cmd+Shift+V : paste clipboard into the shell
+  // Paste is deliberately NOT intercepted: the browser's native paste event
+  // already feeds xterm. Handling Ctrl/Cmd+V here as well sent every paste
+  // twice ("run" arrived as "runrun").
   const writeClip = (text: string) => {
     try { navigator.clipboard?.writeText(text); } catch { /* clipboard blocked */ }
-  };
-  const pasteClip = () => {
-    try {
-      navigator.clipboard?.readText().then((t) => {
-        if (t && ws.readyState === WebSocket.OPEN) ws.send(t);
-      }).catch(() => { /* permission denied */ });
-    } catch { /* clipboard blocked */ }
   };
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     if (e.type !== 'keydown') return true;
@@ -84,7 +76,6 @@ export function createSession(key: string, wsUrl: string): TermSession {
       if (sel && sel.length > 0) { writeClip(sel); term.clearSelection(); return false; }
       return true;
     }
-    if (key === 'v') { pasteClip(); return false; }
     return true;
   });
 

@@ -43,8 +43,11 @@ type TermTab = 'kali-cli' | 'meta' | 'dvwa'
 function tabsForScenario(scenarioId: string): TermTab[] {
   switch (scenarioId) {
     case '01':
+      // Kali-only: every task (recon, exploit, and the whoami flag) runs from
+      // Kali. The Meta tab isn't needed here.
       return ['kali-cli']
     case '06':
+      // Browser-only (DVWA embed); no terminal tabs are rendered for it.
       return ['kali-cli', 'dvwa']
     default:
       return ['kali-cli', 'meta']
@@ -57,6 +60,17 @@ function defaultTabForScenario(scenarioId: string): TermTab {
 }
 
 const DVWA_LOGIN_URL = `${DVWA_PREFIX}/login.php`
+
+// In-portal navigation for the embedded DVWA. DVWA's own left menu doesn't
+// render reliably inside the sandboxed iframe on the vulnerable pages, so these
+// buttons drive the iframe to each module directly (same session cookie).
+const DVWA_NAV: { label: string; path: string }[] = [
+  { label: 'Home', path: `${DVWA_PREFIX}/index.php` },
+  { label: 'SQL Injection', path: `${DVWA_PREFIX}/vulnerabilities/sqli/` },
+  { label: 'XSS (Reflected)', path: `${DVWA_PREFIX}/vulnerabilities/xss_r/` },
+  { label: 'DVWA Security', path: `${DVWA_PREFIX}/security.php` },
+  { label: 'Login', path: DVWA_LOGIN_URL },
+]
 
 interface TerminalViewProps {
   pod: Pod
@@ -99,6 +113,9 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   // SIEM opens as a proper modal dialog (Scenario 3). Closing it returns focus
   // to the terminal so copy/paste keeps working.
   const [showSiemModal, setShowSiemModal] = useState(false)
+  // Which DVWA page the embedded iframe shows (Scenario 2). A nonce forces a
+  // reload even when the same module is clicked twice.
+  const [dvwaNav, setDvwaNav] = useState({ path: DVWA_LOGIN_URL, nonce: 0 })
   const [infoModal, setInfoModal] = useState<'kali' | 'meta' | null>(null)
   // The Kali/meta explainer is useful the first time a student meets a tab,
   // and an interruption every time after — show it once per lab visit.
@@ -124,7 +141,9 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   }, [pod.pod_id])
 
   const termTabs = useMemo(() => tabsForScenario(scenario.id), [scenario.id])
-  const showDvwaTab = termTabs.includes('dvwa')
+  // Scenario 2 is browser-only: the main pane embeds DVWA (no terminal), since
+  // students don't use a shell here.
+  const isBrowserLab = scenario.id === '06'
   const showOpenDvwa = scenario.id === '06'
   const showOpenSiem = scenario.id === '09'
 
@@ -330,14 +349,16 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     }
   }
 
-  const activeTabTitle =
-    activeTab === 'kali-cli'
+  const activeTabTitle = isBrowserLab
+    ? 'DVWA — Damn Vulnerable Web App'
+    : activeTab === 'kali-cli'
       ? 'Kali Linux (CLI)'
       : activeTab === 'meta'
         ? 'Target: meta (lab)'
         : 'Target: dvwa (CLI)'
-  const activeTargetIp =
-    activeTab === 'kali-cli'
+  const activeTargetIp = isBrowserLab
+    ? undefined
+    : activeTab === 'kali-cli'
       ? ips?.kali
       : activeTab === 'meta'
         ? ips?.meta
@@ -460,14 +481,14 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             </button>
             {showOpenDvwa && (
               <>
-                {/* Scenario 2 is done in the browser: one click opens DVWA in a
-                    new tab (session-gated through the portal proxy). */}
+                {/* Scenario 2 embeds DVWA in the pane below; this is a fallback
+                    to pop it out into a full browser tab (same portal proxy). */}
                 <Button
-                  variant="primary"
+                  variant="secondary"
                   size="sm"
                   onClick={() => window.open(DVWA_LOGIN_URL, '_blank', 'noopener,noreferrer')}
                 >
-                  Open DVWA
+                  Open in new tab
                   <ExternalLink size={14} aria-hidden="true" />
                 </Button>
                 <button
@@ -535,14 +556,14 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             </div>
             <ul className="text-text-secondary space-y-1 list-disc pl-5 mb-2">
               <li>
-                <strong className="text-text-main">Open DVWA</strong> opens the practice site in a new tab, connected
-                to your lab session.
+                <strong className="text-text-main">DVWA is embedded on the left</strong>, connected to your lab
+                session. Use <strong className="text-text-main">Open in new tab</strong> if you prefer a full window.
               </li>
               <li>
                 Log in with <code className="bg-muted px-1 rounded">admin</code> /{' '}
                 <code className="bg-muted px-1 rounded">password</code>, then set Security to <strong>Low</strong>.
               </li>
-              <li>Each task is scored automatically as you work in the browser.</li>
+              <li>Each task is scored automatically as you work in DVWA.</li>
             </ul>
             <div className="flex flex-wrap gap-2 mb-2">
               <Button size="sm" variant="secondary" onClick={() => copyText(DVWA_LOGIN_URL, 'DVWA link')}>
@@ -556,37 +577,72 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
           </div>
         )}
 
-        {/* Connection Tabs — only the tabs this scenario actually uses. */}
-        <div className="flex bg-secondary border border-border rounded-t-xl overflow-hidden shrink-0">
-          {termTabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => selectTab(tab)}
-              aria-pressed={activeTab === tab}
-              className={termTabClass(tab)}
-            >
-              {TAB_LABEL[tab]}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex-1 min-h-0 bg-terminal-bg rounded-b-xl overflow-hidden">
-          {activeTab === 'kali-cli' && token && termTabs.includes('kali-cli') && (
-            <XtermView podId={pod.pod_id} podType="kali" token={token} />
-          )}
-          {activeTab === 'meta' && token && termTabs.includes('meta') && (
-            <XtermView podId={pod.pod_id} podType="meta" token={token} />
-          )}
-          {activeTab === 'dvwa' && token && termTabs.includes('dvwa') && (
-            <XtermView podId={pod.pod_id} podType="dvwa" token={token} />
-          )}
-          {!token && (
-            <div className="w-full h-full flex items-center justify-center text-text-faint">
-              Authenticating...
+        {isBrowserLab ? (
+          /* Scenario 2: embed DVWA directly in the lab (same portal proxy that
+             scores it), so students never leave the page for the terminal. */
+          <div className="flex-1 min-h-0 flex flex-col rounded-xl overflow-hidden border border-border bg-white">
+            {/* In-portal nav: DVWA's own left menu doesn't render reliably inside
+                the sandboxed iframe, so these buttons move the student between
+                modules (and back to Home) directly. */}
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-secondary px-2 py-1.5 shrink-0">
+              {DVWA_NAV.map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => setDvwaNav((prev) => ({ path: item.path, nonce: prev.nonce + 1 }))}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-text-main hover:border-brand/40 hover:text-brand transition focus-ring"
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
+            {/* No iframe sandbox attr on purpose: this is same-origin to the
+                portal (/lab/dvwa proxy), so it behaves exactly like the proven
+                "open in new tab" flow - session cookie flows and scoring runs at
+                the proxy. The proxy already applies its own per-page CSP sandbox
+                to the vulnerable modules (XSS isolation), new tab or embedded. */}
+            <iframe
+              key={dvwaNav.nonce}
+              src={dvwaNav.path}
+              title="DVWA - Damn Vulnerable Web Application"
+              className="w-full flex-1 min-h-0 border-0"
+            />
+          </div>
+        ) : (
+          <>
+            {/* Connection Tabs — only the tabs this scenario actually uses. */}
+            <div className="flex bg-secondary border border-border rounded-t-xl overflow-hidden shrink-0">
+              {termTabs.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => selectTab(tab)}
+                  aria-pressed={activeTab === tab}
+                  className={termTabClass(tab)}
+                >
+                  {TAB_LABEL[tab]}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 min-h-0 bg-terminal-bg rounded-b-xl overflow-hidden">
+              {activeTab === 'kali-cli' && token && termTabs.includes('kali-cli') && (
+                <XtermView podId={pod.pod_id} podType="kali" token={token} />
+              )}
+              {activeTab === 'meta' && token && termTabs.includes('meta') && (
+                <XtermView podId={pod.pod_id} podType="meta" token={token} />
+              )}
+              {activeTab === 'dvwa' && token && termTabs.includes('dvwa') && (
+                <XtermView podId={pod.pod_id} podType="dvwa" token={token} />
+              )}
+              {!token && (
+                <div className="w-full h-full flex items-center justify-center text-text-faint">
+                  Authenticating...
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Right: Milestone / Guide panel (~40-45% on lg+) */}
@@ -701,6 +757,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
                       <FlagSubmission
                         scenarioId={scenario.id}
                         milestoneId={m.id}
+                        placeholder={scenario.id === '01' ? 'e.g. student' : 'e.g. brave-otter-7421'}
                         onPass={() => setCompleted((prev) => new Set(prev).add(m.id))}
                       />
                     ) : lockedReview.has(m.id) ? (

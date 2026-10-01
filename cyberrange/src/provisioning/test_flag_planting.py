@@ -23,6 +23,7 @@ from flag_planting import (
     DEFAULT_COHORT_SECRET,
     SCENARIO_MILESTONES,
     generate_all_scenario_flags,
+    generate_capture_flag,
     generate_milestone_flag,
     get_cohort_secret,
     get_student_expected_flag,
@@ -49,6 +50,25 @@ def test_flag_generation_determinism():
     assert flag1.startswith("FLAG{S01_M1_")
     assert len(flag1) == len("FLAG{S01_M1_") + 12 + 1  # prefix + 12 hex + }
     assert flag1.endswith("}")
+
+
+def test_capture_flag_is_readable_and_deterministic():
+    """generate_capture_flag yields a human-readable, per-student, deterministic code."""
+    import re
+
+    flag1 = generate_capture_flag("student_alice", 6, 5, secret="secret-key-1")
+    flag2 = generate_capture_flag("student_alice", 6, 5, secret="secret-key-1")
+    # Deterministic for identical inputs.
+    assert flag1 == flag2
+    # Readable "<adjective>-<noun>-<NNNN>" shape, no FLAG{...} wrapper.
+    assert "FLAG{" not in flag1
+    assert re.fullmatch(r"[a-z]+-[a-z]+-\d{4}", flag1), flag1
+    # Per-student uniqueness.
+    assert generate_capture_flag("student_bob", 6, 5, secret="secret-key-1") != flag1
+    # Whitespace in student_id is trimmed; empty is rejected.
+    assert generate_capture_flag("  student_alice  ", 6, 5, secret="secret-key-1") == flag1
+    with pytest.raises(ValueError):
+        generate_capture_flag("", 6, 5, secret="secret-key-1")
 
 
 def test_flag_cross_student_uniqueness():
@@ -167,12 +187,14 @@ def test_plant_scenario_flags_mock_client():
     call_args = meta_mock.execute.call_args[0][0]
     assert call_args[0] == "bash"
     assert call_args[1] == "-c"
-    # Verify positional parameter passing ($1..$5, incl. the M5 capture-the-flag)
+    # Verify positional parameter passing ($1..$4). Scenario 1 M5 is the live
+    # `whoami` value (read at provision time), not planted via this script, so
+    # FLAG_5 is intentionally not passed to the S1 container script.
     assert "FLAG_1" in call_args
     assert "FLAG_2" in call_args
     assert "FLAG_3" in call_args
     assert "FLAG_4" in call_args
-    assert "FLAG_5" in call_args
+    assert "FLAG_5" not in call_args
 
     # Scenario 06
     meta_mock.reset_mock()
@@ -196,3 +218,24 @@ def test_plant_scenario_flags_handles_exec_failure():
 
     # Must not raise
     plant_scenario_flags(client, "student_alice", 1, vmids, 1, flags_map)
+
+
+def test_read_kali_whoami_reads_live_value():
+    """S1 M5 flag is the student's live Kali login name, not hardcoded."""
+    from flag_planting import read_kali_whoami
+    client = MagicMock()
+    kali = MagicMock()
+    res = MagicMock(); res.stdout = "student\n"
+    kali.execute.return_value = res
+    client.instances.get.return_value = kali
+    assert read_kali_whoami(client, {"kali": "pod-x-kali"}, "x") == "student"
+
+
+def test_read_kali_whoami_falls_back_on_failure():
+    from flag_planting import read_kali_whoami
+    client = MagicMock()
+    client.instances.get.side_effect = RuntimeError("down")
+    # Falls back rather than leaving the milestone impossible.
+    assert read_kali_whoami(client, {"kali": "pod-x-kali"}, "x") == "student"
+    # No client at all -> fallback too.
+    assert read_kali_whoami(None, {}, "x") == "student"

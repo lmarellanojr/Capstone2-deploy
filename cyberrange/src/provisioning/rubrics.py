@@ -1,6 +1,7 @@
 """Rubrics and flag validation for the SCORE-HYBRID scoring engine."""
 from __future__ import annotations
 
+import re
 import secrets
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -212,6 +213,28 @@ def list_rubrics(conn: sqlite3.Connection, scenario_id: int) -> List[dict]:
     return [dict(r) for r in rows]
 
 
+# Note: Scenario 1 Milestone 5's flag is the live `whoami` output of the student's
+# Kali terminal (their Kali login name). It is NOT hardcoded here — at provision
+# time the real account name is read from the Kali container and stored per-pod in
+# pod_milestone_flags (see flag_planting.read_kali_whoami + provision.py), so the
+# normal planted-flag path below validates it like any other per-pod flag.
+
+_FLAG_TOKEN = re.compile(r"FLAG\{[^{}\s]+\}", re.IGNORECASE)
+
+
+def extract_flag_token(submitted: str) -> str:
+    """Return the single FLAG{...} token in a submission, else the trimmed input.
+
+    Students often paste a whole terminal line (e.g. a prompt or label plus the
+    flag). If the text contains exactly one FLAG{...} token, that token is what
+    gets compared. Several tokens are NOT unpacked (no "try every guess at once"),
+    so the raw text is compared and fails as before.
+    """
+    text = (submitted or "").strip()
+    tokens = _FLAG_TOKEN.findall(text)
+    return tokens[0] if len(tokens) == 1 else text
+
+
 def validate_flag(
     conn: sqlite3.Connection,
     scenario_id: int,
@@ -239,7 +262,7 @@ def validate_flag(
 
     from flag_planting import generate_milestone_flag, get_student_expected_flag
 
-    clean_submitted = submitted_flag.strip().upper()
+    clean_submitted = extract_flag_token(submitted_flag).upper()
 
     if student_id and student_id.strip():
         clean_sid = student_id.strip()

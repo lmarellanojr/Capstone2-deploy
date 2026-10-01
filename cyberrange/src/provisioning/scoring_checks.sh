@@ -642,10 +642,24 @@ _s9_timeline_time_is_real() {
         | awk -F: '{h=$1+0; m=$2+0; if (h<24 && m<60) print (h*60)+m}')
     [[ -z "$claimed_minutes" ]] && return 1
 
-    # PASS if any claimed minute is within +/- tol of any real event minute.
+    # PASS if any claimed minute matches any real event minute within +/- tol,
+    # EITHER as an absolute time (same timezone) OR as the same minutes-past-the-
+    # hour (a whole-hour timezone offset). The meta container logs in UTC, but the
+    # SIEM and the student's browser often show local time (e.g. UTC+8), so a
+    # correct event copied from the SIEM is hours off from auth.log yet shares the
+    # minutes. Matching minutes-of-hour accepts that real time while still
+    # rejecting fabricated/placeholder times (e.g. 00:00) and empty times.
     awk -v tol="$tol" '
         NR==FNR { real[$1]=1; next }
-        { for (r in real) { d=$1-r; if (d<0) d=-d; if (d<=tol) { found=1; exit } } }
+        {
+            for (r in real) {
+                d=$1-r; if (d<0) d=-d;
+                if (d<=tol) { found=1; exit }        # same-timezone exact match
+                md=($1 % 60) - (r % 60); if (md<0) md=-md;
+                if (md>30) md=60-md;                 # wrap across the hour boundary
+                if (md<=tol) { found=1; exit }       # whole-hour timezone offset
+            }
+        }
         END { exit(found?0:1) }
     ' <(printf "%s\n" $real_minutes) <(printf "%s\n" $claimed_minutes)
 }
@@ -785,10 +799,19 @@ check_scenario_11() {
             echo "FAIL"
             ;;
         3)
-            # M3: Confirm the exploit path is closed (401 or 403).
+            # M3: Confirm the exploit path is closed. This is the "confirm" step,
+            # so BOTH must hold:
+            #  (a) STATE  -- the manager now rejects the OLD tomcat:tomcat creds
+            #      with 401/403 (the fix is really in place), and
+            #  (b) BEHAVIOR -- the student actually ran the verification: a curl
+            #      to the Tomcat manager with the old creds appears in history.
+            # State alone became true the moment M2 rotated the password, so the
+            # task scored without the student doing it (3/3 after only M1+M2);
+            # requiring the curl in history fixes that false auto-pass.
             local code
             code=$(curl -s -o /dev/null -w '%{http_code}' -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list 2>/dev/null || echo "000")
-            if [[ "$code" == "401" || "$code" == "403" ]]; then
+            if { [[ "$code" == "401" || "$code" == "403" ]]; } \
+                && check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
                 echo "PASS"
             else
                 echo "FAIL"

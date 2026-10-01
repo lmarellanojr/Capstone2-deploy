@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Union
 from pydantic import BaseModel
 
@@ -613,7 +613,10 @@ async def verify_milestone_route(
 
     pod = dict(pod)
     student_id = pod["student_id"]
-    now_iso = datetime.now().isoformat()
+    # UTC to match every other timestamp (hybrid_scoring, CURRENT_TIMESTAMP);
+    # the frontend parses all timestamps as UTC, so a naive-local value here
+    # would display shifted by the viewer's offset.
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     # G1 one-shot Manual Check gate (student-initiated check only):
     #  1. already passed      -> idempotent PASS (no new attempt)

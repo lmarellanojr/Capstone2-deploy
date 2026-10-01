@@ -12,6 +12,8 @@ interface FlagSubmissionProps {
   milestoneId: number
   /** Called once the submitted flag is accepted (status PASS). */
   onPass: () => void
+  /** Input placeholder; defaults to the FLAG{...} format. */
+  placeholder?: string
 }
 
 /**
@@ -21,7 +23,7 @@ interface FlagSubmissionProps {
  * never awards points. The backend is idempotent, so resubmitting a correct flag
  * can't double-count, and the input disappears once the task is complete.
  */
-export function FlagSubmission({ scenarioId, milestoneId, onPass }: FlagSubmissionProps) {
+export function FlagSubmission({ scenarioId, milestoneId, onPass, placeholder = 'FLAG{...}' }: FlagSubmissionProps) {
   const { success } = useToastContext()
   const [flag, setFlag] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -63,7 +65,7 @@ export function FlagSubmission({ scenarioId, milestoneId, onPass }: FlagSubmissi
           type="text"
           value={flag}
           onChange={(e) => { setFlag(e.target.value); if (error) setError(null) }}
-          placeholder="FLAG{...}"
+          placeholder={placeholder}
           autoComplete="off"
           spellCheck={false}
           className="flex-1 min-w-0 rounded-lg border border-border bg-secondary px-3 py-1.5 text-sm font-mono text-text-main placeholder:text-text-faint focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40"
