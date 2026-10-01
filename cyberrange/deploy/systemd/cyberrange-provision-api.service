@@ -7,7 +7,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/llms_admin/cyberrange/src/provisioning
 EnvironmentFile=/home/llms_admin/cyberrange/env/.env
-ExecStart=/usr/bin/python3 provision_api_fastapi.py
+# Run from the project venv: pull_release.sh installs pyproject dependencies there.
+# The system interpreter never sees them, so a release adding a package crash-loops the API.
+ExecStart=/home/llms_admin/cyberrange/.venv/bin/python provision_api_fastapi.py
 Restart=always
 RestartSec=5
 StandardOutput=append:/tmp/provision-api.log
