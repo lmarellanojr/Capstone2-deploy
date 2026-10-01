@@ -292,7 +292,7 @@ export const provisioning = {
     return response.data
   },
 
-  getMilestones: async (podId: number): Promise<{ milestones: { scenario_id: number | string, milestone_id: number, status: string, detection_score?: number, verified_at?: string }[] }> => {
+  getMilestones: async (podId: number): Promise<{ milestones: { scenario_id: number | string, milestone_id: number, status: string, detection_score?: number, verified_at?: string }[], manual_check_locked?: number[] }> => {
     const response = await apiClient.get(`/pods/${podId}/milestones`)
     return response.data
   },

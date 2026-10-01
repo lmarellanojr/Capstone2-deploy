@@ -50,6 +50,44 @@ export function createSession(key: string, wsUrl: string): TermSession {
   const ws = new WebSocket(wsUrl);
   const session: TermSession = { key, term, fit, ws, host };
 
+  // COPY/PASTE FIX (SIEM-breaks-terminal bug): keep clipboard working no matter
+  // where focus is. The reported bug was that after opening the SIEM (an overlay
+  // that trapped focus and returned it to a button on close), the xterm helper
+  // textarea no longer had focus, so paste silently did nothing. These handlers
+  // read/write the clipboard directly, so copy/paste works regardless of focus
+  // history, and TerminalView also re-focuses the terminal when an overlay closes.
+  //   - Ctrl/Cmd+Shift+C : copy selection
+  //   - Ctrl/Cmd+C       : copy selection if one exists, else pass through (SIGINT)
+  //   - Ctrl/Cmd+V or Ctrl/Cmd+Shift+V : paste clipboard into the shell
+  const writeClip = (text: string) => {
+    try { navigator.clipboard?.writeText(text); } catch { /* clipboard blocked */ }
+  };
+  const pasteClip = () => {
+    try {
+      navigator.clipboard?.readText().then((t) => {
+        if (t && ws.readyState === WebSocket.OPEN) ws.send(t);
+      }).catch(() => { /* permission denied */ });
+    } catch { /* clipboard blocked */ }
+  };
+  term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+    if (e.type !== 'keydown') return true;
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod) return true;
+    const key = e.key.toLowerCase();
+    if (key === 'c') {
+      const sel = term.getSelection();
+      if (e.shiftKey) {
+        if (sel) writeClip(sel);
+        return false; // Ctrl+Shift+C never reaches the shell
+      }
+      // Plain Ctrl+C: copy only when text is selected, else let it be SIGINT.
+      if (sel && sel.length > 0) { writeClip(sel); term.clearSelection(); return false; }
+      return true;
+    }
+    if (key === 'v') { pasteClip(); return false; }
+    return true;
+  });
+
   ws.onopen = () => {
     term.writeln('\x1b[32m[Client] Connecting to SSH proxy...\x1b[0m');
     setTimeout(() => {
@@ -84,6 +122,15 @@ export function createSession(key: string, wsUrl: string): TermSession {
 
   sessions.set(key, session);
   return session;
+}
+
+/** Focus a live terminal session by key (no-op if it isn't open). Used to return
+ *  keyboard focus to the shell after an overlay (SIEM modal, info modal) closes,
+ *  so the terminal stays usable and paste works without a manual click. */
+export function focusSession(key: string): void {
+  const s = sessions.get(key);
+  if (!s) return;
+  try { s.term.focus(); } catch { /* not attached yet */ }
 }
 
 export function refit(session: TermSession): void {

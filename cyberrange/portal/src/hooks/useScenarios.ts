@@ -50,6 +50,7 @@ export const SCENARIOS: Scenario[] = [
       { id: 2, name: 'Port Enumeration', description: 'Identify open TCP ports on the meta target (expect 21, 22, 80, 8180).', points: 50 },
       { id: 3, name: 'Service Version Detection', description: 'Use Nmap service detection (-sV) to enumerate version info on all discovered hosts.', points: 50 },
       { id: 4, name: 'Tomcat Manager Exploitation', description: 'Use Metasploit to exploit the Apache Tomcat Manager on port 8180 and obtain a shell on the meta target as the tomcat user.', points: 75 },
+      { id: 5, name: 'Capture the Flag (whoami)', description: 'From your tomcat shell, run whoami to confirm the account, then read the flag in the tomcat user’s home directory and submit it below.', points: 50 },
     ],
   },
   {
@@ -68,6 +69,7 @@ export const SCENARIOS: Scenario[] = [
       { id: 2, name: 'Database Extraction', description: 'Extract the users table from the backend database using the injection vulnerability.', points: 75 },
       { id: 3, name: 'Admin Hash', description: 'Retrieve the admin account password hash from the database.', points: 100 },
       { id: 4, name: 'Reflected XSS', description: 'Exploit the Reflected Cross-Site Scripting (XSS) vulnerability in DVWA (set security to Low).', points: 75 },
+      { id: 5, name: 'Capture the Flag', description: 'Use SQL injection to read the flag stored in the application database, then submit it below.', points: 50 },
     ],
   },
   {
@@ -101,6 +103,16 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
 ]
+
+// Final "find the flag" tasks scored purely by flag submission — mirrors the
+// backend PURE_FLAG_MILESTONES set in hybrid_scoring.py. Keyed "catalogId:milestoneId".
+const FLAG_MILESTONES = new Set<string>(['01:5', '06:5'])
+
+/** True for the capture-the-flag final tasks (Scenario 1 & 2) that are scored by
+ *  submitting a flag rather than by auto-detect / Manual Check. */
+export function isFlagMilestone(scenarioId: string, milestoneId: number): boolean {
+  return FLAG_MILESTONES.has(`${scenarioId}:${milestoneId}`)
+}
 
 export function useScenarios() {
   const [scenarios] = useState<Scenario[]>(SCENARIOS)

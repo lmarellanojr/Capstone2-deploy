@@ -13,12 +13,13 @@ import { MilestoneItem } from '@/components/progress/MilestoneItem'
 import { VerificationRequestModal } from '@/components/reviews/VerificationRequestModal'
 import { useMyReviews } from '@/hooks/useMyReviews'
 import { uploadScreenshots } from '@/lib/screenshotUpload'
-import { scenarioDisplayTitle } from '@/hooks/useScenarios'
+import { scenarioDisplayTitle, isFlagMilestone } from '@/hooks/useScenarios'
+import { FlagSubmission } from '@/components/scenario/FlagSubmission'
 import { useToastContext } from '@/context/ToastContext'
 
 import { useSession } from 'next-auth/react'
 import { XtermView } from '@/components/terminal/XtermView'
-import { destroySession, sessionKey } from '@/components/terminal/terminalSessionManager'
+import { destroySession, focusSession, sessionKey } from '@/components/terminal/terminalSessionManager'
 import { GuideView } from '@/components/scenario/GuideView'
 import { LabCountdown } from '@/components/scenario/LabCountdown'
 import { SiemAlertViewer } from '@/components/scenario/SiemAlertViewer'
@@ -32,6 +33,23 @@ import {
 } from '@/lib/scenarioCompletion'
 
 type TermTab = 'kali-cli' | 'meta' | 'dvwa'
+
+// Which terminal tabs each scenario actually uses. Scenario 1 is Kali-only
+// (recon + exploit all run from Kali and the scorer reads Kali history), so the
+// "Target: meta (lab)" tab is removed there -- it only invited students to run
+// commands on the wrong host. Scenarios 3 and 4 still need the Meta shell to
+// write artifacts / remediate. Scenario 2 is browser-only (DVWA), handled by
+// the DVWA-first layout below.
+function tabsForScenario(scenarioId: string): TermTab[] {
+  switch (scenarioId) {
+    case '01':
+      return ['kali-cli']
+    case '06':
+      return ['kali-cli', 'dvwa']
+    default:
+      return ['kali-cli', 'meta']
+  }
+}
 
 function defaultTabForScenario(scenarioId: string): TermTab {
   if (scenarioId === '11') return 'meta'
@@ -55,6 +73,12 @@ interface TerminalViewProps {
 const TERM_TAB_BASE =
   'px-4 py-2 text-sm font-medium transition border-b-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/40'
 
+const TAB_LABEL: Record<TermTab, string> = {
+  'kali-cli': 'Kali Linux (CLI)',
+  meta: 'Target: meta (lab)',
+  dvwa: 'Target: dvwa (CLI)',
+}
+
 export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart, ttlGrace = false, canRestart = false, fetchedAtMs = Date.now() }: TerminalViewProps) {
   const router = useRouter()
   const { data: session } = useSession()
@@ -63,12 +87,18 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
   const [completed, setCompleted] = useState<Set<number>>(new Set())
   const [loadedProgressKey, setLoadedProgressKey] = useState<string | null>(null)
   const [verifying, setVerifying] = useState<Set<number>>(new Set())
+  // Milestones whose single Manual Check was used without passing: the Manual
+  // Check button is replaced with an "awaiting instructor review" state (G1).
+  const [lockedReview, setLockedReview] = useState<Set<number>>(new Set())
   const [milestonesLoading, setMilestonesLoading] = useState(true)
   const [ending, setEnding] = useState(false)
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [activeTab, setActiveTab] = useState<TermTab>(() => defaultTabForScenario(scenario.id))
   const [sidebarTab, setSidebarTab] = useState<'tasks' | 'guide'>('guide')
-  const [showAccessHelp, setShowAccessHelp] = useState<'dvwa' | 'siem' | null>(null)
+  const [showAccessHelp, setShowAccessHelp] = useState<'dvwa' | null>(null)
+  // SIEM opens as a proper modal dialog (Scenario 3). Closing it returns focus
+  // to the terminal so copy/paste keeps working.
+  const [showSiemModal, setShowSiemModal] = useState(false)
   const [infoModal, setInfoModal] = useState<'kali' | 'meta' | null>(null)
   // The Kali/meta explainer is useful the first time a student meets a tab,
   // and an interruption every time after — show it once per lab visit.
@@ -93,7 +123,8 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     }
   }, [pod.pod_id])
 
-  const showDvwaTab = scenario.id === '06'
+  const termTabs = useMemo(() => tabsForScenario(scenario.id), [scenario.id])
+  const showDvwaTab = termTabs.includes('dvwa')
   const showOpenDvwa = scenario.id === '06'
   const showOpenSiem = scenario.id === '09'
 
@@ -119,6 +150,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     const requestKey = scenarioProgressKey(pod.pod_id, scenario.id)
     setCompleted(new Set())
     setVerifying(new Set())
+    setLockedReview(new Set())
     setLoadedProgressKey(null)
     setShowCompletion(false)
     setMilestonesLoading(true)
@@ -127,6 +159,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       if (res && res.milestones) {
         setCompleted(passedMilestoneIdsForScenario(res.milestones, scenario.id))
       }
+      setLockedReview(new Set(res?.manual_check_locked ?? []))
       setLoadedProgressKey(requestKey)
       setMilestonesLoading(false)
     }).catch((err) => {
@@ -156,6 +189,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       try {
         const res = await provisioning.getMilestones(pod.pod_id)
         if (!active || currentProgressKeyRef.current !== requestKey || !res?.milestones) return
+        setLockedReview(new Set(res.manual_check_locked ?? []))
         const newPassed = passedMilestoneIdsForScenario(res.milestones, scenario.id)
 
         setCompleted((prev) => {
@@ -228,7 +262,19 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
         }
         success(msg)
       } else if (result.status === 'FAIL') {
-        warning(result.message || 'Not yet - check your work and try again.')
+        // The single Manual Check is now used up; the task moves to instructor review.
+        setLockedReview((prev) => new Set(prev).add(milestoneId))
+        warning(
+          result.message ||
+            "Manual Check couldn't verify this task. You can now ask an instructor to review it."
+        )
+      } else if (result.status === 'REVIEW') {
+        // Already used (e.g. a stale click): keep it locked to instructor review.
+        setLockedReview((prev) => new Set(prev).add(milestoneId))
+        warning(
+          result.message ||
+            'Your Manual Check has already been used. Ask an instructor to review this task.'
+        )
       } else {
         toastError('Verification unavailable - your terminal is still working.')
       }
@@ -259,6 +305,21 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
     if (ok) success(`Copied ${label}`)
     else warning(`Could not copy ${label}`)
   }, [success, warning])
+
+  const podTypeForTab = (tab: TermTab): 'kali' | 'meta' | 'dvwa' =>
+    tab === 'kali-cli' ? 'kali' : tab
+
+  // Return keyboard focus to the on-screen terminal — called when an overlay
+  // (SIEM modal, Kali/meta explainer) closes, so the shell stays usable and
+  // paste works without an extra click (the SIEM copy/paste bug).
+  const refocusTerminal = useCallback(() => {
+    focusSession(sessionKey(pod.pod_id, podTypeForTab(activeTab)))
+  }, [pod.pod_id, activeTab])
+
+  const closeSiem = useCallback(() => {
+    setShowSiemModal(false)
+    setTimeout(refocusTerminal, 0)
+  }, [refocusTerminal])
 
   const selectTab = (tab: TermTab) => {
     setActiveTab(tab)
@@ -292,6 +353,41 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
 
   const termTabClass = (tab: TermTab) =>
     `${TERM_TAB_BASE} ${activeTab === tab ? 'bg-muted text-text-main border-brand' : 'border-transparent text-text-muted hover:text-text-main hover:bg-muted/60'}`
+
+  // The instructor-review affordance for a milestone (pending / retry / new).
+  // Shared by the "Not detected yet?" fallback and the locked state after a
+  // failed Manual Check, so the review entry point looks the same in both.
+  const renderInstructorReview = (milestoneId: number) => {
+    const req = latestRequest(milestoneId)
+    const status = req?.case?.status
+    if (req && (status === 'PENDING' || !req.case)) {
+      return (
+        <p className="text-xs text-text-muted">
+          Instructor review requested — waiting for a reply.
+        </p>
+      )
+    }
+    if (status === 'RETRY') {
+      return (
+        <button
+          type="button"
+          onClick={() => setRequestFor({ milestoneId, mode: 'retry' })}
+          className="text-xs font-semibold text-brand hover:underline rounded focus-ring"
+        >
+          Your instructor asked for more detail — send again
+        </button>
+      )
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => setRequestFor({ milestoneId, mode: 'new' })}
+        className="text-xs font-semibold text-brand hover:underline rounded focus-ring"
+      >
+        Ask an instructor to check this task
+      </button>
+    )
+  }
 
   const sideTabClass = (tab: 'tasks' | 'guide') =>
     `flex-1 py-2 text-sm font-medium transition border-b-2 -mb-px rounded-t focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/40 ${sidebarTab === tab ? 'text-text-main border-brand' : 'text-text-muted border-transparent hover:text-text-main'}`
@@ -389,8 +485,9 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
             {showOpenSiem && (
               <button
                 type="button"
-                onClick={() => setShowAccessHelp(showAccessHelp === 'siem' ? null : 'siem')}
-                aria-expanded={showAccessHelp === 'siem'}
+                onClick={() => setShowSiemModal(true)}
+                aria-haspopup="dialog"
+                aria-expanded={showSiemModal}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-brand/40 text-brand text-sm font-semibold hover:bg-brand/5 transition focus-ring"
               >
                 Open SIEM
@@ -459,85 +556,29 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
           </div>
         )}
 
-        {showAccessHelp === 'siem' && (
-          <div className="mb-2 p-3 text-sm border border-border rounded-xl bg-secondary">
-            <div className="flex justify-between gap-2 mb-1">
-              <p className="font-semibold text-text-main">SIEM access</p>
-              <button type="button" className="text-text-muted hover:text-text-main text-xs rounded focus-ring" onClick={() => setShowAccessHelp(null)}>Close</button>
-            </div>
-            {labUrls?.siem?.ready && labUrls.siem.url ? (
-              <>
-                <p className="text-text-secondary mb-2">
-                  Open the Wazuh dashboard, then filter to your agents. {labUrls.siem.hint}
-                </p>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => window.open(labUrls.siem.url!, '_blank', 'noopener,noreferrer')}
-                  >
-                    Open SIEM in new tab
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => copyText(labUrls.siem.url!, 'SIEM URL')}>
-                    Copy URL
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                {/* lab_proxy only offers the Wazuh dashboard when
-                    WAZUH_DASHBOARD_PUBLIC_URL is configured; otherwise the
-                    in-portal viewer is the SIEM for this lab — say so. */}
-                <p className="text-text-secondary mb-2">
-                  Your lab&apos;s SIEM alerts are shown here. (The full Wazuh dashboard isn&apos;t linked on this range.)
-                </p>
-                <SiemAlertViewer podId={pod.pod_id} />
-              </>
-            )}
-            <Button size="sm" variant="secondary" onClick={() => copyText(labUrls?.siem?.manager || '10.0.40.10', 'Wazuh IP')}>
-              Copy Wazuh manager IP
-            </Button>
-          </div>
-        )}
-
-        {/* Connection Tabs */}
+        {/* Connection Tabs — only the tabs this scenario actually uses. */}
         <div className="flex bg-secondary border border-border rounded-t-xl overflow-hidden shrink-0">
-          <button
-            type="button"
-            onClick={() => selectTab('kali-cli')}
-            aria-pressed={activeTab === 'kali-cli'}
-            className={termTabClass('kali-cli')}
-          >
-            Kali Linux (CLI)
-          </button>
-          <button
-            type="button"
-            onClick={() => selectTab('meta')}
-            aria-pressed={activeTab === 'meta'}
-            className={termTabClass('meta')}
-          >
-            Target: meta (lab)
-          </button>
-          {showDvwaTab && (
+          {termTabs.map((tab) => (
             <button
+              key={tab}
               type="button"
-              onClick={() => selectTab('dvwa')}
-              aria-pressed={activeTab === 'dvwa'}
-              className={termTabClass('dvwa')}
+              onClick={() => selectTab(tab)}
+              aria-pressed={activeTab === tab}
+              className={termTabClass(tab)}
             >
-              Target: dvwa (CLI)
+              {TAB_LABEL[tab]}
             </button>
-          )}
+          ))}
         </div>
 
         <div className="flex-1 min-h-0 bg-terminal-bg rounded-b-xl overflow-hidden">
-          {activeTab === 'kali-cli' && token && (
+          {activeTab === 'kali-cli' && token && termTabs.includes('kali-cli') && (
             <XtermView podId={pod.pod_id} podType="kali" token={token} />
           )}
-          {activeTab === 'meta' && token && (
+          {activeTab === 'meta' && token && termTabs.includes('meta') && (
             <XtermView podId={pod.pod_id} podType="meta" token={token} />
           )}
-          {activeTab === 'dvwa' && token && (
+          {activeTab === 'dvwa' && token && termTabs.includes('dvwa') && (
             <XtermView podId={pod.pod_id} podType="dvwa" token={token} />
           )}
           {!token && (
@@ -551,7 +592,7 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       {/* Right: Milestone / Guide panel (~40-45% on lg+) */}
       <div
         data-testid="lab-right-panel"
-        className="w-full lg:w-[42%] xl:w-[45%] lg:min-w-[20rem] flex-shrink-0 flex flex-col card-surface p-5"
+        className="w-full lg:w-[44%] xl:w-[46%] lg:min-w-[24rem] lg:max-w-[56rem] flex-shrink-0 flex flex-col card-surface p-5"
       >
         {/* Score */}
         <div className="mb-4 pb-4 border-b border-border">
@@ -655,52 +696,49 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
                     inProgress={m.id === nextMilestoneId}
                   />
                   {!completed.has(m.id) && (
-                    <details className="mt-1.5 px-1">
-                      <summary className="text-xs text-text-muted cursor-pointer select-none hover:text-text-main rounded w-fit focus-ring">
-                        Not detected yet?
-                      </summary>
-                      <button
-                        type="button"
-                        onClick={() => handleVerify(m.id)}
-                        disabled={verifying.has(m.id) || milestonesLoading}
-                        className="mt-1 w-full py-1.5 text-xs font-medium text-text-muted border border-border rounded-lg hover:border-brand/40 hover:text-brand transition disabled:opacity-50 disabled:cursor-not-allowed focus-ring"
+                    isFlagMilestone(scenario.id, m.id) ? (
+                      // Capture-the-flag final task: scored by flag submission only.
+                      <FlagSubmission
+                        scenarioId={scenario.id}
+                        milestoneId={m.id}
+                        onPass={() => setCompleted((prev) => new Set(prev).add(m.id))}
+                      />
+                    ) : lockedReview.has(m.id) ? (
+                      // One-shot Manual Check used without a pass: the task is now
+                      // locked to instructor review (G1). No Manual Check button.
+                      <div
+                        className="mt-1.5 px-2 py-2 rounded-lg border border-amber-200 bg-amber-50 text-xs"
+                        role="status"
                       >
-                        {verifying.has(m.id) ? 'Checking…' : 'Manual Check'}
-                      </button>
-                      {(() => {
-                        const req = latestRequest(m.id)
-                        const status = req?.case?.status
-                        // One open request per task: the backend has no
-                        // duplicate-PENDING guard, so the portal provides it.
-                        if (req && (status === 'PENDING' || !req.case)) {
-                          return (
-                            <p className="mt-2 text-xs text-text-muted">
-                              Instructor review requested — waiting for a reply.
-                            </p>
-                          )
-                        }
-                        if (status === 'RETRY') {
-                          return (
-                            <button
-                              type="button"
-                              onClick={() => setRequestFor({ milestoneId: m.id, mode: 'retry' })}
-                              className="mt-2 text-xs font-semibold text-brand hover:underline rounded focus-ring"
-                            >
-                              Your instructor asked for more detail — send again
-                            </button>
-                          )
-                        }
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => setRequestFor({ milestoneId: m.id, mode: 'new' })}
-                            className="mt-2 text-xs font-semibold text-brand hover:underline rounded focus-ring"
-                          >
-                            Still not detected? Ask an instructor to check
-                          </button>
-                        )
-                      })()}
-                    </details>
+                        <p className="font-semibold text-amber-900">
+                          Automated check couldn&apos;t verify this task
+                        </p>
+                        <p className="mt-0.5 text-amber-800">
+                          Your Manual Check has been used. An instructor needs to review your
+                          work to award the points.
+                        </p>
+                        <div className="mt-1.5">{renderInstructorReview(m.id)}</div>
+                      </div>
+                    ) : (
+                      <details className="mt-1.5 px-1">
+                        <summary className="text-xs text-text-muted cursor-pointer select-none hover:text-text-main rounded w-fit focus-ring">
+                          Not detected yet?
+                        </summary>
+                        <button
+                          type="button"
+                          onClick={() => handleVerify(m.id)}
+                          disabled={verifying.has(m.id) || milestonesLoading}
+                          className="mt-1 w-full py-1.5 text-xs font-medium text-text-muted border border-border rounded-lg hover:border-brand/40 hover:text-brand transition disabled:opacity-50 disabled:cursor-not-allowed focus-ring"
+                        >
+                          {verifying.has(m.id) ? 'Checking…' : 'Manual Check'}
+                        </button>
+                        <p className="mt-1 text-[11px] text-text-muted">
+                          You get one Manual Check. If it can&apos;t verify your work, the task
+                          moves to instructor review.
+                        </p>
+                        <div className="mt-2">{renderInstructorReview(m.id)}</div>
+                      </details>
+                    )
                   )}
                 </div>
             ))}
@@ -800,6 +838,52 @@ export function TerminalView({ pod, scenario, onEnd, expired = false, onRestart,
       </Modal>
 
       <GuideExtraModal scenario={scenario} podId={pod.pod_id} which={guideExtra} onClose={() => setGuideExtra(null)} />
+
+      {/* SIEM dialog (Scenario 3). A real modal: Esc / backdrop / close button all
+          dismiss it, it's size-capped and scrolls on small screens, focus is
+          trapped while open, and closing returns focus to the terminal so
+          copy/paste keeps working. */}
+      <Modal isOpen={showSiemModal} onClose={closeSiem} size="xl">
+        <ModalHeader title="SIEM — Wazuh alerts" />
+        <ModalBody className="space-y-3">
+          <p className="text-text-secondary">
+            Review the detections your activity generated, then find{' '}
+            <strong className="text-text-main">rule 5710</strong> (failed SSH login as a
+            non-existent user) — that is your primary true-positive signal. Note its{' '}
+            <strong className="text-text-main">time</strong>; you will put that exact time
+            into <code className="bg-muted px-1 rounded">incident_timeline.md</code> on the meta tab.
+          </p>
+          {labUrls?.siem?.ready && labUrls.siem.url && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => window.open(labUrls.siem.url!, '_blank', 'noopener,noreferrer')}
+              >
+                Open full Wazuh dashboard
+                <ExternalLink size={14} aria-hidden="true" />
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => copyText(labUrls.siem.url!, 'SIEM URL')}>
+                Copy dashboard URL
+              </Button>
+            </div>
+          )}
+          <SiemAlertViewer podId={pod.pod_id} />
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button size="sm" variant="secondary" onClick={() => copyText(labUrls?.siem?.manager || '10.0.40.10', 'Wazuh IP')}>
+              Copy Wazuh manager IP
+            </Button>
+            <span className="text-xs text-text-muted">
+              Click a row to copy its timestamp + rule id.
+            </span>
+          </div>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="secondary" size="sm" onClick={closeSiem} data-autofocus>
+            Close
+          </Button>
+        </ModalFooter>
+      </Modal>
 
       {requestFor && requestMilestone && (
         <VerificationRequestModal

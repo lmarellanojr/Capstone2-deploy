@@ -88,7 +88,7 @@ def test_flag_whitespace_and_empty_validation():
 def test_generate_all_scenario_flags():
     """All milestones defined for catalog scenarios are generated."""
     flags_s01 = generate_all_scenario_flags("student_alice", 1, secret="test-key")
-    assert set(flags_s01.keys()) == {1, 2, 3, 4}
+    assert set(flags_s01.keys()) == {1, 2, 3, 4, 5}
     for mid, flag in flags_s01.items():
         assert flag.startswith(f"FLAG{{S01_M{mid}_")
 
@@ -159,7 +159,7 @@ def test_plant_scenario_flags_mock_client():
     client.instances.get.side_effect = lambda name: meta_mock if "meta" in name else dvwa_mock
 
     vmids = {"meta": "pod-student_alice-meta", "dvwa": "pod-student_alice-dvwa", "kali": "pod-student_alice-kali"}
-    flags_map = {1: "FLAG_1", 2: "FLAG_2", 3: "FLAG_3", 4: "FLAG_4"}
+    flags_map = {1: "FLAG_1", 2: "FLAG_2", 3: "FLAG_3", 4: "FLAG_4", 5: "FLAG_5"}
 
     # Scenario 01
     plant_scenario_flags(client, "student_alice", 1, vmids, 1, flags_map)
@@ -167,11 +167,12 @@ def test_plant_scenario_flags_mock_client():
     call_args = meta_mock.execute.call_args[0][0]
     assert call_args[0] == "bash"
     assert call_args[1] == "-c"
-    # Verify positional parameter passing ($1, $2, $3, $4)
+    # Verify positional parameter passing ($1..$5, incl. the M5 capture-the-flag)
     assert "FLAG_1" in call_args
     assert "FLAG_2" in call_args
     assert "FLAG_3" in call_args
     assert "FLAG_4" in call_args
+    assert "FLAG_5" in call_args
 
     # Scenario 06
     meta_mock.reset_mock()

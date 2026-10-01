@@ -49,6 +49,18 @@ DEFAULT_RUBRICS: List[Dict[str, Any]] = [
         "mitre_technique": "T1190",
         "nist_phase": "Exploitation",
     },
+    {
+        # Pure-flag final task: confirm the shell identity (whoami) and submit the
+        # flag planted in the tomcat user's home. Scores on the flag alone.
+        "scenario_id": 1,
+        "milestone_id": 5,
+        "name": "Capture the Flag (whoami)",
+        "criteria": "From the tomcat shell, confirm your identity with whoami and submit the flag from the tomcat user's home directory.",
+        "expected_flag": "FLAG{S01_M5_C3D5E7A9B1F2}",
+        "points": 50,
+        "mitre_technique": "T1083",
+        "nist_phase": "Post-Exploitation",
+    },
     # Scenario 06: SQL Injection
     {
         "scenario_id": 6,
@@ -79,6 +91,18 @@ DEFAULT_RUBRICS: List[Dict[str, Any]] = [
         "points": 100,
         "mitre_technique": "T1190",
         "nist_phase": "Credential Harvesting",
+    },
+    {
+        # Pure-flag final task: submit the flag captured from the database via SQLi.
+        # (Milestone 4, Reflected XSS, stays browser-scored and needs no rubric.)
+        "scenario_id": 6,
+        "milestone_id": 5,
+        "name": "Capture the Flag",
+        "criteria": "Use SQL injection to read the flag stored in the application database and submit it.",
+        "expected_flag": "FLAG{S06_M5_4C6E8A0B2D4F}",
+        "points": 50,
+        "mitre_technique": "T1190",
+        "nist_phase": "Data Access",
     },
     # Scenario 09: SIEM Alert Triage
     {

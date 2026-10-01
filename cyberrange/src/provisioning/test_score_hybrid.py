@@ -184,9 +184,9 @@ def test_migration_v5_creates_table_and_indexes(hybrid_db: str):
     indexes = {r["name"] for r in conn.execute("PRAGMA index_list(review_cases)").fetchall()}
     assert "idx_conflict_cases_lookup" in indexes
 
-    # Verify seed count (13 catalog milestones across 4 scenarios)
+    # Verify seed count: 13 original + 2 pure-flag M5 rubrics = 15
     count = conn.execute("SELECT COUNT(*) FROM milestone_rubrics").fetchone()[0]
-    assert count == 13
+    assert count == 15
     conn.close()
 
 
@@ -196,7 +196,7 @@ def test_migration_v5_is_idempotent(hybrid_db: str):
     assert applied_ver >= 5
     conn = sqlite3.connect(hybrid_db)
     count = conn.execute("SELECT COUNT(*) FROM milestone_rubrics").fetchone()[0]
-    assert count == 13
+    assert count == 15
     conn.close()
 
 
@@ -620,7 +620,7 @@ def test_rubrics_endpoint_strips_expected_flag(client, hybrid_db: str):
     assert res.status_code == 200
     data = res.json()
     assert "rubrics" in data
-    assert len(data["rubrics"]) == 4
+    assert len(data["rubrics"]) == 5
 
     for r in data["rubrics"]:
         assert "expected_flag" not in r
@@ -695,8 +695,9 @@ def test_input_boundary_validations(client, hybrid_db: str):
     res = client.post("/progress/1/flag", json={"milestone_id": 99, "flag": "FLAG{TEST}"})
     assert res.status_code == 422
 
-    # Milestone id exceeding scenario milestone count (e.g. Milestone 5 for Scenario 1)
-    res = client.post("/progress/1/flag", json={"milestone_id": 5, "flag": "FLAG{TEST}"})
+    # Milestone id with no rubric (e.g. Milestone 6 for Scenario 1) -> 400.
+    # Milestone 5 is now a real pure-flag capture task, so it is NOT out of range.
+    res = client.post("/progress/1/flag", json={"milestone_id": 6, "flag": "FLAG{TEST}"})
     assert res.status_code == 400
 
     # Empty flag
@@ -1278,3 +1279,78 @@ def test_empty_or_whitespace_flag_rejected(client, hybrid_db: str):
     )
     assert res.status_code == 400
     assert "Flag cannot be empty" in res.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Pure-flag "find the flag" final tasks (agreed design: flag alone scores)
+# ---------------------------------------------------------------------------
+
+def test_pure_flag_valid_flag_alone_passes(client, hybrid_db: str):
+    """(1,5) pure-flag: a valid flag scores with NO container state and NO review."""
+    student = "student_pureflag"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=105, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=5, pod_id=105)
+
+    res = client.post("/progress/1/flag", json={"milestone_id": 5, "flag": flag})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "PASS"
+    assert data["outcome"] == "PASS"
+    assert data["review_id"] is None
+
+    conn = sqlite3.connect(hybrid_db)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM milestone_verification "
+        "WHERE student_id=? AND scenario_id=1 AND milestone_id=5 AND status='PASS'",
+        (student,),
+    ).fetchone()[0]
+    conn.close()
+    assert n == 1
+
+
+def test_pure_flag_wrong_flag_no_score_no_review(client, hybrid_db: str):
+    """(1,5) pure-flag: a wrong flag never scores and never opens a review case."""
+    student = "student_pureflag2"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=106, status="ACTIVE")
+    plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=5, pod_id=106)
+
+    res = client.post("/progress/1/flag", json={"milestone_id": 5, "flag": "FLAG{WRONG}"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "INCOMPLETE"
+
+    conn = sqlite3.connect(hybrid_db)
+    passes = conn.execute(
+        "SELECT COUNT(*) FROM milestone_verification "
+        "WHERE student_id=? AND scenario_id=1 AND milestone_id=5 AND status='PASS'",
+        (student,),
+    ).fetchone()[0]
+    reviews = conn.execute(
+        "SELECT COUNT(*) FROM review_cases WHERE student_id=? AND scenario_id=1 AND milestone_id=5",
+        (student,),
+    ).fetchone()[0]
+    conn.close()
+    assert passes == 0
+    assert reviews == 0
+
+
+def test_pure_flag_no_duplicate_scoring(client, hybrid_db: str):
+    """(1,5) pure-flag: repeated correct submissions never double-count."""
+    student = "student_pureflag3"
+    set_caller(app, student, "student")
+    insert_test_pod(hybrid_db, student, scenario_id=1, pod_id=107, status="ACTIVE")
+    flag = plant_dynamic_flag(hybrid_db, student, scenario_id=1, milestone_id=5, pod_id=107)
+
+    for _ in range(3):
+        res = client.post("/progress/1/flag", json={"milestone_id": 5, "flag": flag})
+        assert res.json()["status"] == "PASS"
+
+    conn = sqlite3.connect(hybrid_db)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM milestone_verification "
+        "WHERE student_id=? AND scenario_id=1 AND milestone_id=5 AND status='PASS'",
+        (student,),
+    ).fetchone()[0]
+    conn.close()
+    assert n == 1

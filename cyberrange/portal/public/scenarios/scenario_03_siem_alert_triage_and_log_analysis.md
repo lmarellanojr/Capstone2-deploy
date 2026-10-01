@@ -37,7 +37,9 @@ Task | Milestone | What you produce (on meta)
   
 ## 2. How scoring works
 
-Unlike the attack scenarios, there's nothing to “exploit.” You demonstrate analyst skill by producing three **artifact files on meta**. The checker reads those files; then you click **Manual Check** for each milestone.
+Unlike the attack scenarios, there's nothing to “exploit.” You demonstrate analyst skill by producing three **artifact files on meta**. The checker reads those files automatically.
+
+**About Manual Check:** only use it if you finished a task and it was not detected automatically. You get **one** Manual Check per milestone — if it still can't verify your work, the task moves to **instructor review** (no more Manual Checks, and no points until an instructor approves). So make sure your files are correct (especially a real rule-5710 time on Milestone 2) *before* clicking it.
 
 Templates are a starting point only If the SIEM table is empty or the manager is busy, you can still finish, but **copying a template without editing it does not pass**. Replace placeholders with times and rule IDs from **your** run (SIEM table or meta `auth.log`). Getting real Wazuh values is both better practice and what Manual Check looks for on Milestone 2. 
 
@@ -65,9 +67,18 @@ nmap -sn $TARGET_META
 nmap -F $TARGET_META
 ```
 
-Open **SIEM** and wait ~1–2 minutes. Look for rule **5710** (failed SSH), that's your primary signal. If it's missing, re-run the SSH line and wait.
+> **Now open the SIEM.** Click **Open SIEM** in the lab header (it opens the Wazuh
+> alert dialog). This is the point where you need it — don't skip it. Inside the SIEM:
+> 1. Tick **Rule 5710 only** (or filter the Rule column to `5710`) to cut through the noise.
+> 2. Wait ~1–2 minutes and find the **rule 5710** row — "sshd: attempt to login using a
+>    non-existent user." That is your primary **true positive**. If it's missing, re-run
+>    the SSH line above and wait.
+> 3. **Note its time** (click the row to copy its timestamp + rule id). You'll need this
+>    exact time for the timeline in Task 2, and the checker compares what you write against
+>    the real 5710 event.
 
 What's signal vs noise here **5710** (failed SSH) and **510** (rootcheck) are the interesting rows. CIS/SCA rows (**19007, 19008, 19004**) are routine config scans, noise. `nmap` usually creates _no_ Wazuh row at all. 
+
 
 
 ### Task 1: open a triage record
@@ -118,7 +129,17 @@ cat > /home/msfadmin/incident_timeline.md << 'EOF'
 EOF
 ```
 
-Replace every `HH:MM` with a real time from the SIEM table (or `auth.log`), and delete lines for events you did not see. To pass, at least one line needs a **rule ID** and a **real clock time** (e.g. `rule: 5710, time: 14:32`). **The template as written does not pass**, leaving `HH:MM` in the file fails Manual Check.
+> **⚠️ `HH:MM` is a PLACEHOLDER — do not leave it in the file.** It is not a
+> command and not a real value; it literally means "put the hours:minutes here."
+> - **What it stands for:** the clock time of the event, in 24-hour `HH:MM` form (e.g. `14:32`).
+> - **Where to get the real time:** the **rule 5710** row in the SIEM (click it to copy
+>   its timestamp), or run `sudo grep "Invalid user" /var/log/auth.log` on meta.
+> - **You must replace every `HH:MM` before saving.** The checker now compares your time
+>   against the **real 5710 event time** — a left-in `HH:MM`, a made-up time (like `00:00`),
+>   or an empty time all **fail**. A correct time (within a few minutes of the real event)
+>   on a line that also has a rule ID is what passes, e.g. `rule: 5710, time: 14:32`.
+
+Delete lines for events you did not see.
 
 **Done when:** `incident_timeline.md` exists on meta with at least one classified, time-ordered event that includes a rule ID and a real time (`HH:MM` fully replaced).
 
@@ -181,7 +202,7 @@ Problem | Fix
 --- | ---  
 Manual Check FAIL | Your files are on **Kali**, re-create them on the **meta** tab. Scoring runs on meta.  
 SIEM table empty / no 5710 | Re-run the Task 0 SSH line and wait 1–2 min (auto-refreshes every 15s). If it says “No alerts match,” click **Clear filters**. If still empty, take times from `sudo grep "Invalid user" /var/log/auth.log` on meta. Unedited templates do **not** pass.  
-Milestone 2 FAIL with a timeline file | At least one line needs a rule ID and a real time (`rule: 5710, time: 14:32`); leaving `HH:MM` means the template was not filled in.  
+Milestone 2 FAIL with a timeline file | The time must match the **real rule-5710 event** (within a few minutes). A left-in `HH:MM`, a made-up time, or an empty time all fail. Copy the 5710 row's time from the SIEM, or use `sudo grep "Invalid user" /var/log/auth.log` on meta.  
 Lots of 19007 / 19008 / 19004 rows | Those are CIS/SCA config scans, classify them as **noise**. Focus on 5710 (failed SSH) or 510 (rootcheck).  
 nmap made no alert | Correct, `nmap -sn`/`-F` usually creates no Wazuh row. It's not a primary signal.  
 Shared SIEM, many agents | Only trust rows for **your** `pod-<you>-meta` agent. Manager is `10.0.40.10`.  

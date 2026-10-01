@@ -21,8 +21,10 @@ logger = logging.getLogger("provision_api")
 DEFAULT_COHORT_SECRET = "cyberrange-default-cohort-secret-2026"
 
 SCENARIO_MILESTONES: Dict[int, List[int]] = {
-    1: [1, 2, 3, 4],
-    6: [1, 2, 3, 4],
+    # Milestone 5 on scenarios 1 and 6 is the pure-flag "capture the flag" final
+    # task (see hybrid_scoring.PURE_FLAG_MILESTONES); its flag is planted below.
+    1: [1, 2, 3, 4, 5],
+    6: [1, 2, 3, 4, 5],
     9: [1, 2, 3],
     11: [1, 2, 3],
 }
@@ -181,6 +183,7 @@ def plant_scenario_flags(
             m2_flag = flags_map.get(2, "")
             m3_flag = flags_map.get(3, "")
             m4_flag = flags_map.get(4, "")
+            m5_flag = flags_map.get(5, "")
 
             s1_script = """
 set -euo pipefail
@@ -209,8 +212,15 @@ printf '%s\\n' "$4" > /home/tomcat/flag.txt 2>/dev/null || true
 printf '%s\\n' "$4" > /tmp/flag_m4.txt 2>/dev/null || true
 chmod 644 /home/tomcat/flag.txt /tmp/flag_m4.txt 2>/dev/null || true
 chown -R tomcat:tomcat /home/tomcat 2>/dev/null || true
+
+# M5: Capture-the-flag file in the tomcat user's home, readable from the shell
+# the student lands in after M4. `whoami` confirms the tomcat account; the flag
+# itself is submitted in the portal (pure-flag scoring).
+printf 'Capture the Flag (run whoami to confirm you are tomcat): %s\\n' "$5" > /home/tomcat/whoami_flag.txt 2>/dev/null || true
+chmod 644 /home/tomcat/whoami_flag.txt 2>/dev/null || true
+chown tomcat:tomcat /home/tomcat/whoami_flag.txt 2>/dev/null || true
 """
-            _exec_script(meta, s1_script, m1_flag, m2_flag, m3_flag, m4_flag)
+            _exec_script(meta, s1_script, m1_flag, m2_flag, m3_flag, m4_flag, m5_flag)
 
         elif s_id == 6:
             # Scenario 06: SQL Injection & Reflected XSS (Target: dvwa)
@@ -219,6 +229,7 @@ chown -R tomcat:tomcat /home/tomcat 2>/dev/null || true
             m2_flag = flags_map.get(2, "")
             m3_flag = flags_map.get(3, "")
             m4_flag = flags_map.get(4, "")
+            m5_flag = flags_map.get(5, "")
 
             s6_script = """
 set -euo pipefail
@@ -239,6 +250,14 @@ if [ -n "$DB" ]; then
     ON DUPLICATE KEY UPDATE flag='$2';
   " 2>/dev/null || true
 
+  # M5: Capture-the-flag row in milestone_flags, read via SQL injection and
+  # submitted in the portal (pure-flag scoring).
+  docker exec -i "$DB" mysql -udvwa -pp@ssw0rd dvwa -e "
+    CREATE TABLE IF NOT EXISTS milestone_flags (id INT PRIMARY KEY, flag VARCHAR(255));
+    INSERT INTO milestone_flags (id, flag) VALUES (5, '$5')
+    ON DUPLICATE KEY UPDATE flag='$5';
+  " 2>/dev/null || true
+
   # M3: Admin flag user & Kali artifact file
   docker exec -i "$DB" mysql -udvwa -pp@ssw0rd dvwa -e "
     INSERT INTO users (user_id, first_name, last_name, user, password, avatar)
@@ -256,7 +275,7 @@ if [ -n "$WEB" ]; then
   docker exec "$WEB" sh -c "echo '<!-- XSS Challenge Flag: $4 -->' >> /var/www/html/dvwa/vulnerabilities/xss_r/index.php" 2>/dev/null || true
 fi
 """
-            _exec_script(dvwa, s6_script, m1_flag, m2_flag, m3_flag, m4_flag)
+            _exec_script(dvwa, s6_script, m1_flag, m2_flag, m3_flag, m4_flag, m5_flag)
 
         elif s_id == 9:
             # Scenario 09: SIEM Alert Triage (Target: meta)

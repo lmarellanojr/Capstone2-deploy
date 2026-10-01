@@ -1046,17 +1046,25 @@ class TestScoringChecksDirectBashExecution:
         finally:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 
+    # A real rule-5710 SSH event at 14:32, used to validate the claimed time.
+    _S09_AUTHLOG_1432 = "Oct  1 14:32:05 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n"
+
     def test_direct_bash_scenario_09_m2_artifact_pass(self):
-        """Scenario 09 M2: incident_timeline.md with a rule ID and real time produces PASS."""
+        """Scenario 09 M2: a rule ID + a time that matches a real 5710 event -> PASS."""
         import subprocess
 
         setup_cmd = (
             'mkdir -p /tmp && printf "# Incident Timeline\\n- 14:32 rule 5710 triggered (true_positive)\\n- phase 1 complete\\n" > /tmp/incident_timeline.md'
         )
-        cleanup_cmd = 'rm -f /tmp/incident_timeline.md'
+        authlog_cmd = "mkdir -p /tmp && cat > /tmp/s9_authlog"
+        cleanup_cmd = 'rm -f /tmp/incident_timeline.md /tmp/s9_authlog'
         try:
             subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
-            rc, token, stderr = self._run_script(9, 2)
+            subprocess.run(
+                [_BASH_EXE, "-c", authlog_cmd],
+                input=self._S09_AUTHLOG_1432.encode("utf-8"), check=True,
+            )
+            rc, token, stderr = self._run_script(9, 2, env={"S9_AUTHLOG": "/tmp/s9_authlog"})
             assert rc == 0
             assert token == "PASS"
         finally:
@@ -1077,22 +1085,29 @@ class TestScoringChecksDirectBashExecution:
         start = text.index(f"cat > {target} << 'EOF'\n") + len(f"cat > {target} << 'EOF'\n")
         return text[start:text.index("\nEOF", start)] + "\n"
 
-    def _score_s09_m2(self, files: Dict[str, str]) -> str:
+    def _score_s09_m2(self, files: Dict[str, str], authlog: str | None = None) -> str:
         # Write through bash, not pathlib: on Windows, Python's "/tmp" is C:\tmp
         # while Git Bash (which runs the script) has its own /tmp.
         import subprocess
+        env = None
         try:
             for name, body in files.items():
                 subprocess.run(
                     [_BASH_EXE, "-c", f"mkdir -p /tmp && cat > '/tmp/{name}'"],
                     input=body.encode("utf-8"), check=True,
                 )
-            rc, token, stderr = self._run_script(9, 2)
+            if authlog is not None:
+                subprocess.run(
+                    [_BASH_EXE, "-c", "mkdir -p /tmp && cat > /tmp/s9_authlog"],
+                    input=authlog.encode("utf-8"), check=True,
+                )
+                env = {"S9_AUTHLOG": "/tmp/s9_authlog"}
+            rc, token, stderr = self._run_script(9, 2, env=env)
             assert rc == 0, stderr
             return token
         finally:
             rm = " ".join(f"'/tmp/{name}'" for name in files)
-            subprocess.run([_BASH_EXE, "-c", f"rm -f {rm}"])
+            subprocess.run([_BASH_EXE, "-c", f"rm -f {rm} /tmp/s9_authlog"])
 
     def test_direct_bash_scenario_09_m2_guide_timeline_template_fails(self):
         template = self._guide_heredoc("/home/msfadmin/incident_timeline.md")
@@ -1101,7 +1116,16 @@ class TestScoringChecksDirectBashExecution:
 
     def test_direct_bash_scenario_09_m2_filled_in_guide_timeline_passes(self):
         filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("HH:MM", "14:32")
-        assert self._score_s09_m2({"incident_timeline.md": filled}) == "PASS"
+        assert self._score_s09_m2(
+            {"incident_timeline.md": filled}, authlog=self._S09_AUTHLOG_1432
+        ) == "PASS"
+
+    def test_direct_bash_scenario_09_m2_wrong_time_fails(self):
+        """A well-formed but incorrect time (no matching 5710 event) must FAIL."""
+        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("HH:MM", "00:00")
+        assert self._score_s09_m2(
+            {"incident_timeline.md": filled}, authlog=self._S09_AUTHLOG_1432
+        ) == "FAIL"
 
     def test_direct_bash_scenario_09_m2_timeline_without_time_fails(self):
         body = "# Incident timeline\n1. phase: initial_access_attempt - rule: 5710 - true_positive\n"

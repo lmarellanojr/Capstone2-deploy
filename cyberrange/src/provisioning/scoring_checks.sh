@@ -606,6 +606,50 @@ check_scenario_8() {
     esac
 }
 
+# Scenario 9 M2 helper: is a time claimed in the timeline a REAL rule-5710 SSH
+# event (sshd "Invalid user" / failed login as a non-existent user) from
+# auth.log, within +/- $2 minutes, on a line that also carries a rule id?
+#
+# SCORE-FIX (Scenario 3 / scenario_id 9, Task 2 "True Positive Classification"):
+# the old check passed on ANY well-formed HH:MM that was not the literal
+# placeholder, so a fabricated/incorrect time (e.g. 00:00) scored. The claimed
+# time must now match a real detected event, so wrong/empty/malformed times fail.
+# Runs as root in-container (lxc exec), so /var/log/auth.log is readable.
+# Returns 0 on a match, 1 otherwise.
+_s9_timeline_time_is_real() {
+    local timeline="$1" tol="${2:-5}"
+    # S9_AUTHLOG overrides the source log (used by tests); production probes the
+    # real sshd log that the Wazuh agent on meta also reads for rule 5710.
+    local authlog="${S9_AUTHLOG:-}" f
+    if [[ -z "$authlog" ]]; then
+        for f in /var/log/auth.log /var/log/secure; do
+            if [[ -f "$f" ]]; then authlog="$f"; break; fi
+        done
+    fi
+    [[ -z "$authlog" || ! -f "$authlog" ]] && return 1
+
+    # Real event minutes-of-day (0..1439) from invalid-user SSH lines (rule 5710).
+    local real_minutes
+    real_minutes=$(grep -hiE "invalid user|failed password for invalid user" "$authlog" 2>/dev/null \
+        | grep -oE "[0-9]{2}:[0-9]{2}:[0-9]{2}" \
+        | awk -F: '{print ($1*60)+$2}' | sort -un)
+    [[ -z "$real_minutes" ]] && return 1
+
+    # Claimed times: lines carrying a rule id AND an HH:MM (placeholder excluded).
+    local claimed_minutes
+    claimed_minutes=$(grep -iE "rule[^0-9]{0,15}[0-9]{3,6}" "$timeline" 2>/dev/null \
+        | grep -oE "[0-9]{1,2}:[0-9]{2}" | grep -v "HH:MM" \
+        | awk -F: '{h=$1+0; m=$2+0; if (h<24 && m<60) print (h*60)+m}')
+    [[ -z "$claimed_minutes" ]] && return 1
+
+    # PASS if any claimed minute is within +/- tol of any real event minute.
+    awk -v tol="$tol" '
+        NR==FNR { real[$1]=1; next }
+        { for (r in real) { d=$1-r; if (d<0) d=-d; if (d<=tol) { found=1; exit } } }
+        END { exit(found?0:1) }
+    ' <(printf "%s\n" $real_minutes) <(printf "%s\n" $claimed_minutes)
+}
+
 # Scenario 9: SIEM Alert Triage (Wazuh)
 # Scenario 9: SIEM Alert Triage — student writes artifacts on meta (portal meta tab).
 # SCENARIO_TARGETS[9]=meta. Accept /tmp or /home/msfadmin paths.
@@ -629,11 +673,11 @@ check_scenario_9() {
         2)
             # M2: Timeline / true-positive classification.
             # The guide's template already has headings, "rule" and "phase" on
-            # every line, so structure alone can't earn the points. Need one
-            # line with a rule ID and a real clock time (HH:MM still there = unedited).
-            if [[ -n "$timeline" ]] \
-                && grep -iE "rule[^0-9]{0,15}[0-9]{3,6}" "$timeline" 2>/dev/null \
-                    | grep -E "[0-9]{1,2}:[0-9]{2}" | grep -v "HH:MM" >/dev/null; then
+            # every line, so structure alone can't earn the points. One timeline
+            # line must carry a rule ID AND a clock time that matches a REAL
+            # rule-5710 SSH event from auth.log within +/-5 minutes -- a
+            # fabricated/incorrect or placeholder time no longer passes.
+            if [[ -n "$timeline" ]] && _s9_timeline_time_is_real "$timeline" 5; then
                 echo "PASS"
                 return
             fi

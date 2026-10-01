@@ -116,7 +116,7 @@ describe("TerminalView (LAB-LAYOUT-02)", () => {
     const panel = screen.getByTestId("lab-right-panel")
     const classes = panel.className.split(/\s+/)
     expect(classes).toEqual(
-      expect.arrayContaining(["w-full", "lg:w-[42%]", "xl:w-[45%]", "lg:min-w-[20rem]", "flex-shrink-0"])
+      expect.arrayContaining(["w-full", "lg:w-[44%]", "xl:w-[46%]", "lg:min-w-[24rem]", "flex-shrink-0"])
     )
     expect(classes).not.toContain("w-96")
 

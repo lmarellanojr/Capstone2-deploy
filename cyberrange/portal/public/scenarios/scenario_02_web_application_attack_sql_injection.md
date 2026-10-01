@@ -4,7 +4,7 @@
 
 A guided, beginner walkthrough, done entirely in your **browser**. The portal watches DVWA and scores each milestone automatically, so there's no Kali, no sqlmap, and no copying cookies. Read each _“What you're doing & why”_ box as you go.
 
-Medium 45–60 min · MITRE T1190 · Attacker (browser) · 4 milestones · 300 pts
+Medium 45–60 min · MITRE T1190 · Attacker (browser) · 5 milestones · 350 pts
 
 ## 0. Before you start: the big picture
 
@@ -53,9 +53,15 @@ So the result has to actually appear The portal scores what it _sees in DVWA's r
   3. Log in with `admin` / `password`. You should land on the DVWA menu (if you see _setup.php / Create Database_ , tell your instructor).
   4. Go to **DVWA Security** , set it to **Low** , and Submit.
 
-## 4. Do the 4 milestones
+## 4. Do the milestones
 
-For each one: open the module, paste the payload, submit, and watch the milestone tick. That's it.
+**This scenario has no terminal — you work entirely in the DVWA browser tab.**
+Here's where each kind of step happens:
+
+- **In DVWA (browser tab):** open the module, type the payload into the field, click **Submit**, and read the result on the page.
+- **In the portal (this tab):** watch the **Tasks** panel tick as each milestone scores automatically, and — for the final task — paste the flag you found.
+
+For Tasks 1–4: open the module, paste the payload, submit, and watch the milestone tick. That's it.
 
 
 ### Task 1: prove the field is injectable
@@ -64,19 +70,15 @@ For each one: open the module, paste the payload, submit, and watch the mileston
 
 > **What you're doing & why:** You slip a single quote into the ID field. Either you get a database error (proof your input reached the SQL) or you flip the logic to always-true and get every row back. The portal scores either outcome. 
 
-#### Open SQL Injection → in the User ID box, submit **either one** of these (you only need one):
+**In DVWA:** open **SQL Injection**, and in the **User ID** box type this payload, then click **Submit**:
 
-Option A, flip the logic to always-true so every row comes back:
 ```bash
 1' OR '1'='1
 ```
 
-Option B, just a lone quote to force a database error:
-```bash
-1'
-```
+This flips the query's logic to always-true, so every user row comes back — proof your input reached the SQL query.
 
-**Done when:** several user rows appear (or a SQL syntax error shows) and **Injection Point** ticks.
+**Done when:** several user rows appear in DVWA and **Injection Point** ticks in the portal's Tasks panel.
 
 What you can do with this You've proven the field trusts your input, that's the foothold everything else builds on. The same hole now lets you read the _whole_ database, not just user 1. The names you see (admin, Gordon Brown, …) are the app's user records; in the next tasks you'll pull the sensitive columns hiding behind them. 
 
@@ -134,7 +136,34 @@ What you can do with this Those are MD5 password hashes, **crack them offline** 
 
 What you can do with this You can run _any_ JavaScript in whoever opens the page. In the real world an attacker wraps this in a link and sends it to a victim, opening it could steal their session cookie, log keystrokes, redirect them to a fake login, or act as them on the site. (Here the sandbox blocks cookie theft, try `<script>alert(document.cookie)</script>` in the playground and watch it come up empty.) 
 
-**Scenario complete** when all 4 milestones pass and your total is **300 points** (50 + 75 + 100 + 75). 
+### Task 5: capture the flag
+
+**Goal:** use SQL injection to read a secret **flag** stored in the database, then
+submit it in the portal.
+
+> **What you're doing & why:** The same UNION technique from Tasks 2–3, now aimed
+> at a table that holds a capture-the-flag value planted just for you. Reading it
+> proves you can pull arbitrary data out of the database; submitting it is how
+> this task is scored.
+
+**In DVWA:** open **SQL Injection**, and in the **User ID** box submit:
+```bash
+1' UNION SELECT null, flag FROM milestone_flags -- -
+```
+
+This shows the flag (a value in the form `FLAG{...}`) in the **Surname** cell.
+
+**In the portal:** open the **Tasks** panel, find **Capture the Flag**, paste the
+`FLAG{...}` value into **Submit the flag you found**, and click **Submit**.
+
+- **Correct flag → the task completes and points are awarded.**
+- **Wrong flag → no points, with a message to check it and try again.** The flag is
+  unique to you, so copy it exactly (including `FLAG{` and `}`).
+
+**How it's scored:** by the flag you submit — there is no automatic detection for
+this task.
+
+**Scenario complete** when all 5 milestones pass and your total is **350 points** (50 + 75 + 100 + 75 + 50). 
 
 ---
 ## 5. Payload playground (explore, not required for scoring)

@@ -157,6 +157,60 @@ def test_s9_m3_short_report_fails(tmp_path):
         _bash_rm(f)
 
 
+# ── Scenario 3 (id 9): M2 timeline must match a REAL rule-5710 event time ────
+# SCORE-FIX: the claimed HH:MM is validated against auth.log, so a fabricated or
+# placeholder time fails while a time near a real "Invalid user" event passes.
+
+def _timeline(content: str) -> str:
+    return _bash_tmp_file("incident_timeline.md", content)
+
+
+def _authlog(tmp_path: Path, content: str) -> dict:
+    p = tmp_path / f"auth-{uuid.uuid4().hex}.log"
+    _write(p, content)
+    return {"S9_AUTHLOG": p.as_posix()}
+
+
+# One real failed/invalid-user SSH event at 14:32 (Wazuh rule 5710).
+_AUTHLOG_5710 = "Oct  1 14:32:05 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n"
+
+
+def test_s9_m2_correct_time_passes(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 14:33, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_wrong_time_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 00:00, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_placeholder_time_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: HH:MM, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_correct_time_but_no_real_event_fails(tmp_path):
+    env = _authlog(tmp_path, "Oct  1 09:00:00 meta sshd[1]: Accepted password for msfadmin\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 14:33, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
 # ── Scenario 4 (id 11): M2 remediation state, M3 exploit path closed ────────
 
 def _users(tmp_path: Path, xml: str) -> dict:
