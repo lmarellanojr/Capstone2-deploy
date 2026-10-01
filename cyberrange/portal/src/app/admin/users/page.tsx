@@ -10,6 +10,7 @@ import { ResetPasswordModal } from "@/components/admin/ResetPasswordModal";
 import { adminNavItems } from "@/lib/navigation";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { useToastContext } from "@/context/ToastContext";
+import { formatSqliteDate } from "@/lib/sqliteTime";
 import { APP_ROLES } from "@/lib/adminUserValidation";
 import type { AdminUser, AppRole } from "@/lib/api";
 
@@ -216,7 +217,7 @@ export default function AdminUsersPage() {
                         </Badge>
                       </td>
                       <td className="py-3 px-4 text-text-muted whitespace-nowrap">
-                        {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                        {formatSqliteDate(u.created_at)}
                       </td>
                       <td className="py-3 px-4 text-right whitespace-nowrap">
                         {isSelf ? (

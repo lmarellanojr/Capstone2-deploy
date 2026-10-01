@@ -50,6 +50,35 @@ export function createSession(key: string, wsUrl: string): TermSession {
   const ws = new WebSocket(wsUrl);
   const session: TermSession = { key, term, fit, ws, host };
 
+  // COPY FIX (SIEM-breaks-terminal bug): copy the xterm selection explicitly so
+  // it works regardless of focus history. TerminalView re-focuses the terminal
+  // when an overlay (SIEM) closes, which is what makes paste work again.
+  //   - Ctrl/Cmd+Shift+C : copy selection
+  //   - Ctrl/Cmd+C       : copy selection if one exists, else pass through (SIGINT)
+  // Paste is deliberately NOT intercepted: the browser's native paste event
+  // already feeds xterm. Handling Ctrl/Cmd+V here as well sent every paste
+  // twice ("run" arrived as "runrun").
+  const writeClip = (text: string) => {
+    try { navigator.clipboard?.writeText(text); } catch { /* clipboard blocked */ }
+  };
+  term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+    if (e.type !== 'keydown') return true;
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod) return true;
+    const key = e.key.toLowerCase();
+    if (key === 'c') {
+      const sel = term.getSelection();
+      if (e.shiftKey) {
+        if (sel) writeClip(sel);
+        return false; // Ctrl+Shift+C never reaches the shell
+      }
+      // Plain Ctrl+C: copy only when text is selected, else let it be SIGINT.
+      if (sel && sel.length > 0) { writeClip(sel); term.clearSelection(); return false; }
+      return true;
+    }
+    return true;
+  });
+
   ws.onopen = () => {
     term.writeln('\x1b[32m[Client] Connecting to SSH proxy...\x1b[0m');
     setTimeout(() => {
@@ -84,6 +113,15 @@ export function createSession(key: string, wsUrl: string): TermSession {
 
   sessions.set(key, session);
   return session;
+}
+
+/** Focus a live terminal session by key (no-op if it isn't open). Used to return
+ *  keyboard focus to the shell after an overlay (SIEM modal, info modal) closes,
+ *  so the terminal stays usable and paste works without a manual click. */
+export function focusSession(key: string): void {
+  const s = sessions.get(key);
+  if (!s) return;
+  try { s.term.focus(); } catch { /* not attached yet */ }
 }
 
 export function refit(session: TermSession): void {

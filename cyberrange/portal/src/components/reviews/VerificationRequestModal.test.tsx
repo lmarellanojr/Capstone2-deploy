@@ -37,7 +37,7 @@ it("previews picked screenshots and sends them with the request", async () => {
   expect(screen.getByAltText(/Screenshot 1: login\.png/)).toBeInTheDocument()
   expect(screen.getByAltText(/Screenshot 2: siem\.png/)).toBeInTheDocument()
 
-  fireEvent.change(screen.getByLabelText(/What did you do/), {
+  fireEvent.change(screen.getByLabelText(/What command did you use/), {
     target: { value: "I wrote alert_triage.json on meta but it did not score." },
   })
   await act(async () => {

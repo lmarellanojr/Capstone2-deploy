@@ -1981,3 +1981,196 @@ def test_resubmit_request_evidence_data_rejects_scalar_types():
     assert res_bool.status_code == 422
 
 
+
+
+def test_resolve_approve_written_report_syncs_student_progress():
+    """SCORE-SYNC: approving a student-submitted WRITTEN_REPORT milestone must
+    write a milestone_verification PASS row so GET /progress (the student score
+    source) reflects it. Before the fix only SCORING_CONFLICT cases did."""
+    client = TestClient(app)
+
+    # Student submits a milestone-scoped verification request.
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_sync1")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "milestone_id": 3, "report_text": "I ran nmap -sV; please verify."},
+    )
+    assert res_sub.status_code == 200
+    rev_id = res_sub.json()["review_id"]
+
+    # Before approval: milestone 3 is not in the student's progress.
+    progress_before = client.get("/progress").json()["milestones"]
+    assert not any(
+        m["scenario_id"] in (1, "1") and m["milestone_id"] == 3 and m["status"] == "PASS"
+        for m in progress_before
+    )
+
+    # Instructor approves.
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    res_res = client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED", "feedback": "Confirmed from your evidence."},
+        headers=headers,
+    )
+    assert res_res.status_code == 200
+
+    # After approval: the student's own /progress now shows milestone 3 PASS.
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_sync1")
+    progress_after = client.get("/progress").json()["milestones"]
+    passed = [
+        m for m in progress_after
+        if m["scenario_id"] in (1, "1") and m["milestone_id"] == 3 and m["status"] == "PASS"
+    ]
+    assert len(passed) == 1
+
+
+def test_resolve_approve_does_not_double_count_existing_pass():
+    """If a milestone already has a PASS row (auto-scored), approving a review for
+    it must not insert a duplicate PASS (no double-counting)."""
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_sync2")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 6, "milestone_id": 1, "report_text": "Please verify injection point."},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    # Seed an existing auto-scored PASS for the same milestone.
+    conn = db.get_db_connection()
+    with conn:
+        conn.execute(
+            "INSERT INTO milestone_verification "
+            "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
+            "VALUES (0, 'student_sync2', 6, 1, 'PASS', 0, 'auto')"
+        )
+    conn.close()
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED"},
+        headers=headers,
+    )
+
+    conn = db.get_db_connection()
+    rows = conn.execute(
+        "SELECT COUNT(*) AS c FROM milestone_verification "
+        "WHERE student_id='student_sync2' AND scenario_id=6 AND milestone_id=1 AND status='PASS'"
+    ).fetchone()
+    conn.close()
+    assert rows["c"] == 1
+
+
+def test_resolve_reject_written_report_no_progress():
+    """Rejecting a milestone review must NOT grant progress."""
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_sync3")
+    res_sub = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "milestone_id": 2, "report_text": "Please verify."},
+    )
+    rev_id = res_sub.json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "REJECTED", "feedback": "Not demonstrated."},
+        headers=headers,
+    )
+
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_sync3")
+    progress = client.get("/progress").json()["milestones"]
+    assert not any(
+        m["scenario_id"] in (1, "1") and m["milestone_id"] == 2 and m["status"] == "PASS"
+        for m in progress
+    )
+
+
+def test_resolve_approve_then_reject_removes_instructor_pass():
+    """Reviewer finding (PR #141): reversing an instructor decision APPROVED ->
+    REJECTED must remove the instructor-granted milestone_verification PASS, so a
+    reversed decision does not leave the student holding the points."""
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_revrev")
+    rev_id = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "milestone_id": 2, "report_text": "Please review my work"},
+    ).json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+
+    assert client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "APPROVED"},
+        headers=headers,
+    ).status_code == 200
+
+    conn = db.get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT detection_data FROM milestone_verification "
+            "WHERE student_id='student_revrev' AND scenario_id=1 AND milestone_id=2 AND status='PASS'"
+        ).fetchall()
+        assert len(rows) == 1 and rows[0][0] == "instructor_approved_review"
+    finally:
+        conn.close()
+
+    # Reverse the decision (CAS from APPROVED) -> the instructor PASS must be gone.
+    assert client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "REJECTED", "expected_status": "APPROVED"},
+        headers=headers,
+    ).status_code == 200
+
+    conn = db.get_db_connection()
+    try:
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM milestone_verification "
+            "WHERE student_id='student_revrev' AND scenario_id=1 AND milestone_id=2 AND status='PASS'"
+        ).fetchone()[0]
+        assert remaining == 0
+    finally:
+        conn.close()
+
+
+def test_resolve_reject_preserves_auto_earned_pass():
+    """REJECT must NOT delete an auto-detected/pure-flag PASS the student earned on
+    their own -- only instructor-granted PASS rows are reversible this way."""
+    client = TestClient(app)
+    app.dependency_overrides[verify_token] = lambda: student_claims("student_autopass")
+
+    conn = db.get_db_connection()
+    with conn:
+        conn.execute(
+            "INSERT INTO milestone_verification "
+            "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
+            "VALUES (0, 'student_autopass', 1, 3, 'PASS', 0, 'browser:xss-m4')"
+        )
+    conn.close()
+
+    rev_id = client.post(
+        "/reviews/submit",
+        json={"scenario_id": 1, "milestone_id": 3, "report_text": "x"},
+    ).json()["review_id"]
+
+    app.dependency_overrides[verify_token] = lambda: instructor_claims("instructor_prof")
+    headers = {"Authorization": "Bearer mock_token"}
+    assert client.post(
+        f"/instructor/reviews/{rev_id}/resolve",
+        json={"status": "REJECTED"},
+        headers=headers,
+    ).status_code == 200
+
+    conn = db.get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT detection_data FROM milestone_verification "
+            "WHERE student_id='student_autopass' AND scenario_id=1 AND milestone_id=3 AND status='PASS'"
+        ).fetchall()
+        assert len(rows) == 1 and rows[0][0] == "browser:xss-m4"
+    finally:
+        conn.close()

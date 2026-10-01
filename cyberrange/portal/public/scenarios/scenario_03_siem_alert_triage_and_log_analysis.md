@@ -37,9 +37,11 @@ Task | Milestone | What you produce (on meta)
   
 ## 2. How scoring works
 
-Unlike the attack scenarios, there's nothing to “exploit.” You demonstrate analyst skill by producing three **artifact files on meta**. The checker reads those files; then you click **Manual Check** for each milestone.
+Unlike the attack scenarios, there's nothing to “exploit.” You demonstrate analyst skill by producing three **artifact files on meta**. The checker reads those files automatically.
 
-Templates are a starting point only If the SIEM table is empty or the manager is busy, you can still finish, but **copying a template without editing it does not pass**. Replace placeholders with times and rule IDs from **your** run (SIEM table or meta `auth.log`). Getting real Wazuh values is both better practice and what Manual Check looks for on Milestone 2. 
+Scoring is automatic - each artifact file is checked within a few seconds of you saving it. Make sure your files are correct (especially a real rule-5710 time on Milestone 2) before expecting a task to tick.
+
+Templates are a starting point only If the SIEM table is empty or the manager is busy, you can still finish, but **copying a template without editing it does not pass**. Replace placeholders with times and rule IDs from **your** run (SIEM table or meta `auth.log`). Getting real Wazuh values is both better practice and what the Milestone 2 check looks for. 
 
 ## 3. Set up your lab
 
@@ -65,9 +67,18 @@ nmap -sn $TARGET_META
 nmap -F $TARGET_META
 ```
 
-Open **SIEM** and wait ~1–2 minutes. Look for rule **5710** (failed SSH), that's your primary signal. If it's missing, re-run the SSH line and wait.
+> **Now open the SIEM.** Click **Open SIEM** in the lab header (it opens the Wazuh
+> alert dialog). This is the point where you need it - don't skip it. Inside the SIEM:
+> 1. Tick **Rule 5710 only** (or filter the Rule column to `5710`) to cut through the noise.
+> 2. Wait ~1–2 minutes and find the **rule 5710** row - "sshd: attempt to login using a
+>    non-existent user." That is your primary **true positive**. If it's missing, re-run
+>    the SSH line above and wait.
+> 3. **Note its time** (click the row to copy its timestamp + rule id). You'll need this
+>    exact time for the timeline in Task 2, and the checker compares what you write against
+>    the real 5710 event.
 
 What's signal vs noise here **5710** (failed SSH) and **510** (rootcheck) are the interesting rows. CIS/SCA rows (**19007, 19008, 19004**) are routine config scans, noise. `nmap` usually creates _no_ Wazuh row at all. 
+
 
 
 ### Task 1: open a triage record
@@ -78,6 +89,7 @@ What's signal vs noise here **5710** (failed SSH) and **510** (rootcheck) are th
 
 > **Important:** switch terminals first. Click **Target: meta (lab)** above the terminal (next to **Kali Linux (CLI)**) and check the prompt reads `msfadmin@pod-…-meta`. The checker only looks on meta, so files written on Kali never score.
 
+_**`cat > alert_triage.json << 'EOF' … EOF`** - writes a structured triage record (id, severity, rule, classification) to a file on the meta host; the scorer reads this file._
 #### On the **meta** tab:
 ```bash
 cat > /home/msfadmin/alert_triage.json << 'EOF'
@@ -97,7 +109,7 @@ Make it real In the SIEM table, click a row to copy its timestamp and rule ID (a
 
 **Done when:** `alert_triage.json` exists on meta with sensible values.
 
-**Then:** Portal → Tasks → **Manual Check** on the triage-start milestone.
+**Then:** scoring runs automatically - the triage-start milestone ticks within a few seconds.
 
 What you can do with this This JSON is the seed of a **case file**. As you triage more events you append records; a real SOC feeds these into a ticketing system so nothing is lost and the next analyst can pick up where you left off. 
 
@@ -108,6 +120,7 @@ What you can do with this This JSON is the seed of a **case file**. As you triag
 
 > **What you're doing & why:** A list of alerts isn't a story. Ordering them by time turns scattered events into an **attack narrative** (recon → login attempt → …) and lets you label which are real threats (true positives) versus routine noise (false positives). 
 
+_**`cat > incident_timeline.md << 'EOF' … EOF`** - writes a time-ordered list of classified events to a file on meta. Replace every `HH:MM` with the real rule-5710 time before saving; that is what this task scores._
 #### On the **meta** tab:
 ```bash
 cat > /home/msfadmin/incident_timeline.md << 'EOF'
@@ -118,11 +131,25 @@ cat > /home/msfadmin/incident_timeline.md << 'EOF'
 EOF
 ```
 
-Replace every `HH:MM` with a real time from the SIEM table (or `auth.log`), and delete lines for events you did not see. To pass, at least one line needs a **rule ID** and a **real clock time** (e.g. `rule: 5710, time: 14:32`). **The template as written does not pass**, leaving `HH:MM` in the file fails Manual Check.
+> **⚠️ `HH:MM` is a PLACEHOLDER - do not leave it in the file.** It is not a
+> command and not a real value; it literally means "put the hours:minutes here."
+> - **What it stands for:** the clock time of the event, in 24-hour `HH:MM` form (e.g. `14:32`).
+> - **Where to get the real time:** the **rule 5710** row in the SIEM (click it to copy
+>   its timestamp), or run `sudo grep "Invalid user" /var/log/auth.log` on meta.
+> - **You must replace every `HH:MM` before saving.** The checker compares your time
+>   against the **real 5710 event time** - a left-in `HH:MM`, a made-up time (like `00:00`),
+>   or an empty time all **fail**. A correct time (within a few minutes of the real event)
+>   on a line that also has a rule ID is what passes, e.g. `rule: 5710, time: 14:32`.
+> - **Timezone note:** the SIEM shows times in your local timezone, while the meta
+>   terminal and `auth.log` use UTC, so the **hour may differ** between them - that's
+>   expected. Either source is accepted; the **minutes** are what the checker matches,
+>   so just copy the 5710 event's time from whichever you're looking at.
+
+Delete lines for events you did not see.
 
 **Done when:** `incident_timeline.md` exists on meta with at least one classified, time-ordered event that includes a rule ID and a real time (`HH:MM` fully replaced).
 
-**Then:** **Manual Check** on the timeline milestone.
+**Then:** scoring runs automatically - the timeline milestone ticks within a few seconds.
 
 What you can do with this A timeline is what responders use to judge **scope** and decide what to contain first. It also becomes the backbone of the report in Task 3, you're already halfway to the deliverable. 
 
@@ -133,6 +160,7 @@ What you can do with this A timeline is what responders use to judge **scope** a
 
 > **What you're doing & why:** Detection only matters if someone acts on it. The report translates your triage into decisions: what happened, what's affected, and what to do next. Use action words (block, rotate, isolate, tune). 
 
+_**`cat > incident_report.txt << 'EOF' … EOF`** - writes your written incident summary (systems affected, evidence, recommended actions) to a file on meta; must be over ~200 characters to score._
 #### On the **meta** tab:
 ```bash
 cat > /home/msfadmin/incident_report.txt << 'EOF'
@@ -153,7 +181,7 @@ EOF
 
 **Done when:** `incident_report.txt` exists on meta, filled out and 200+ characters.
 
-**Then:** **Manual Check** on the incident-summary milestone.
+**Then:** scoring runs automatically - the incident-summary milestone ticks within a few seconds.
 
 What you can do with this This is the deliverable that drives the response, who to notify, what to block, which credentials to rotate. In a real SOC it's attached to the ticket and read by an on-call lead, so clarity beats length. 
 
@@ -179,9 +207,9 @@ Note your **time-to-first-alert** after Task 0 | A real SOC metric, how fast det
 
 Problem | Fix  
 --- | ---  
-Manual Check FAIL | Your files are on **Kali**, re-create them on the **meta** tab. Scoring runs on meta.  
+Task not scored | Your files are on **Kali**; re-create them on the **meta** tab. Scoring runs on meta.  
 SIEM table empty / no 5710 | Re-run the Task 0 SSH line and wait 1–2 min (auto-refreshes every 15s). If it says “No alerts match,” click **Clear filters**. If still empty, take times from `sudo grep "Invalid user" /var/log/auth.log` on meta. Unedited templates do **not** pass.  
-Milestone 2 FAIL with a timeline file | At least one line needs a rule ID and a real time (`rule: 5710, time: 14:32`); leaving `HH:MM` means the template was not filled in.  
+Milestone 2 FAIL with a timeline file | The time must match the **real rule-5710 event** (within a few minutes). A left-in `HH:MM`, a made-up time, or an empty time all fail. Copy the 5710 row's time from the SIEM, or use `sudo grep "Invalid user" /var/log/auth.log` on meta.  
 Lots of 19007 / 19008 / 19004 rows | Those are CIS/SCA config scans, classify them as **noise**. Focus on 5710 (failed SSH) or 510 (rootcheck).  
 nmap made no alert | Correct, `nmap -sn`/`-F` usually creates no Wazuh row. It's not a primary signal.  
 Shared SIEM, many agents | Only trust rows for **your** `pod-<you>-meta` agent. Manager is `10.0.40.10`.  

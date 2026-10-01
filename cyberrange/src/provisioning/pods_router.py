@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sqlite3
+from datetime import datetime, timezone
 from typing import Optional, Union
 from pydantic import BaseModel
 
@@ -162,6 +163,63 @@ def list_milestones_for_pod(pod: dict) -> list:
     ).fetchall()
     conn.close()
     return [dict(m) for m in rows]
+
+
+# --- One-shot Manual Check lock (G1) -----------------------------------------
+# A student-initiated Manual Check (verify_milestone_route) is allowed once per
+# milestone. A failed attempt is recorded in manual_check_attempts and locks the
+# task to instructor review. The background auto-detect poller calls
+# verify_milestone() directly (not this route), so its FAILs never consume the
+# student's one attempt.
+
+
+def _milestone_has_pass(conn: sqlite3.Connection, student_id: str, scenario_id: int, milestone_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM milestone_verification "
+        "WHERE student_id=? AND scenario_id=? AND milestone_id=? AND status='PASS' LIMIT 1",
+        (student_id, scenario_id, milestone_id),
+    ).fetchone()
+    return row is not None
+
+
+def _manual_check_consumed(conn: sqlite3.Connection, student_id: str, scenario_id: int, milestone_id: int) -> bool:
+    if not _has_table(conn, "manual_check_attempts"):
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM manual_check_attempts "
+        "WHERE student_id=? AND scenario_id=? AND milestone_id=? LIMIT 1",
+        (student_id, scenario_id, milestone_id),
+    ).fetchone()
+    return row is not None
+
+
+def manual_check_locked_ids(student_id: str, scenario_id: int) -> list:
+    """Milestone ids whose single Manual Check was used and did not result in a
+    PASS (so the task is awaiting instructor review). Empty on legacy DBs without
+    the table."""
+    conn = get_db_connection()
+    try:
+        if not _has_table(conn, "manual_check_attempts"):
+            return []
+        rows = conn.execute(
+            "SELECT a.milestone_id FROM manual_check_attempts a "
+            "WHERE a.student_id=? AND a.scenario_id=? "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM milestone_verification v "
+            "    WHERE v.student_id=a.student_id AND v.scenario_id=a.scenario_id "
+            "      AND v.milestone_id=a.milestone_id AND v.status='PASS')",
+            (student_id, scenario_id),
+        ).fetchall()
+        return [r["milestone_id"] for r in rows]
+    finally:
+        conn.close()
+
+
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", (name,)
+    ).fetchone()
+    return row is not None
 
 
 def earned_points(milestones: list, catalog: dict) -> int:
@@ -553,8 +611,62 @@ async def verify_milestone_route(
         conn.close()
         raise HTTPException(status_code=409, detail=f"Pod not active (status: {pod['status']})")
 
+    pod = dict(pod)
+    student_id = pod["student_id"]
+    # UTC to match every other timestamp (hybrid_scoring, CURRENT_TIMESTAMP);
+    # the frontend parses all timestamps as UTC, so a naive-local value here
+    # would display shifted by the viewer's offset.
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # G1 one-shot Manual Check gate (student-initiated check only):
+    #  1. already passed      -> idempotent PASS (no new attempt)
+    #  2. one check used, no pass -> REVIEW (locked to instructor review)
+    #  3. otherwise           -> run the single allowed check, then record it
+    if _milestone_has_pass(conn, student_id, scenario_id, milestone_id):
+        conn.close()
+        return VerificationResponse(
+            status="PASS",
+            message="This task is already complete.",
+            pod_id=pod_id,
+            scenario_id=scenario_id,
+            milestone_id=milestone_id,
+            detection_score=0,
+            verified_at=now_iso,
+        )
+    if _manual_check_consumed(conn, student_id, scenario_id, milestone_id):
+        conn.close()
+        return VerificationResponse(
+            status="REVIEW",
+            message=(
+                "Your Manual Check has already been used for this task and it could not "
+                "verify your work. Ask an instructor to review it."
+            ),
+            pod_id=pod_id,
+            scenario_id=scenario_id,
+            milestone_id=milestone_id,
+            detection_score=0,
+            verified_at=now_iso,
+        )
     conn.close()
-    return await verify_milestone(dict(pod), scenario_id, milestone_id, **deps)
+
+    resp = await verify_milestone(pod, scenario_id, milestone_id, **deps)
+
+    # Consume the one attempt on a definitive PASS/FAIL (an infra ERROR/UNKNOWN
+    # does not burn it). A later auto-detect PASS still clears the locked state.
+    if resp.status in ("PASS", "FAIL"):
+        rec = get_db_connection()
+        try:
+            if _has_table(rec, "manual_check_attempts"):
+                with rec:
+                    rec.execute(
+                        "INSERT OR IGNORE INTO manual_check_attempts "
+                        "(student_id, scenario_id, milestone_id, result) VALUES (?,?,?,?)",
+                        (student_id, scenario_id, milestone_id, resp.status),
+                    )
+        finally:
+            rec.close()
+
+    return resp
 
 
 @router.get("/progress")
@@ -593,12 +705,23 @@ def reset_scenario_progress(scenario_id: int, claims: dict = Depends(verify_toke
             "DELETE FROM milestone_verification WHERE student_id=? AND scenario_id=?",
             (student_id, scenario_id),
         ).rowcount
+        # Also clear one-shot Manual Check attempts for this scenario. Otherwise
+        # reset ("Try Again") removes the PASS row but leaves the attempt row, so
+        # manual_check_locked_ids still reports the milestone locked to instructor
+        # review and the student can never re-run the automated check.
+        attempts_cleared = 0
+        if _has_table(conn, "manual_check_attempts"):
+            attempts_cleared = conn.execute(
+                "DELETE FROM manual_check_attempts WHERE student_id=? AND scenario_id=?",
+                (student_id, scenario_id),
+            ).rowcount
     conn.close()
 
     log_event(
         "SCENARIO_PROGRESS_RESET",
         student_id=student_id,
-        detail=f"scenario_id={scenario_id}, {deleted} milestone row(s) deleted",
+        detail=f"scenario_id={scenario_id}, {deleted} milestone row(s) deleted, "
+               f"{attempts_cleared} manual-check attempt(s) cleared",
     )
 
     return {"student_id": student_id, "scenario_id": scenario_id, "deleted": deleted}
@@ -729,10 +852,23 @@ def get_pod_milestones(pod_id: int, claims: dict = Depends(verify_token)):
     require_owner(pod, claims)
     conn.close()
 
+    pod = dict(pod)
+    # Scenario id this pod is running, used to scope the Manual Check lock set.
+    locked: list = []
+    raw_sid = pod.get("scenario_id")
+    if raw_sid is not None and str(raw_sid).strip() != "":
+        try:
+            locked = manual_check_locked_ids(pod["student_id"], int(str(raw_sid).strip()))
+        except (TypeError, ValueError):
+            locked = []
+
     return {
         "pod_id": pod_id,
         "student_id": pod["student_id"],
-        "milestones": list_milestones_for_pod(dict(pod)),
+        "milestones": list_milestones_for_pod(pod),
+        # Milestones whose single Manual Check was used without passing -> the
+        # portal shows "awaiting instructor review" instead of a Manual Check button.
+        "manual_check_locked": locked,
     }
 
 
@@ -1202,7 +1338,17 @@ def resolve_student_review(
                     ),
                 )
 
-            if case_type == "SCORING_CONFLICT" and clean_status == "APPROVED" and milestone_id is not None:
+            # SCORE-SYNC FIX: An instructor APPROVE must give the student durable
+            # credit so it flows into GET /progress (the single source the student
+            # scenario page, dashboard, catalog and progress bars all read from).
+            # Previously this PASS insert was gated to case_type=='SCORING_CONFLICT',
+            # so approving a student-submitted WRITTEN_REPORT / MANUAL_REVIEW (the
+            # "Ask an instructor to check" flow) updated review_cases but never wrote
+            # the milestone_verification PASS row -> the score showed on the
+            # instructor side and never reached the student. Now any APPROVED,
+            # milestone-scoped case writes the PASS row (deduped, so an already-auto
+            # -scored milestone is never double-counted).
+            if clean_status == "APPROVED" and milestone_id is not None:
                 s_id_str = str(scenario_id)
                 s_id_pad = str(scenario_id).zfill(2)
                 pod_row = conn.execute(
@@ -1215,12 +1361,29 @@ def resolve_student_review(
                     (student_id, scenario_id, milestone_id),
                 ).fetchone()
                 if not exists:
+                    detection_data = (
+                        "instructor_approved_conflict"
+                        if case_type == "SCORING_CONFLICT"
+                        else "instructor_approved_review"
+                    )
                     conn.execute(
                         "INSERT INTO milestone_verification "
                         "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
-                        "VALUES (?, ?, ?, ?, 'PASS', 0, 'instructor_approved_conflict')",
-                        (target_pod_id, student_id, scenario_id, milestone_id),
+                        "VALUES (?, ?, ?, ?, 'PASS', 0, ?)",
+                        (target_pod_id, student_id, scenario_id, milestone_id, detection_data),
                     )
+            # Reversing an instructor decision (APPROVED -> REJECTED/RETRY) must also
+            # undo the PASS that the earlier APPROVE inserted; otherwise the student
+            # keeps the points for a now-rejected case. Only remove instructor-granted
+            # PASS rows -- never an auto-detected or pure-flag PASS the student earned
+            # on their own.
+            elif clean_status in ("REJECTED", "RETRY") and milestone_id is not None:
+                conn.execute(
+                    "DELETE FROM milestone_verification "
+                    "WHERE student_id=? AND scenario_id=? AND milestone_id=? AND status='PASS' "
+                    "AND detection_data IN ('instructor_approved_review', 'instructor_approved_conflict')",
+                    (student_id, scenario_id, milestone_id),
+                )
     finally:
         conn.close()
 

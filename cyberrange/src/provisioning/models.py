@@ -43,7 +43,9 @@ class VerificationRequest(BaseModel):
 
 
 class VerificationResponse(BaseModel):
-    status: Literal["PASS", "FAIL", "ERROR", "UNKNOWN"]
+    # REVIEW = the student's one Manual Check was already used and did not pass,
+    # so the task is locked to instructor review (G1 one-shot Manual Check).
+    status: Literal["PASS", "FAIL", "ERROR", "UNKNOWN", "REVIEW"]
     message: str
     pod_id: int
     scenario_id: int

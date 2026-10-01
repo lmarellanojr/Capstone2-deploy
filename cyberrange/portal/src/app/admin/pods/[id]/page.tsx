@@ -10,6 +10,7 @@ import { adminNavItems } from "@/lib/navigation";
 import { useAdminPodDetail } from "@/hooks/useAdminPodDetail";
 import { useAdminDestroyPoll } from "@/hooks/useAdminDestroyPoll";
 import { admin } from "@/lib/api";
+import { formatSqliteDate } from "@/lib/sqliteTime";
 import { adminPodBadgeVariant, canForceDestroy } from "@/lib/adminBadges";
 import { useToastContext } from "@/context/ToastContext";
 
@@ -120,7 +121,7 @@ export default function AdminPodDetailPage({ params }: PageProps) {
               <div>
                 <p className="text-xs text-text-muted mb-0.5">Created</p>
                 <p className="font-semibold text-text-main">
-                  {pod.created_at ? new Date(pod.created_at).toLocaleString() : "—"}
+                  {formatSqliteDate(pod.created_at)}
                 </p>
               </div>
               {liveStatus === "ACTIVE" && !pod.ttl_expired && (

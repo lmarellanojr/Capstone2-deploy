@@ -1,10 +1,10 @@
 ## Scenario 2: SQL Injection & Reflected XSS
 
-> **Path:** Browser-only via portal **Open DVWA**. Scoring is automatic from proxied DVWA responses, no Kali/sqlmap required for the primary scored path.
+> **Path:** Browser-only - DVWA is embedded in the lab page. Scoring is automatic from proxied DVWA responses, no Kali/sqlmap required for the primary scored path.
 
 A guided, beginner walkthrough, done entirely in your **browser**. The portal watches DVWA and scores each milestone automatically, so there's no Kali, no sqlmap, and no copying cookies. Read each _“What you're doing & why”_ box as you go.
 
-Medium 45–60 min · MITRE T1190 · Attacker (browser) · 4 milestones · 300 pts
+Medium 45–60 min · MITRE T1190 · Attacker (browser) · 5 milestones · 350 pts
 
 ## 0. Before you start: the big picture
 
@@ -13,7 +13,7 @@ You are the **attacker**, and your target is **DVWA** (Damn Vulnerable Web Appli
 - **SQL injection**, typing database commands into an ordinary input box (like a login or search field) to trick the site into handing back data it should keep private, such as usernames and password hashes.
 - **Reflected XSS (Cross-Site Scripting)**, getting the site to run *your* JavaScript in the browser, the trick real attackers use to hijack another user's session.
 
-Everything happens inside your own **isolated lab environment**, a private space only you can touch, so it's safe to break things here. You open the site with the **Open DVWA** button, log in, and the portal watches your attacks and scores each task automatically.
+Everything happens inside your own **isolated lab environment**, a private space only you can touch, so it's safe to break things here. DVWA opens right inside the lab page, you log in, and the portal watches your attacks and scores each task automatically.
 
 ## 1. The pieces you'll use
 
@@ -49,13 +49,19 @@ So the result has to actually appear The portal scores what it _sees in DVWA's r
 ## 3. Set up your lab
 
   1. Provision the **SQL Injection** lab from the portal and wait for the lab to go **ACTIVE**.
-  2. Click **Open DVWA**, it opens the site in a new tab (session-gated; no VNC/desktop needed).
+  2. DVWA loads **inside the lab page** on the left (no terminal needed). Prefer a full window? Click **Open in new tab**.
   3. Log in with `admin` / `password`. You should land on the DVWA menu (if you see _setup.php / Create Database_ , tell your instructor).
   4. Go to **DVWA Security** , set it to **Low** , and Submit.
 
-## 4. Do the 4 milestones
+## 4. Do the milestones
 
-For each one: open the module, paste the payload, submit, and watch the milestone tick. That's it.
+**This scenario has no terminal, you work entirely in the embedded DVWA.** Use the **grey buttons above the DVWA panel** (Home, SQL Injection, XSS (Reflected), DVWA Security, Login) to move between modules.
+Here's where each kind of step happens:
+
+- **In DVWA (browser tab):** open the module, type the payload into the field, click **Submit**, and read the result on the page.
+- **In the portal (this tab):** watch the **Tasks** panel tick as each milestone scores automatically, and - for the final task - paste the flag you found.
+
+For Tasks 1–4: open the module, paste the payload, submit, and watch the milestone tick. That's it.
 
 
 ### Task 1: prove the field is injectable
@@ -64,19 +70,15 @@ For each one: open the module, paste the payload, submit, and watch the mileston
 
 > **What you're doing & why:** You slip a single quote into the ID field. Either you get a database error (proof your input reached the SQL) or you flip the logic to always-true and get every row back. The portal scores either outcome. 
 
-#### Open SQL Injection → in the User ID box, submit **either one** of these (you only need one):
+**In DVWA:** open **SQL Injection**, and in the **User ID** box type this payload, then click **Submit**:
 
-Option A, flip the logic to always-true so every row comes back:
 ```bash
 1' OR '1'='1
 ```
 
-Option B, just a lone quote to force a database error:
-```bash
-1'
-```
+This flips the query's logic to always-true, so every user row comes back - proof your input reached the SQL query.
 
-**Done when:** several user rows appear (or a SQL syntax error shows) and **Injection Point** ticks.
+**Done when:** several user rows appear in DVWA and **Injection Point** ticks in the portal's Tasks panel.
 
 What you can do with this You've proven the field trusts your input, that's the foothold everything else builds on. The same hole now lets you read the _whole_ database, not just user 1. The names you see (admin, Gordon Brown, …) are the app's user records; in the next tasks you'll pull the sensitive columns hiding behind them. 
 
@@ -87,7 +89,7 @@ What you can do with this You've proven the field trusts your input, that's the 
 
 > **What you're doing & why:** **UNION** lets you bolt your own `SELECT` onto the query and show its output in the same table. Asking for `database()` makes DVWA print the current database name (`dvwa`) right in the results, proof you can read beyond the intended data. 
 
-#### In the User ID box, submit:
+_**`1' UNION SELECT null, database() -- -`** - closes the original quote, then UNION bolts on your own query; `database()` prints the current database name (`dvwa`) in the Surname cell._
 ```bash
 1' UNION SELECT null, database() -- -
 ```
@@ -107,7 +109,7 @@ What you can do with this Knowing the database name (`dvwa`) lets you aim at the
 
 > **What you're doing & why:** Same UNION trick, but now you read the `users` table directly, usernames and their (MD5) password hashes. Seeing a real 32‑character hash in the results is the proof for this milestone. 
 
-#### In the User ID box, submit:
+_**`1' UNION SELECT user, password FROM users -- -`** - UNION-reads the `users` table directly, returning every username and its MD5 password hash in the results._
 ```bash
 1' UNION SELECT user, password FROM users -- -
 ```
@@ -125,7 +127,7 @@ What you can do with this Those are MD5 password hashes, **crack them offline** 
 
 > **What you're doing & why:** The XSS (Reflected) page echoes your name straight back with no cleaning at Low security. Send it a `<script>` and the browser runs it, a pop-up appears. The portal sees your script reflected in the reply and scores it. 
 
-#### Open XSS (Reflected) → in the “What's your name?” box, submit:
+#### Click the **XSS (Reflected)** button above the DVWA panel, then in the “What's your name?” box, submit:
 ```bash
 <script>alert(1)</script>
 ```
@@ -134,7 +136,41 @@ What you can do with this Those are MD5 password hashes, **crack them offline** 
 
 What you can do with this You can run _any_ JavaScript in whoever opens the page. In the real world an attacker wraps this in a link and sends it to a victim, opening it could steal their session cookie, log keystrokes, redirect them to a fake login, or act as them on the site. (Here the sandbox blocks cookie theft, try `<script>alert(document.cookie)</script>` in the playground and watch it come up empty.) 
 
-**Scenario complete** when all 4 milestones pass and your total is **300 points** (50 + 75 + 100 + 75). 
+### Task 5: capture the flag
+
+**Goal:** read the secret **flag** that your Reflected XSS from Task 4 reveals, then
+submit it in the portal. This is the same kind of capture-the-flag as Scenario 1.
+
+> **What you're doing & why:** When you submit in the XSS (Reflected) page, your lab
+> shows a capture-the-flag value planted just for you, right on that result page.
+> Reading it off the page and pasting it back is how this task is scored.
+
+**Step 1 - reveal the flag (in DVWA):** click the **XSS (Reflected)** button above
+the DVWA panel. In the **"What's your name?"** box, submit the Task 4 payload:
+```bash
+<script>alert(1)</script>
+```
+
+**Step 2 - read your code:** after you click **Submit**, scroll down the XSS
+(Reflected) page. You'll see a line like:
+
+> **Your capture-the-flag code:** `brave-otter-7421`
+
+It's a short, easy-to-read code (two words and some numbers), and it is **unique to
+you**. There is only this one code on the page, so there's no guessing which value to
+copy.
+
+**Step 3 - submit it (in the portal):** open the **Tasks** panel, find **Capture
+the Flag**, type that code into **Submit the flag you found**, and click **Submit**.
+
+- **Correct code → the task completes and points are awarded.**
+- **Wrong code → no points, with a message to check it and try again.** Type it
+  exactly as shown (for example `brave-otter-7421`). Capital letters don't matter.
+
+**How it's scored:** by the code you submit - there is no automatic detection for
+this task.
+
+**Scenario complete** when all 5 milestones pass and your total is **350 points** (50 + 75 + 100 + 75 + 50). 
 
 ---
 ## 5. Payload playground (explore, not required for scoring)

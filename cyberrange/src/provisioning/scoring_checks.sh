@@ -606,6 +606,70 @@ check_scenario_8() {
     esac
 }
 
+# Scenario 9 M2 helper: is a time claimed in the timeline a REAL rule-5710 SSH
+# event (sshd "Invalid user" / failed login as a non-existent user) from
+# auth.log, within +/- $2 minutes, on a line that also carries a rule id?
+#
+# SCORE-FIX (Scenario 3 / scenario_id 9, Task 2 "True Positive Classification"):
+# the old check passed on ANY well-formed HH:MM that was not the literal
+# placeholder, so a fabricated/incorrect time (e.g. 00:00) scored. The claimed
+# time must now match a real detected event, so wrong/empty/malformed times fail.
+# Runs as root in-container (lxc exec), so /var/log/auth.log is readable.
+# Returns 0 on a match, 1 otherwise.
+_s9_timeline_time_is_real() {
+    local timeline="$1" tol="${2:-5}"
+    # S9_AUTHLOG overrides the source log (used by tests); production probes the
+    # real sshd log that the Wazuh agent on meta also reads for rule 5710.
+    local authlog="${S9_AUTHLOG:-}" f
+    if [[ -z "$authlog" ]]; then
+        for f in /var/log/auth.log /var/log/secure; do
+            if [[ -f "$f" ]]; then authlog="$f"; break; fi
+        done
+    fi
+    [[ -z "$authlog" || ! -f "$authlog" ]] && return 1
+
+    # Real event minutes-of-day (0..1439) from genuine sshd invalid-user lines
+    # (rule 5710). Require the real sshd "... from <ip>" shape and exclude the
+    # planted "Invalid user flag-m1-<flag> ..." line that flag_planting writes at
+    # provision time -- otherwise a student could copy the planter's timestamp and
+    # pass without ever running the Task 0 SSH attempt.
+    local real_minutes
+    real_minutes=$(grep -hiE "invalid user" "$authlog" 2>/dev/null \
+        | grep -v "flag-m1-" \
+        | grep -iE "from " \
+        | grep -oE "[0-9]{2}:[0-9]{2}:[0-9]{2}" \
+        | awk -F: '{print ($1*60)+$2}' | sort -un)
+    [[ -z "$real_minutes" ]] && return 1
+
+    # Claimed times: lines carrying a rule id AND an HH:MM (placeholder excluded).
+    local claimed_minutes
+    claimed_minutes=$(grep -iE "rule[^0-9]{0,15}[0-9]{3,6}" "$timeline" 2>/dev/null \
+        | grep -oE "[0-9]{1,2}:[0-9]{2}" | grep -v "HH:MM" \
+        | awk -F: '{h=$1+0; m=$2+0; if (h<24 && m<60) print (h*60)+m}')
+    [[ -z "$claimed_minutes" ]] && return 1
+
+    # PASS if any claimed minute matches any real event minute within +/- tol,
+    # EITHER as an absolute time (same timezone) OR as the same minutes-past-the-
+    # hour (a whole-hour timezone offset). The meta container logs in UTC, but the
+    # SIEM and the student's browser often show local time (e.g. UTC+8), so a
+    # correct event copied from the SIEM is hours off from auth.log yet shares the
+    # minutes. Matching minutes-of-hour accepts that real time while still
+    # rejecting fabricated/placeholder times (e.g. 00:00) and empty times.
+    awk -v tol="$tol" '
+        NR==FNR { real[$1]=1; next }
+        {
+            for (r in real) {
+                d=$1-r; if (d<0) d=-d;
+                if (d<=tol) { found=1; exit }        # same-timezone exact match
+                md=($1 % 60) - (r % 60); if (md<0) md=-md;
+                if (md>30) md=60-md;                 # wrap across the hour boundary
+                if (md<=tol) { found=1; exit }       # whole-hour timezone offset
+            }
+        }
+        END { exit(found?0:1) }
+    ' <(printf "%s\n" $real_minutes) <(printf "%s\n" $claimed_minutes)
+}
+
 # Scenario 9: SIEM Alert Triage (Wazuh)
 # Scenario 9: SIEM Alert Triage — student writes artifacts on meta (portal meta tab).
 # SCENARIO_TARGETS[9]=meta. Accept /tmp or /home/msfadmin paths.
@@ -629,17 +693,16 @@ check_scenario_9() {
         2)
             # M2: Timeline / true-positive classification.
             # The guide's template already has headings, "rule" and "phase" on
-            # every line, so structure alone can't earn the points. Need one
-            # line with a rule ID and a real clock time (HH:MM still there = unedited).
-            if [[ -n "$timeline" ]] \
-                && grep -iE "rule[^0-9]{0,15}[0-9]{3,6}" "$timeline" 2>/dev/null \
-                    | grep -E "[0-9]{1,2}:[0-9]{2}" | grep -v "HH:MM" >/dev/null; then
-                echo "PASS"
-                return
-            fi
-            # Triage TP path: the M1 triage template's placeholders mean it wasn't filled in.
-            if [[ -n "$triage" ]] && grep -qiE "true.?positive|\"TP\"|real" "$triage" 2>/dev/null \
-                && ! grep -qE "example-1|pod-STUDENT-meta|Replace fields with" "$triage" 2>/dev/null; then
+            # every line, so structure alone can't earn the points. One timeline
+            # line must carry a rule ID AND a clock time that matches a REAL
+            # rule-5710 SSH event from auth.log within +/-5 minutes (timezone
+            # tolerant). A fabricated/incorrect or placeholder time must not pass.
+            # There is deliberately NO triage-file shortcut here: a prior branch
+            # passed M2 when alert_triage.json merely contained "real"/"true_positive"
+            # (the guide text "Replace with the real values" trips it), which let a
+            # wrong/placeholder timeline time score. The timeline time check is the
+            # only path.
+            if [[ -n "$timeline" ]] && _s9_timeline_time_is_real "$timeline" 5; then
                 echo "PASS"
                 return
             fi
@@ -741,10 +804,19 @@ check_scenario_11() {
             echo "FAIL"
             ;;
         3)
-            # M3: Confirm the exploit path is closed (401 or 403).
+            # M3: Confirm the exploit path is closed. This is the "confirm" step,
+            # so BOTH must hold:
+            #  (a) STATE  -- the manager now rejects the OLD tomcat:tomcat creds
+            #      with 401/403 (the fix is really in place), and
+            #  (b) BEHAVIOR -- the student actually ran the verification: a curl
+            #      to the Tomcat manager with the old creds appears in history.
+            # State alone became true the moment M2 rotated the password, so the
+            # task scored without the student doing it (3/3 after only M1+M2);
+            # requiring the curl in history fixes that false auto-pass.
             local code
             code=$(curl -s -o /dev/null -w '%{http_code}' -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list 2>/dev/null || echo "000")
-            if [[ "$code" == "401" || "$code" == "403" ]]; then
+            if { [[ "$code" == "401" || "$code" == "403" ]]; } \
+                && check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
                 echo "PASS"
             else
                 echo "FAIL"

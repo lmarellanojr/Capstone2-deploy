@@ -87,7 +87,14 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   // width.
   const hideSidebar = (phase === 'active' || phase === 'expired') && !!pod
 
-  const shellClass = hideSidebar ? 'mx-auto w-full max-w-7xl' : undefined
+  // ACTIVITY-PANEL-WIDTH: the lab shell was capped at max-w-7xl (1280px), which
+  // left the terminal + activity panel feeling cramped in the middle of larger
+  // laptop/desktop screens. The cap now grows responsively at the xl/2xl
+  // breakpoints so wide screens are actually used, while narrower screens still
+  // fill (w-full) and the content-area padding keeps comfortable side margins.
+  const shellClass = hideSidebar
+    ? 'mx-auto w-full max-w-7xl xl:max-w-[88rem] 2xl:max-w-[104rem]'
+    : undefined
   const showBigPictureButton = phase === 'idle' || phase === 'provisioning' || (phase === 'active' && !!pod)
 
   return (

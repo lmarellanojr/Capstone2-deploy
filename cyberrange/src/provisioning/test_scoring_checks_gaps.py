@@ -157,6 +157,83 @@ def test_s9_m3_short_report_fails(tmp_path):
         _bash_rm(f)
 
 
+# ── Scenario 3 (id 9): M2 timeline must match a REAL rule-5710 event time ────
+# SCORE-FIX: the claimed HH:MM is validated against auth.log, so a fabricated or
+# placeholder time fails while a time near a real "Invalid user" event passes.
+
+def _timeline(content: str) -> str:
+    return _bash_tmp_file("incident_timeline.md", content)
+
+
+def _authlog(tmp_path: Path, content: str) -> dict:
+    p = tmp_path / f"auth-{uuid.uuid4().hex}.log"
+    _write(p, content)
+    return {"S9_AUTHLOG": p.as_posix()}
+
+
+# One real failed/invalid-user SSH event at 14:32 (Wazuh rule 5710).
+_AUTHLOG_5710 = "Oct  1 14:32:05 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n"
+
+
+def test_s9_m2_correct_time_passes(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 14:33, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_timezone_shifted_time_passes(tmp_path):
+    # auth.log is UTC (18:10); the student copied the SIEM/local time (UTC+8 -> 02:1x).
+    # Same minutes-past-the-hour, whole-hour offset, so it is the real event.
+    env = _authlog(tmp_path, "Oct  1 18:10:05 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 02:07, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_planted_flag_m1_line_does_not_count(tmp_path):
+    # The provision-time planted "Invalid user flag-m1-<flag> ..." line is NOT a real
+    # sshd event; copying its timestamp must not pass M2 (reviewer finding, PR #141).
+    planted = "Oct  1 09:15:00 meta sshd[1]: Invalid user flag-m1-ABCDEF0 from 10.0.50.10 port 1 ssh2\n"
+    env = _authlog(tmp_path, planted)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 09:15, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_wrong_time_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 00:00, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_placeholder_time_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: HH:MM, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_correct_time_but_no_real_event_fails(tmp_path):
+    env = _authlog(tmp_path, "Oct  1 09:00:00 meta sshd[1]: Accepted password for msfadmin\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 14:33, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
 # ── Scenario 4 (id 11): M2 remediation state, M3 exploit path closed ────────
 
 def _users(tmp_path: Path, xml: str) -> dict:
@@ -188,7 +265,28 @@ def test_s11_m2_a_sed_that_leaves_the_password_does_not_pass(tmp_path):
     assert run(tmp_path, 11, 2, history=hist, extra_env=env) == "FAIL"
 
 
+# The student's verification curl in history (what the guide tells them to run).
+_M3_VERIFY_HIST = (
+    "curl -s -o /dev/null -w '%{http_code}\\n' -u tomcat:tomcat "
+    "http://127.0.0.1:8180/manager/text/list\n"
+)
+
+
 @pytest.mark.parametrize("code,expected", [("401", "PASS"), ("403", "PASS"), ("200", "FAIL"), ("000", "FAIL")])
-def test_s11_m3_uses_the_http_status(tmp_path, code, expected):
+def test_s11_m3_passes_only_when_closed_and_verified(tmp_path, code, expected):
+    # The student ran the verification curl AND the manager rejects old creds.
     curl = f"#!/bin/bash\nprintf '{code}'\n"
-    assert run(tmp_path, 11, 3, stubs={"curl": curl}) == expected
+    assert run(tmp_path, 11, 3, history=_M3_VERIFY_HIST, stubs={"curl": curl}) == expected
+
+
+def test_s11_m3_closed_but_not_verified_fails(tmp_path):
+    # Regression: after M2 the old creds already fail (401), but if the student
+    # never ran the verification curl, the "confirm" task must NOT auto-pass.
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history="sudo systemctl restart tomcat9\n", stubs={"curl": curl}) == "FAIL"
+
+
+def test_s11_m3_verified_but_still_open_fails(tmp_path):
+    # Student ran the curl, but the fix isn't really in place (still 200).
+    curl = "#!/bin/bash\nprintf '200'\n"
+    assert run(tmp_path, 11, 3, history=_M3_VERIFY_HIST, stubs={"curl": curl}) == "FAIL"

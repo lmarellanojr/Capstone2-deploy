@@ -16,12 +16,12 @@ const TIPS: Record<string, { title: string; body: ReactNode }> = {
     ),
   },
   "06": {
-    title: "Click Open DVWA to start",
+    title: "DVWA opens inside your lab",
     body: (
       <>
-        Once your lab opens, click the <strong>Open DVWA</strong> button at the{" "}
-        <strong>top-right of the lab</strong>, above the terminal. The practice site opens in a{" "}
-        <strong>new browser tab</strong>, already connected to your session. Log in with{" "}
+        Once your lab opens, the practice site loads <strong>right inside the lab page</strong>{" "}
+        (no terminal needed), already connected to your session. Prefer a full window? Use{" "}
+        <strong>Open in new tab</strong> at the top-right. Log in with{" "}
         <code className="bg-white/70 px-1 rounded">admin</code> /{" "}
         <code className="bg-white/70 px-1 rounded">password</code> and set Security to{" "}
         <strong>Low</strong>. Everything happens in the browser, and each task is scored

@@ -152,6 +152,39 @@ if [ "$GOT" != "$LAST" ]; then
   ) || fail_apply
 fi
 
+# Python API deps: `npm ci` above only covers the portal. The provision-api's
+# own dependencies live in pyproject.toml, and a release can add new ones (e.g.
+# PR #139 added python-multipart + pillow for evidence uploads). Without this
+# step the API crash-loops on import, the health check fails, and the apply
+# rolls back + marks the SHA bad -- freezing the host on the old build. Install
+# the declared runtime deps into the venv whenever pyproject.toml changes.
+VENV_PY="${ROOT}/.venv/bin/python"
+PYPROJECT="${ROOT}/pyproject.toml"
+PYHASH=""
+if [ -x "$VENV_PY" ] && [ -f "$PYPROJECT" ]; then
+  PYHASH="$("$VENV_PY" - "$PYPROJECT" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)"
+  PYLAST=""
+  if [ -f "${DATA}/rollback/last-pyproject.sha" ]; then
+    PYLAST="$(tr -d '\r\n' < "${DATA}/rollback/last-pyproject.sha")"
+  fi
+  if [ "$PYHASH" != "$PYLAST" ]; then
+    DEPS="$("$VENV_PY" - "$PYPROJECT" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    data = tomllib.load(f)
+print("\n".join(data.get("project", {}).get("dependencies", [])))
+PY
+)"
+    if [ -n "$DEPS" ]; then
+      printf '%s\n' "$DEPS" | "$VENV_PY" -m pip install -r /dev/stdin || fail_apply
+    fi
+  fi
+fi
+
 restart_units
 sleep 10
 
@@ -182,5 +215,6 @@ fi
 
 echo "$NEW_SHA" > "${ROOT}/DEPLOYED_SHA"
 echo "$GOT" > "${DATA}/rollback/last-lock.sha"
+[ -n "$PYHASH" ] && echo "$PYHASH" > "${DATA}/rollback/last-pyproject.sha"
 rm -f "${DATA}/rollback/bad-sha"
 echo "pull-release OK ${NEW_SHA}"

@@ -19,6 +19,20 @@ _INCOMPLETE_MESSAGE = (
     "Milestone incomplete: Neither the submitted flag nor container state satisfied rubric criteria."
 )
 
+# "Find the flag" final tasks that score on a valid flag ALONE -- a capture /
+# discovery step where the per-student flag IS the proof, so no container-state
+# corroboration is required (agreed design: pure flag for the final task only).
+# Every other milestone keeps the flag+state hybrid anti-oracle behaviour.
+# Keyed by (scenario_id, milestone_id).
+PURE_FLAG_MILESTONES = {
+    (1, 5),  # Scenario 1 final task: submit the flag read from the tomcat shell (whoami)
+    (6, 5),  # Scenario 2 final task: submit the flag captured via SQL injection
+}
+
+
+def is_pure_flag_milestone(scenario_id: int, milestone_id: int) -> bool:
+    return (scenario_id, milestone_id) in PURE_FLAG_MILESTONES
+
 
 @dataclass
 class HybridScoreResult:
@@ -197,6 +211,57 @@ async def evaluate_hybrid_submission(
     now_iso = datetime.now(timezone.utc).isoformat()
     rubric_criteria = rubric.get("criteria", "")
     rubric_name = rubric.get("name", f"Milestone {milestone_id}")
+
+    # --- Pure-flag final task: a valid flag alone passes; no state check ------
+    if is_pure_flag_milestone(scenario_id, milestone_id):
+        already = conn.execute(
+            """
+            SELECT id FROM milestone_verification
+            WHERE student_id=? AND scenario_id=? AND milestone_id=? AND status='PASS'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (student_id, scenario_id, milestone_id),
+        ).fetchone()
+        if not flag_valid:
+            # Wrong flag never scores (and never double-penalises an already-passed task).
+            return HybridScoreResult(
+                outcome="INCOMPLETE",
+                status="INCOMPLETE",
+                scenario_id=scenario_id,
+                milestone_id=milestone_id,
+                message="That flag is not correct. Find the flag for this task and submit it exactly as shown.",
+                review_id=None,
+                verified_at=now_iso,
+                rubric_criteria=rubric_criteria,
+            )
+        # Valid flag: award once (idempotent -- no duplicate PASS rows).
+        if not already:
+            target_pod_id = _resolve_pod_id_for_student(conn, student_id, scenario_id)
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO milestone_verification
+                    (pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data)
+                    VALUES (?, ?, ?, ?, 'PASS', 0, 'pure_flag_capture')
+                    """,
+                    (target_pod_id, student_id, scenario_id, milestone_id),
+                )
+            log_event(
+                "HYBRID_SCORE_PASS",
+                student_id=student_id,
+                result="PASS",
+                detail=f"Scenario {scenario_id}, Milestone {milestone_id}: valid flag (pure-flag capture).",
+            )
+        return HybridScoreResult(
+            outcome="PASS",
+            status="PASS",
+            scenario_id=scenario_id,
+            milestone_id=milestone_id,
+            message="Correct flag — milestone complete!",
+            review_id=None,
+            verified_at=now_iso,
+            rubric_criteria=rubric_criteria,
+        )
 
     # Check if milestone is already passed in milestone_verification (Finding #2)
     already_passed_row = conn.execute(

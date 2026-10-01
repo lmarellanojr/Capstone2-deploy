@@ -137,7 +137,7 @@ export function VerificationRequestModal({
 
         <div>
           <label htmlFor={reasonId} className="block text-sm font-semibold text-text-main mb-1">
-            What did you do? <span className="text-danger">*</span>
+            What command did you use? <span className="text-danger">*</span>
           </label>
           <textarea
             id={reasonId}
@@ -152,7 +152,7 @@ export function VerificationRequestModal({
             className={fieldClass(touched && !!reasonError)}
           />
           <p id={`${reasonId}-hint`} className={`mt-1 text-xs ${touched && reasonError ? "text-danger" : "text-text-muted"}`}>
-            {touched && reasonError ? reasonError : "The steps you took and what you expected to happen."}
+            {touched && reasonError ? reasonError : "Paste the exact command you ran, and what you expected to happen."}
           </p>
         </div>
 
@@ -174,7 +174,7 @@ export function VerificationRequestModal({
 
         <div>
           <p id={shotsId} className="block text-sm font-semibold text-text-main mb-1">
-            Screenshots <span className="font-normal text-text-muted">(optional, up to {MAX_FILES})</span>
+            Screenshot <span className="font-normal text-text-muted">(Optional, up to {MAX_FILES})</span>
           </p>
           {shots.length > 0 && (
             <ul className="mb-2 grid grid-cols-3 sm:grid-cols-5 gap-2" aria-labelledby={shotsId}>

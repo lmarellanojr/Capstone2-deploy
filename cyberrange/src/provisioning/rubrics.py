@@ -1,6 +1,7 @@
 """Rubrics and flag validation for the SCORE-HYBRID scoring engine."""
 from __future__ import annotations
 
+import re
 import secrets
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
@@ -49,6 +50,18 @@ DEFAULT_RUBRICS: List[Dict[str, Any]] = [
         "mitre_technique": "T1190",
         "nist_phase": "Exploitation",
     },
+    {
+        # Pure-flag final task: confirm the shell identity (whoami) and submit the
+        # flag planted in the tomcat user's home. Scores on the flag alone.
+        "scenario_id": 1,
+        "milestone_id": 5,
+        "name": "Capture the Flag (whoami)",
+        "criteria": "In the Kali terminal, run whoami and submit the username it prints (the student's live Kali login, e.g. student) as the flag. Not a file or a hardcoded token.",
+        "expected_flag": "FLAG{S01_M5_C3D5E7A9B1F2}",
+        "points": 50,
+        "mitre_technique": "T1083",
+        "nist_phase": "Post-Exploitation",
+    },
     # Scenario 06: SQL Injection
     {
         "scenario_id": 6,
@@ -79,6 +92,18 @@ DEFAULT_RUBRICS: List[Dict[str, Any]] = [
         "points": 100,
         "mitre_technique": "T1190",
         "nist_phase": "Credential Harvesting",
+    },
+    {
+        # Pure-flag final task: submit the flag captured from the database via SQLi.
+        # (Milestone 4, Reflected XSS, stays browser-scored and needs no rubric.)
+        "scenario_id": 6,
+        "milestone_id": 5,
+        "name": "Capture the Flag",
+        "criteria": "Perform the Reflected XSS in DVWA's \"What's your name?\" box; the result page shows a short capture-the-flag code (adjective-noun-number, e.g. brave-otter-7421). Submit that code. Not a SQL-read FLAG{...} row.",
+        "expected_flag": "FLAG{S06_M5_4C6E8A0B2D4F}",
+        "points": 50,
+        "mitre_technique": "T1190",
+        "nist_phase": "Data Access",
     },
     # Scenario 09: SIEM Alert Triage
     {
@@ -188,6 +213,28 @@ def list_rubrics(conn: sqlite3.Connection, scenario_id: int) -> List[dict]:
     return [dict(r) for r in rows]
 
 
+# Note: Scenario 1 Milestone 5's flag is the live `whoami` output of the student's
+# Kali terminal (their Kali login name). It is NOT hardcoded here — at provision
+# time the real account name is read from the Kali container and stored per-pod in
+# pod_milestone_flags (see flag_planting.read_kali_whoami + provision.py), so the
+# normal planted-flag path below validates it like any other per-pod flag.
+
+_FLAG_TOKEN = re.compile(r"FLAG\{[^{}\s]+\}", re.IGNORECASE)
+
+
+def extract_flag_token(submitted: str) -> str:
+    """Return the single FLAG{...} token in a submission, else the trimmed input.
+
+    Students often paste a whole terminal line (e.g. a prompt or label plus the
+    flag). If the text contains exactly one FLAG{...} token, that token is what
+    gets compared. Several tokens are NOT unpacked (no "try every guess at once"),
+    so the raw text is compared and fails as before.
+    """
+    text = (submitted or "").strip()
+    tokens = _FLAG_TOKEN.findall(text)
+    return tokens[0] if len(tokens) == 1 else text
+
+
 def validate_flag(
     conn: sqlite3.Connection,
     scenario_id: int,
@@ -215,7 +262,7 @@ def validate_flag(
 
     from flag_planting import generate_milestone_flag, get_student_expected_flag
 
-    clean_submitted = submitted_flag.strip().upper()
+    clean_submitted = extract_flag_token(submitted_flag).upper()
 
     if student_id and student_id.strip():
         clean_sid = student_id.strip()

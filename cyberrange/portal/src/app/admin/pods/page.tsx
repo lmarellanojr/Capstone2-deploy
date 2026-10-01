@@ -10,6 +10,7 @@ import { useAdminPods } from "@/hooks/useAdminPods";
 import { useAdminDestroyPoll } from "@/hooks/useAdminDestroyPoll";
 import { admin } from "@/lib/api";
 import { adminPodBadgeVariant, canForceDestroy } from "@/lib/adminBadges";
+import { formatSqliteDate } from "@/lib/sqliteTime";
 import { useToastContext } from "@/context/ToastContext";
 
 // No Reset control anywhere on this page (review finding: don't surface
@@ -129,7 +130,7 @@ export default function AdminPodsPage() {
                         <Badge variant={adminPodBadgeVariant(liveStatus)}>{liveStatus}</Badge>
                       </td>
                       <td className="py-3 px-4 text-text-muted">
-                        {p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
+                        {formatSqliteDate(p.created_at)}
                       </td>
                       <td className="py-3 px-4">
                         <Button
