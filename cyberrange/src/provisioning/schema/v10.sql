@@ -31,5 +31,5 @@ CREATE INDEX IF NOT EXISTS idx_manual_check_student
 -- re-runs and fresh v5 seeds stay idempotent.
 INSERT OR IGNORE INTO milestone_rubrics (scenario_id, milestone_id, name, criteria, expected_flag, points, mitre_technique, nist_phase)
 VALUES
-  (1, 5, 'Capture the Flag (whoami)', 'From the tomcat shell, confirm your identity with whoami and submit the flag from the tomcat user''s home directory.', 'FLAG{S01_M5_C3D5E7A9B1F2}', 50, 'T1083', 'Post-Exploitation'),
-  (6, 5, 'Capture the Flag', 'Use SQL injection to read the flag stored in the application database and submit it.', 'FLAG{S06_M5_4C6E8A0B2D4F}', 50, 'T1190', 'Data Access');
+  (1, 5, 'Capture the Flag (whoami)', 'In the Kali terminal, run whoami and submit the username it prints (the student''s live Kali login, e.g. student) as the flag. Not a file or a hardcoded token.', 'FLAG{S01_M5_C3D5E7A9B1F2}', 50, 'T1083', 'Post-Exploitation'),
+  (6, 5, 'Capture the Flag', 'Perform the Reflected XSS in DVWA''s "What''s your name?" box; the result page shows a short capture-the-flag code (adjective-noun-number, e.g. brave-otter-7421). Submit that code. Not a SQL-read FLAG{...} row.', 'FLAG{S06_M5_4C6E8A0B2D4F}', 50, 'T1190', 'Data Access');

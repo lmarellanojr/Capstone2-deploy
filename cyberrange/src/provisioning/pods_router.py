@@ -705,12 +705,23 @@ def reset_scenario_progress(scenario_id: int, claims: dict = Depends(verify_toke
             "DELETE FROM milestone_verification WHERE student_id=? AND scenario_id=?",
             (student_id, scenario_id),
         ).rowcount
+        # Also clear one-shot Manual Check attempts for this scenario. Otherwise
+        # reset ("Try Again") removes the PASS row but leaves the attempt row, so
+        # manual_check_locked_ids still reports the milestone locked to instructor
+        # review and the student can never re-run the automated check.
+        attempts_cleared = 0
+        if _has_table(conn, "manual_check_attempts"):
+            attempts_cleared = conn.execute(
+                "DELETE FROM manual_check_attempts WHERE student_id=? AND scenario_id=?",
+                (student_id, scenario_id),
+            ).rowcount
     conn.close()
 
     log_event(
         "SCENARIO_PROGRESS_RESET",
         student_id=student_id,
-        detail=f"scenario_id={scenario_id}, {deleted} milestone row(s) deleted",
+        detail=f"scenario_id={scenario_id}, {deleted} milestone row(s) deleted, "
+               f"{attempts_cleared} manual-check attempt(s) cleared",
     )
 
     return {"student_id": student_id, "scenario_id": scenario_id, "deleted": deleted}
@@ -1361,6 +1372,18 @@ def resolve_student_review(
                         "VALUES (?, ?, ?, ?, 'PASS', 0, ?)",
                         (target_pod_id, student_id, scenario_id, milestone_id, detection_data),
                     )
+            # Reversing an instructor decision (APPROVED -> REJECTED/RETRY) must also
+            # undo the PASS that the earlier APPROVE inserted; otherwise the student
+            # keeps the points for a now-rejected case. Only remove instructor-granted
+            # PASS rows -- never an auto-detected or pure-flag PASS the student earned
+            # on their own.
+            elif clean_status in ("REJECTED", "RETRY") and milestone_id is not None:
+                conn.execute(
+                    "DELETE FROM milestone_verification "
+                    "WHERE student_id=? AND scenario_id=? AND milestone_id=? AND status='PASS' "
+                    "AND detection_data IN ('instructor_approved_review', 'instructor_approved_conflict')",
+                    (student_id, scenario_id, milestone_id),
+                )
     finally:
         conn.close()
 

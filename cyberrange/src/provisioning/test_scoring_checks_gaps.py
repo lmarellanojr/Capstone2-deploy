@@ -195,6 +195,18 @@ def test_s9_m2_timezone_shifted_time_passes(tmp_path):
         _bash_rm(f)
 
 
+def test_s9_m2_planted_flag_m1_line_does_not_count(tmp_path):
+    # The provision-time planted "Invalid user flag-m1-<flag> ..." line is NOT a real
+    # sshd event; copying its timestamp must not pass M2 (reviewer finding, PR #141).
+    planted = "Oct  1 09:15:00 meta sshd[1]: Invalid user flag-m1-ABCDEF0 from 10.0.50.10 port 1 ssh2\n"
+    env = _authlog(tmp_path, planted)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 09:15, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
 def test_s9_m2_wrong_time_fails(tmp_path):
     env = _authlog(tmp_path, _AUTHLOG_5710)
     f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 00:00, true_positive\n")

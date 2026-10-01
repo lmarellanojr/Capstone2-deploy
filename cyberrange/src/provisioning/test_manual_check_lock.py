@@ -121,3 +121,37 @@ def test_manual_check_error_does_not_consume_attempt(monkeypatch):
     retry = client.post("/pods/1/verify/1/3")
     assert retry.json()["status"] == "PASS"
     assert ran["count"] == 1
+
+
+def test_reset_clears_manual_check_lock(monkeypatch):
+    """Reviewer finding (PR #141): 'Try Again' reset must also clear
+    manual_check_attempts; otherwise the PASS row is gone but the attempt row keeps
+    the task locked to instructor review and the verifier can never re-run."""
+    _make_pod()
+    app.dependency_overrides[verify_token] = lambda: _student_claims()
+    client = TestClient(app)
+
+    _stub_verify(monkeypatch, "FAIL")
+    assert client.post("/pods/1/verify/1/2").json()["status"] == "FAIL"
+    assert 2 in client.get("/pods/1/milestones").json()["manual_check_locked"]
+
+    # Reset this scenario's progress (DELETE /progress/{scenario_id}).
+    assert client.delete("/progress/1").status_code == 200
+
+    # The lock is gone...
+    assert 2 not in client.get("/pods/1/milestones").json()["manual_check_locked"]
+
+    # ...and a fresh Manual Check runs the verifier again instead of REVIEW.
+    ran = {"count": 0}
+
+    async def fake_fail(pod, scenario_id, milestone_id, **kw):
+        ran["count"] += 1
+        return VerificationResponse(
+            status="FAIL", message="again", pod_id=pod["pod_id"],
+            scenario_id=scenario_id, milestone_id=milestone_id,
+            detection_score=0, verified_at="2026-10-01T00:00:00",
+        )
+    monkeypatch.setattr(pods_router, "verify_milestone", fake_fail)
+    after = client.post("/pods/1/verify/1/2")
+    assert after.json()["status"] == "FAIL"
+    assert ran["count"] == 1

@@ -1138,7 +1138,12 @@ class TestScoringChecksDirectBashExecution:
         assert flipped != template
         assert self._score_s09_m2({"alert_triage.json": flipped}) == "FAIL"
 
-    def test_direct_bash_scenario_09_m2_real_triage_tp_passes(self):
+    def test_direct_bash_scenario_09_m2_triage_tp_alone_no_longer_passes(self):
+        # Reviewer fix (PR #141): a triage file alone -- even a real-looking
+        # true_positive -- must NOT pass M2. The old triage shortcut let a wrong or
+        # placeholder timeline time score (the guide text "Replace with the real
+        # values" tripped the `real` match). Only a timeline time that matches a
+        # real rule-5710 event passes now.
         triage = json.dumps({
             "alert_id": "1727346720.51234",
             "severity": "medium",
@@ -1147,7 +1152,21 @@ class TestScoringChecksDirectBashExecution:
             "classification": "true_positive",
             "notes": "14:32 failed SSH for nosuchuser from Kali",
         })
-        assert self._score_s09_m2({"alert_triage.json": triage}) == "PASS"
+        assert self._score_s09_m2({"alert_triage.json": triage}) == "FAIL"
+
+    def test_direct_bash_scenario_09_m2_triage_present_but_placeholder_timeline_fails(self):
+        # Even with a real-looking triage file present, a placeholder/fabricated
+        # timeline time must FAIL -- there is no triage shortcut around the time check.
+        triage = json.dumps({"rule": "5710", "classification": "true_positive", "notes": "real event"})
+        for bad_time in ("HH:MM", "00:00"):
+            body = (
+                "# Incident timeline\n"
+                f"1. phase: initial_access_attempt, rule: 5710, time: {bad_time}, true_positive\n"
+            )
+            assert self._score_s09_m2(
+                {"alert_triage.json": triage, "incident_timeline.md": body},
+                authlog=self._S09_AUTHLOG_1432,
+            ) == "FAIL"
 
     def _write_history(self, text: str) -> None:
         (self.default_home / ".bash_history").write_text(text, encoding="utf-8")

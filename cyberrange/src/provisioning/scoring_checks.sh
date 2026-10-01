@@ -628,9 +628,15 @@ _s9_timeline_time_is_real() {
     fi
     [[ -z "$authlog" || ! -f "$authlog" ]] && return 1
 
-    # Real event minutes-of-day (0..1439) from invalid-user SSH lines (rule 5710).
+    # Real event minutes-of-day (0..1439) from genuine sshd invalid-user lines
+    # (rule 5710). Require the real sshd "... from <ip>" shape and exclude the
+    # planted "Invalid user flag-m1-<flag> ..." line that flag_planting writes at
+    # provision time -- otherwise a student could copy the planter's timestamp and
+    # pass without ever running the Task 0 SSH attempt.
     local real_minutes
-    real_minutes=$(grep -hiE "invalid user|failed password for invalid user" "$authlog" 2>/dev/null \
+    real_minutes=$(grep -hiE "invalid user" "$authlog" 2>/dev/null \
+        | grep -v "flag-m1-" \
+        | grep -iE "from " \
         | grep -oE "[0-9]{2}:[0-9]{2}:[0-9]{2}" \
         | awk -F: '{print ($1*60)+$2}' | sort -un)
     [[ -z "$real_minutes" ]] && return 1
@@ -689,15 +695,14 @@ check_scenario_9() {
             # The guide's template already has headings, "rule" and "phase" on
             # every line, so structure alone can't earn the points. One timeline
             # line must carry a rule ID AND a clock time that matches a REAL
-            # rule-5710 SSH event from auth.log within +/-5 minutes -- a
-            # fabricated/incorrect or placeholder time no longer passes.
+            # rule-5710 SSH event from auth.log within +/-5 minutes (timezone
+            # tolerant). A fabricated/incorrect or placeholder time must not pass.
+            # There is deliberately NO triage-file shortcut here: a prior branch
+            # passed M2 when alert_triage.json merely contained "real"/"true_positive"
+            # (the guide text "Replace with the real values" trips it), which let a
+            # wrong/placeholder timeline time score. The timeline time check is the
+            # only path.
             if [[ -n "$timeline" ]] && _s9_timeline_time_is_real "$timeline" 5; then
-                echo "PASS"
-                return
-            fi
-            # Triage TP path: the M1 triage template's placeholders mean it wasn't filled in.
-            if [[ -n "$triage" ]] && grep -qiE "true.?positive|\"TP\"|real" "$triage" 2>/dev/null \
-                && ! grep -qE "example-1|pod-STUDENT-meta|Replace fields with" "$triage" 2>/dev/null; then
                 echo "PASS"
                 return
             fi
