@@ -201,3 +201,29 @@ export function isServerError(error: unknown): boolean {
   }
   return false
 }
+
+/**
+ * The backend's own explanation of a failed request, when it gave one.
+ *
+ * mapErrorToMessage() speaks pod-lifecycle ("You already have an active
+ * pod…" for any 409), which is wrong for user management and review cases:
+ * there the FastAPI `detail` is the precise, user-safe reason ("Username or
+ * email already exists", "Only reviews in RETRY status can be resubmitted").
+ * FastAPI 422s carry a list of {loc, msg} validation errors instead of a
+ * string; the first message is surfaced. Falls back to mapErrorToMessage().
+ */
+export function backendDetail(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as { detail?: unknown; error?: unknown } | undefined
+    const detail = data?.detail ?? data?.error
+    if (typeof detail === 'string' && detail.trim()) return detail
+    if (Array.isArray(detail) && detail.length > 0) {
+      const first = detail[0] as { msg?: unknown; loc?: unknown }
+      if (typeof first?.msg === 'string') {
+        const field = Array.isArray(first.loc) ? first.loc[first.loc.length - 1] : null
+        return typeof field === 'string' ? `${field}: ${first.msg}` : first.msg
+      }
+    }
+  }
+  return mapErrorToMessage(error).message
+}

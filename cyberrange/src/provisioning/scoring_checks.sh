@@ -709,19 +709,34 @@ check_scenario_11() {
     case $milestone in
         1)
             # M1: Identify the weakness (default Tomcat manager credential).
-            # Deliberately BEHAVIOR-ONLY: default credential is baked into
-            # tomcat-users.xml at golden-image build time (meta_install_tomcat.sh).
-            if check_behavior "cat.*tomcat-users|grep.*tomcat-users|nano.*tomcat-users|vim.*tomcat-users|less.*tomcat-users"; then echo "PASS"; return; fi
+            # BEHAVIOR-ONLY: the default credential is baked into tomcat-users.xml
+            # at golden-image build time (meta_install_tomcat.sh). The file is
+            # root-owned, so as msfadmin it can only be read WITH sudo -- a plain
+            # `cat` returns "Permission denied" and never shows the credential.
+            # Require sudo so the credited command actually reveals the weakness
+            # (previously a denied `cat` still passed -- false positive).
+            if check_behavior "sudo[^|]*tomcat-users"; then echo "PASS"; return; fi
             echo "FAIL"
             ;;
         2)
             # M2: Apply the remediation. nano/vim deliberately NOT in behavior
             # (would false-pass after M1 inspect-only). Prefer state of file.
             # Optional: bare systemctl restart can soft-pass; state check is authority.
-            if [[ -f /etc/tomcat9/tomcat-users.xml ]] && ! grep -q 'password="tomcat"' /etc/tomcat9/tomcat-users.xml 2>/dev/null; then
-                echo "PASS"
+            # TOMCAT_USERS_FILE is a test hook only; production never sets it.
+            # Match either quote style: XML allows password='tomcat' too, and
+            # just swapping the quotes must not count as a remediation.
+            local users_file="${TOMCAT_USERS_FILE:-/etc/tomcat9/tomcat-users.xml}"
+            if [[ -f "$users_file" ]]; then
+                # The file's state decides. Previously a `sed -i` on the file
+                # passed even when the default password was still there.
+                if ! grep -qE "password=[\"']tomcat[\"']" "$users_file" 2>/dev/null; then
+                    echo "PASS"
+                else
+                    echo "FAIL"
+                fi
                 return
             fi
+            # No file to inspect (moved/renamed): fall back to the behavior trail.
             if check_behavior "sed -i.*tomcat-users"; then echo "PASS"; return; fi
             echo "FAIL"
             ;;

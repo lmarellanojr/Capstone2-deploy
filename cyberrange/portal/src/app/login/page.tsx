@@ -3,8 +3,70 @@
 import { signIn, useSession } from "next-auth/react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
-import { Logo } from "@/components/layout/Logo";
+import { ShieldCheck, Target, TerminalSquare } from "lucide-react";
+import Image from "next/image";
 import { Button, LoadingSpinner } from "@/components/ui";
+
+// Left-panel selling points — what the platform actually is, for a first-time
+// MMDC BSIT student landing here.
+const HIGHLIGHTS = [
+  { Icon: ShieldCheck, title: "Attacker & defender scenarios", body: "Play both sides — break in, then lock it down." },
+  { Icon: TerminalSquare, title: "Real machines in your browser", body: "A live Kali box and targets, in a private lab only you can touch." },
+  { Icon: Target, title: "Scored as you work", body: "Milestones are detected automatically, with points and progress." },
+];
+
+// Two lines on purpose: who it's for, then what it is.
+function Tagline() {
+  return (
+    <>
+      <span className="block">Built for MMDC Network &amp; Cybersecurity students.</span>
+      <span className="block">A safe space to learn, practice, grow, and protect.</span>
+    </>
+  );
+}
+
+function BrandHero() {
+  return (
+    <div className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-[#14171C] text-white p-12 xl:p-16">
+      {/* soft brand glow, decorative */}
+      <div aria-hidden="true" className="pointer-events-none absolute -top-32 -left-24 h-96 w-96 rounded-full bg-brand/30 blur-3xl" />
+      <div aria-hidden="true" className="pointer-events-none absolute -bottom-32 -right-24 h-96 w-96 rounded-full bg-brand/20 blur-3xl" />
+
+      <div className="relative flex items-center gap-3">
+        {/* White chip: the shield's navy half disappears on the dark panel. */}
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white shadow-sm" aria-hidden="true">
+          <Image src="/mmdc-shield.png" alt="" width={37} height={32} priority />
+        </div>
+        <div className="leading-tight">
+          <p className="font-bold">MMDC Cyber Range</p>
+          <p className="text-xs text-white/60">Training Platform</p>
+        </div>
+      </div>
+
+      <div className="relative max-w-md">
+        <h2 className="text-3xl xl:text-4xl font-bold leading-tight">Learn cybersecurity by doing.</h2>
+        <p className="mt-4 text-white/70 leading-relaxed">
+          Hands-on labs in a private environment — attack, defend, and watch your progress scored in real time.
+        </p>
+        <ul className="mt-10 space-y-6">
+          {HIGHLIGHTS.map(({ Icon, title, body }) => (
+            <li key={title} className="flex gap-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/10">
+                <Icon size={20} className="text-white" aria-hidden="true" />
+              </span>
+              <div>
+                <p className="font-semibold">{title}</p>
+                <p className="text-sm text-white/60">{body}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <p className="relative max-w-md text-sm leading-relaxed text-white/60"><Tagline /></p>
+    </div>
+  );
+}
 import { landingPathForRole, shouldHonorCallbackUrl, resolveSameOriginPath } from "@/lib/loginRouting";
 
 function LoginContent() {
@@ -69,8 +131,8 @@ function LoginContent() {
       await signIn("keycloak", { callbackUrl: returnTo, redirect: true });
       // Review finding (Leo, PR #100): On the success path, signIn initiates browser
       // navigation to Keycloak. Leaving isLoading true keeps the button disabled and
-      // displaying "Logging in..." until the browser unloads, preventing a brief flicker
-      // back to "Log in".
+      // displaying "Entering Cyber Range..." until the browser unloads, preventing a brief flicker
+      // back to "Enter Cyber Range".
     } catch (err) {
       // Review finding (Leo, PR #100): Log dispatch errors so they are diagnosable in
       // devtools, display an inline error alert, and reset loading state so the user can retry.
@@ -98,48 +160,58 @@ function LoginContent() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-primary p-6">
-      <div className="card-surface p-8 sm:p-10 max-w-md w-full">
-        <div className="flex justify-center mb-8">
-          <Logo size="lg" />
+    <div className="min-h-screen lg:grid lg:grid-cols-2 bg-primary">
+      <BrandHero />
+
+      <div className="flex items-center justify-center p-6 sm:p-10">
+        <div className="w-full max-w-sm text-center">
+          {/* Official MMDC lockup above the form, centered on every screen size. */}
+          <div className="flex justify-center mb-10">
+            <Image
+              src="/mmdc-logo.png"
+              alt="Mapúa Malayan Digital College"
+              width={800}
+              height={694}
+              className="h-24 w-auto"
+              priority
+            />
+          </div>
+
+          <h1 className="text-2xl font-bold text-text-main mb-1">Sign in to Cyber Range</h1>
+          <p className="text-text-muted text-sm mb-8">Start your hands-on cybersecurity labs and challenges.</p>
+
+          {error === "SessionExpired" && (
+            <div role="alert" className="mb-6 p-4 alert-error text-sm text-left">
+              <p className="font-semibold mb-1">Session Expired</p>
+              <p>Your authentication token has expired. Please sign in again.</p>
+            </div>
+          )}
+
+          {signInError && (
+            <div role="alert" className="mb-6 p-4 alert-error text-sm text-left">
+              <p className="font-semibold mb-1">Sign In Failed</p>
+              <p>{signInError}</p>
+            </div>
+          )}
+
+          <Button
+            variant="primary"
+            size="lg"
+            onClick={handleSignIn}
+            disabled={isLoading}
+            loading={isLoading}
+            className="w-full"
+          >
+            {isLoading ? "Entering Cyber Range..." : "Enter Cyber Range"}
+          </Button>
+
+          <div className="mt-8 border-t border-border pt-5">
+            <p className="text-text-muted text-xs">Secure login powered by Keycloak</p>
+          </div>
+
+          {/* The hero (and its tagline) is hidden on small screens. */}
+          <p className="lg:hidden mt-8 text-center text-xs leading-relaxed text-text-muted"><Tagline /></p>
         </div>
-
-        <h1 className="text-2xl font-bold text-center text-text-main mb-1">Sign in</h1>
-        <p className="text-text-muted text-center text-sm mb-8">
-          Access your cybersecurity training labs
-        </p>
-
-        {error === "SessionExpired" && (
-          <div className="mb-6 p-4 alert-error text-sm">
-            <p className="font-semibold mb-1">Session Expired</p>
-            <p>Your authentication token has expired. Please sign in again.</p>
-          </div>
-        )}
-
-        {signInError && (
-          <div className="mb-6 p-4 alert-error text-sm">
-            <p className="font-semibold mb-1">Sign In Failed</p>
-            <p>{signInError}</p>
-          </div>
-        )}
-
-        <Button
-          variant="primary"
-          size="lg"
-          onClick={handleSignIn}
-          disabled={isLoading}
-          loading={isLoading}
-          className="w-full"
-        >
-          {isLoading ? "Logging in..." : "Log in"}
-        </Button>
-
-        <p className="text-text-muted text-xs text-center mt-6">
-          Secure authentication via Keycloak demo accounts
-        </p>
-        <p className="text-text-muted text-[11px] text-center mt-1">
-          Sign in with your assigned student, instructor, or admin credentials
-        </p>
       </div>
     </div>
   );

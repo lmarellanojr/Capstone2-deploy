@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui";
 import { Logo } from "./Logo";
 import { useScenarios } from "@/hooks/useScenarios";
-import type { NavItem } from "@/lib/navigation";
+import { studentNavItems, type NavItem } from "@/lib/navigation";
 
 interface SidebarProps {
   /** Overrides the default Student nav. Instructor/Admin shells pass their own set. */
@@ -20,15 +21,10 @@ export function Sidebar({ navItems, sectionLabel }: SidebarProps) {
   const { data: session } = useSession();
   const scenarios = useScenarios();
 
-  const defaultNavItems: NavItem[] = [
-    { href: "/dashboard", label: "Dashboard", icon: "▦" },
-    { href: "/scenarios", label: "My Labs", icon: "◎", badge: String(scenarios.length) },
-    { href: "#", label: "Leaderboard", icon: "▲", disabled: true },
-    { href: "#", label: "Learning Path", icon: "→", disabled: true },
-    { href: "#", label: "Settings", icon: "⚙", disabled: true },
-  ];
-
-  const items = navItems ?? defaultNavItems;
+  // Students see only destinations that work today. The old Leaderboard /
+  // Learning Path / Settings placeholders were permanently disabled "Soon"
+  // rows — dead ends that made the product look unfinished.
+  const items = navItems ?? studentNavItems(scenarios.length);
 
   // Pick the longest matching href so a child route (e.g. /instructor/reviews/case-0142)
   // still activates its section item ("Reviews") without also lighting up an unrelated
@@ -39,11 +35,13 @@ export function Sidebar({ navItems, sectionLabel }: SidebarProps) {
     if (!matches) return best;
     return best === null || item.href.length > best.length ? item.href : best;
   }, null);
-  const isActive = (href: string) => href === activeHref;
+
+  const showBackToAdmin =
+    !!session?.user?.roles?.includes("admin") && pathname !== "/admin" && !pathname.startsWith("/admin/");
 
   return (
-    <aside className="w-64 max-w-full bg-secondary border-r border-border h-screen min-h-[100dvh] flex flex-col shadow-card">
-      <div className="p-6 border-b border-border">
+    <aside className="w-64 max-w-full bg-secondary border-r border-border h-screen min-h-[100dvh] flex flex-col">
+      <div className="px-6 py-5 border-b border-border">
         <Logo showSubtitle />
         {sectionLabel && (
           <span className="mt-3 inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide bg-brand/10 text-brand border border-brand/20">
@@ -52,50 +50,71 @@ export function Sidebar({ navItems, sectionLabel }: SidebarProps) {
         )}
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 py-6 space-y-1">
+      <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 py-5 space-y-1">
         {items.map((item) => {
-          const active = !item.disabled && isActive(item.href);
-          const className = `flex items-center justify-between px-4 py-3 rounded-lg transition text-sm ${
+          const active = !item.disabled && item.href === activeHref;
+          const Icon = item.icon;
+          const className = `flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg transition text-sm focus-ring ${
             item.disabled
-              ? "text-text-muted/50 cursor-not-allowed"
+              ? "text-text-faint cursor-not-allowed"
               : active
-              ? "bg-muted text-text-main font-semibold border-l-4 border-brand pl-3"
+              ? "bg-brand/10 text-brand font-semibold"
               : "text-text-main hover:bg-muted"
           }`;
 
           const inner = (
             <>
-              <span className="flex items-center gap-3">
-                <span className="text-base opacity-70">{item.icon}</span>
-                <span>{item.label}</span>
+              <span className="flex items-center gap-3 min-w-0">
+                <Icon size={18} aria-hidden="true" className={active ? "text-brand" : "text-text-muted"} />
+                <span className="truncate">{item.label}</span>
               </span>
               {item.badge && <Badge variant="brand">{item.badge}</Badge>}
-              {item.disabled && (
-                <span className="text-[10px] uppercase tracking-wide text-text-muted">Soon</span>
-              )}
             </>
           );
 
           if (item.disabled) {
             return (
-              <div key={item.label} className={className}>
+              <div key={item.label} className={className} aria-disabled="true">
                 {inner}
               </div>
             );
           }
 
           return (
-            <Link key={item.href} href={item.href} className={className}>
+            <Link
+              key={item.href}
+              href={item.href}
+              className={className}
+              aria-current={active ? "page" : undefined}
+            >
               {inner}
             </Link>
           );
         })}
       </nav>
 
+      {/* Admins who open the Instructor view need a way home. Gated on the
+          session role (not added to instructorNavItems), so Instructors never
+          see it and the SEC-02 "no Admin links for Instructors" check holds. */}
+      {showBackToAdmin && (
+        <div className="px-3 pb-3">
+          <Link
+            href="/admin"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border text-sm font-medium text-text-main hover:bg-muted transition focus-ring"
+          >
+            <ArrowLeft size={18} aria-hidden="true" className="text-text-muted" />
+            Back to Admin
+          </Link>
+        </div>
+      )}
+
       {session?.user && (
-        <div className="border-t border-border p-4 bg-muted/40">
+        <div className="border-t border-border p-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-brand flex items-center justify-center text-white font-bold text-sm">
+            <div
+              className="w-9 h-9 rounded-full bg-brand flex items-center justify-center text-white font-bold text-sm shrink-0"
+              aria-hidden="true"
+            >
               {session.user.name?.charAt(0).toUpperCase() || "S"}
             </div>
             <div className="flex-1 min-w-0">

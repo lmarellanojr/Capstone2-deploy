@@ -2,92 +2,26 @@
 
 import React, { useEffect, useState, memo } from "react";
 import { createPortal } from "react-dom";
-import { Copy, Check } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
 import { Pod } from "@/lib/api";
 import { injectPodIpsIntoGuide } from "@/lib/podIps";
 import { Scenario, scenarioDisplayTitle } from "@/hooks/useScenarios";
-import { copyToClipboard } from "@/lib/copyToClipboard";
+import { loadGuideMarkdown, splitGuide } from "@/lib/guideSections";
+import { MarkdownView, GUIDE_PROSE_CLASSES } from "@/components/scenario/MarkdownView";
 
 interface GuideViewProps {
   pod: Pod;
   scenario: Scenario;
 }
 
-function getPlainText(node: React.ReactNode): string {
-  if (typeof node === "string") return node;
-  if (typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(getPlainText).join("");
-  if (React.isValidElement(node)) {
-    return getPlainText((node.props as { children?: React.ReactNode }).children);
-  }
-  return "";
-}
+type State =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; full: string; guide: string };
 
-// Fenced code blocks in the guide are lab commands students need to run
-// verbatim (see issue #7 - a missed `exit` command silently failed Manual
-// Check). A copy button removes the retyping step that's the usual source
-// of typos in commands like `set RHOSTS $TARGET_META`.
-function CodeBlock({ children, ...props }: any) {
-  const [copied, setCopied] = useState(false);
-  const text = getPlainText(children).replace(/\n$/, "");
-
-  // GUIDE-UX-TRIAL: long lab commands (e.g. the Scenario 3 Task 0 SSH line)
-  // were wider than the Guide panel, so only horizontal-scrolling revealed
-  // the full text -- a student hand-selecting the visible portion could copy
-  // an incomplete command. Wrapping here is purely a display fix: the Copy
-  // button already reads the full text from `children` via getPlainText()
-  // above, independent of how the <pre> renders, so it was never truncated.
-  return (
-    <div className="relative">
-      <pre {...props} className={`${props.className ?? ""} whitespace-pre-wrap break-words`}>
-        {children}
-      </pre>
-      <button
-        type="button"
-        onClick={async () => {
-          const ok = await copyToClipboard(text);
-          if (ok) {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }
-        }}
-        title={copied ? "Copied!" : "Copy to clipboard"}
-        aria-label="Copy command"
-        className="absolute top-2 right-2 p-1.5 rounded bg-white/10 text-white/70 hover:text-white hover:bg-white/20 transition"
-      >
-        {copied ? <Check size={14} /> : <Copy size={14} />}
-      </button>
-    </div>
-  );
-}
-
-const markdownComponents = {
-  table: ({ node, ...props }: any) => (
-    <div className="table-container w-full overflow-x-auto my-4">
-      <table className="w-full border-collapse min-w-[480px]" {...props} />
-    </div>
-  ),
-  th: ({ node, ...props }: any) => (
-    <th className="px-3 py-2 text-left font-semibold whitespace-nowrap" {...props} />
-  ),
-  td: ({ node, ...props }: any) => (
-    <td className="px-3 py-2 border-t whitespace-nowrap" {...props} />
-  ),
-  pre: CodeBlock,
-};
-
-// Print output has no use for an interactive copy button.
-const printMarkdownComponents = {
-  table: markdownComponents.table,
-  th: markdownComponents.th,
-  td: markdownComponents.td,
-};
-
+// The step-by-step walkthrough. The Big Picture, tools and scoring sections
+// are split out (splitGuide) into the welcome modal and the lab's pop-ups.
 function GuideViewComponent({ pod, scenario }: GuideViewProps) {
-  const [content, setContent] = useState<string>("Loading guide...");
+  const [state, setState] = useState<State>({ status: "loading" });
   // Printable copy lives in a portal attached directly to <body> - a sibling
   // of the whole app, not nested inside any of its fixed-height/overflow-auto
   // containers. Print CSS hides everything else and shows only this node.
@@ -111,54 +45,53 @@ function GuideViewComponent({ pod, scenario }: GuideViewProps) {
   useEffect(() => {
     let active = true;
     if (!scenario.guideFile) {
-      setContent("No guide available for this scenario.");
+      setState({ status: "error", message: "No guide available for this scenario." });
       return;
     }
-
-    fetch(`/scenarios/${scenario.guideFile}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Guide not found");
-        return res.text();
-      })
+    setState({ status: "loading" });
+    loadGuideMarkdown(scenario.guideFile)
       .then((text) => {
         if (!active) return;
-        setContent(injectPodIpsIntoGuide(text, pod.pod_id));
+        const full = injectPodIpsIntoGuide(text, pod.pod_id);
+        setState({ status: "ready", full, guide: splitGuide(full).guide });
       })
-      .catch((err) => {
-        if (!active) return;
-        setContent("Error loading guide: " + err.message);
+      .catch((err: Error) => {
+        if (active) setState({ status: "error", message: `Couldn't load the guide: ${err.message}` });
       });
-
     return () => {
       active = false;
     };
   }, [scenario.guideFile, pod.pod_id]);
 
+  let body: React.ReactNode;
+  if (state.status === "loading") {
+    body = (
+      <div className="space-y-3 animate-pulse p-2" aria-busy="true" aria-label="Loading">
+        <div className="h-4 w-2/3 rounded-full bg-muted" />
+        <div className="h-3 w-11/12 rounded-full bg-muted" />
+        <div className="h-3 w-10/12 rounded-full bg-muted" />
+        <div className="h-20 w-full rounded-lg bg-muted" />
+      </div>
+    );
+  } else if (state.status === "error") {
+    body = <p className="p-2 text-sm text-text-secondary">{state.message}</p>;
+  } else {
+    body = <MarkdownView content={state.guide} />;
+  }
+
   return (
     <div className="h-full flex flex-col">
-      <div className="prose prose-sm max-w-none p-2 flex-1 overflow-y-auto prose-headings:text-text-main prose-p:text-text-secondary prose-strong:text-text-main prose-code:text-brand prose-code:bg-muted prose-code:px-1 prose-code:rounded">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={markdownComponents}
-          rehypePlugins={[rehypeSanitize]}
-        >
-          {content}
-        </ReactMarkdown>
-      </div>
+      <div className={`${GUIDE_PROSE_CLASSES} p-2 flex-1 overflow-y-auto`}>{body}</div>
 
       {printRoot &&
+        state.status === "ready" &&
         createPortal(
           <div className="prose max-w-none p-10">
             {/* GUIDE-UX-TRIAL / SCEN-UX #116: match the on-screen guide's own
-                H1 (also renumbered to Scenario N in the .md source). */}
+                H1 (also renumbered to Scenario N in the .md source). The PDF
+                keeps the complete guide, Big Picture and tools included. */}
             <h1 className="mb-6">{scenarioDisplayTitle(scenario)}</h1>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={printMarkdownComponents}
-              rehypePlugins={[rehypeSanitize]}
-            >
-              {content}
-            </ReactMarkdown>
+            <MarkdownView content={state.full} printable />
           </div>,
           printRoot
         )}

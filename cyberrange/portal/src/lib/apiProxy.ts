@@ -17,11 +17,46 @@ try {
   )
 }
 
+/** Rebuilds a query string from only the named params, so a proxy route never
+ *  forwards arbitrary client-chosen parameters upstream. Returns "" or "?…". */
+export function forwardQuery(req: NextRequest, allowed: readonly string[]): string {
+  const out = new URLSearchParams()
+  for (const name of allowed) {
+    const value = req.nextUrl.searchParams.get(name)
+    if (value !== null && value !== "") out.set(name, value)
+  }
+  const qs = out.toString()
+  return qs ? `?${qs}` : ""
+}
+
+interface ProxyOptions {
+  /** Pass the upstream body through untouched (e.g. a CSV download) instead
+   *  of re-encoding it as JSON. Keeps Content-Type and Content-Disposition. */
+  raw?: boolean
+  /** Like raw, but as bytes: for images, where res.text() would corrupt the
+   *  data. Also keeps the upstream's caching and safety headers. */
+  binary?: boolean
+  /** Forward the incoming request body as-is with its own Content-Type
+   *  (multipart file uploads) instead of JSON-encoding the `body` argument. */
+  passBody?: boolean
+}
+
+// Headers an image response keeps end to end (the backend sets nosniff and a
+// sandbox CSP so a served upload can never run as a page).
+const BINARY_PASS_HEADERS = [
+  "content-type",
+  "content-disposition",
+  "cache-control",
+  "x-content-type-options",
+  "content-security-policy",
+]
+
 export async function proxyToApi(
   req: NextRequest,
   path: string,
   method: string,
-  body?: unknown
+  body?: unknown,
+  options: ProxyOptions = {}
 ): Promise<NextResponse> {
   const session = await getServerSession(authOptions)
   if (!session) {
@@ -35,13 +70,37 @@ export async function proxyToApi(
     headers["Authorization"] = `Bearer ${session.accessToken}`
   }
 
+  let fetchBody: BodyInit | undefined = body ? JSON.stringify(body) : undefined
+  if (options.passBody) {
+    const contentType = req.headers.get("content-type")
+    if (contentType) headers["Content-Type"] = contentType
+    else delete headers["Content-Type"]
+    fetchBody = await req.arrayBuffer()
+  }
+
   try {
     const res = await fetch(`${API_URL}${path}`, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      body: fetchBody,
       cache: "no-store",
     })
+    if (options.binary) {
+      const passHeaders = new Headers()
+      for (const name of BINARY_PASS_HEADERS) {
+        const value = res.headers.get(name)
+        if (value) passHeaders.set(name, value)
+      }
+      return new NextResponse(await res.arrayBuffer(), { status: res.status, headers: passHeaders })
+    }
+    if (options.raw) {
+      const passHeaders = new Headers()
+      for (const name of ["content-type", "content-disposition"]) {
+        const value = res.headers.get(name)
+        if (value) passHeaders.set(name, value)
+      }
+      return new NextResponse(await res.text(), { status: res.status, headers: passHeaders })
+    }
     const data = await res.json().catch(() => ({}))
     return NextResponse.json(data, { status: res.status })
   } catch (err) {

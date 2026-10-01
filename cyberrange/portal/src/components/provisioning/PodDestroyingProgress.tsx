@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { CheckCircle2 } from "lucide-react";
 import { useStatusPoller } from "@/hooks/useStatusPoller";
 import { useToastContext } from "@/context/ToastContext";
 import { Button } from "@/components/ui";
@@ -9,7 +10,35 @@ interface PodDestroyingProgressProps {
   podId: number;
   onComplete?: () => void;
   onError?: (error: Error) => void;
+  /** Student dashboard wording ("lab session") instead of the operator
+   *  wording ("pod") the Admin pages use. Behavior is identical. */
+  studentFacing?: boolean;
 }
+
+const COPY = {
+  admin: {
+    toast: "Pod destroyed successfully!",
+    stuckToast:
+      "Pod is taking longer than expected to destroy. The system is retrying automatically. Please contact support if this persists.",
+    errorTitle: "Unable to check destroy status",
+    retry: "Retry Destroy",
+    done: "Pod Destroyed",
+    working: (status: string) => `Destroying... (${status})`,
+    stuck:
+      "Pod taking longer than expected. The system is retrying automatically — please contact support if this persists.",
+  },
+  student: {
+    toast: "Lab session ended. Your score is saved.",
+    stuckToast:
+      "Ending your lab is taking longer than usual. It's retrying automatically — ask your instructor if this persists.",
+    errorTitle: "Couldn't confirm the lab has ended",
+    retry: "Check again",
+    done: "Lab session ended",
+    working: () => "Shutting down your lab…",
+    stuck:
+      "This is taking longer than usual. It's retrying automatically — ask your instructor if this persists.",
+  },
+};
 
 // How long the success state is shown before calling onComplete (gives the
 // user a moment to register that the pod is gone before the card disappears).
@@ -23,7 +52,8 @@ const AUTO_COMPLETE_DELAY_MS = 1000;
  * Non-terminal DESTROYING that persists past 5 minutes surfaces the hook's
  * stuckDestroyWarning flag as an inline warning (reaper is retrying).
  */
-export function PodDestroyingProgress({ podId, onComplete, onError }: PodDestroyingProgressProps) {
+export function PodDestroyingProgress({ podId, onComplete, onError, studentFacing = false }: PodDestroyingProgressProps) {
+  const copy = studentFacing ? COPY.student : COPY.admin;
   const { success, error: showError, warning } = useToastContext();
   const { status, error, stuckDestroyWarning, restart } = useStatusPoller(podId, "destroy", {
     onError: (errorMsg: string) => {
@@ -45,12 +75,12 @@ export function PodDestroyingProgress({ podId, onComplete, onError }: PodDestroy
     if (!isDestroyed || completeScheduledRef.current) return;
     completeScheduledRef.current = true;
     // Show success toast
-    success("Pod destroyed successfully!", AUTO_COMPLETE_DELAY_MS + 500);
+    success(copy.toast, AUTO_COMPLETE_DELAY_MS + 500);
     const timer = setTimeout(() => {
       onCompleteRef.current?.();
     }, AUTO_COMPLETE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [isDestroyed, success]);
+  }, [isDestroyed, success, copy.toast]);
 
   // Reset the notified-error guard once the error clears (e.g. via restart())
   // so a subsequent failure can notify onError again.
@@ -67,20 +97,17 @@ export function PodDestroyingProgress({ podId, onComplete, onError }: PodDestroy
   // Notify about stuck destroy via warning toast
   useEffect(() => {
     if (stuckDestroyWarning) {
-      warning(
-        "Pod is taking longer than expected to destroy. The system is retrying automatically. Please contact support if this persists.",
-        5000
-      );
+      warning(copy.stuckToast, 5000);
     }
-  }, [stuckDestroyWarning, warning]);
+  }, [stuckDestroyWarning, warning, copy.stuckToast]);
 
   if (hasError) {
     return (
       <div role="alert" className="text-center py-6">
-        <p className="text-danger font-semibold mb-2">Unable to check destroy status</p>
+        <p className="text-danger font-semibold mb-2">{copy.errorTitle}</p>
         <p className="text-text-muted text-sm mb-4">{error}</p>
         <Button variant="secondary" size="sm" onClick={restart}>
-          Retry Destroy
+          {copy.retry}
         </Button>
       </div>
     );
@@ -89,25 +116,22 @@ export function PodDestroyingProgress({ podId, onComplete, onError }: PodDestroy
   if (isDestroyed) {
     return (
       <div className="text-center py-6">
-        <div className="mb-2 text-success text-3xl" aria-hidden="true">
-          ✓
-        </div>
-        <p className="font-semibold text-text-main">Pod Destroyed</p>
+        <CheckCircle2 size={32} className="mx-auto mb-2 text-success" aria-hidden="true" />
+        <p className="font-semibold text-text-main">{copy.done}</p>
       </div>
     );
   }
 
   return (
     <div className="py-4" data-testid="pod-destroying-progress">
-      <p className="font-semibold text-text-main mb-2">Destroying... ({status ?? "DESTROYING"})</p>
-      <div className="w-full h-2 bg-muted rounded-full overflow-hidden" role="progressbar">
+      <p className="font-semibold text-text-main mb-2">{copy.working(status ?? "DESTROYING")}</p>
+      <div className="w-full h-2 bg-muted rounded-full overflow-hidden" role="progressbar" aria-label={copy.working(status ?? "DESTROYING")}>
         <div className="h-full bg-brand animate-pulse w-full" />
       </div>
 
       {stuckDestroyWarning && (
         <p role="alert" className="mt-3 text-warning text-sm font-semibold">
-          Pod taking longer than expected. The system is retrying automatically — please contact
-          support if this persists.
+          {copy.stuck}
         </p>
       )}
     </div>

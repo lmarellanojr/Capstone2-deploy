@@ -1,68 +1,68 @@
 "use client";
 
 import { useMemo } from "react";
+import { SearchX } from "lucide-react";
 import { ScenarioCard } from "./ScenarioCard";
 import { useScenarios } from "@/hooks/useScenarios";
+import { useScenarioProgress } from "@/hooks/useScenarioProgress";
 import { LoadingSpinner } from "@/components/ui";
+import { progressStatus, recommendedScenarioId, scenarioTotalPoints } from "@/lib/scenarioProgress";
 
 interface ScenarioGridProps {
+  /** From the top-bar search box. */
   searchQuery?: string;
-  category?: "all" | "offensive" | "defensive";
-  difficulties?: number[];
 }
 
-export function ScenarioGrid({
-  searchQuery = "",
-  category = "all",
-  difficulties,
-}: ScenarioGridProps) {
+// Four labs, shown in learning order (each builds on the last), each with the
+// student's own progress. No category/difficulty filters: with this few labs
+// they added decisions without helping anyone find anything.
+export function ScenarioGrid({ searchQuery = "" }: ScenarioGridProps) {
   const scenarios = useScenarios();
+  const earned = useScenarioProgress();
+
+  const ordered = useMemo(() => [...scenarios].sort((a, b) => a.displayNumber - b.displayNumber), [scenarios]);
 
   const filtered = useMemo(() => {
-    let result = scenarios;
+    if (!searchQuery) return ordered;
+    const query = searchQuery.toLowerCase();
+    return ordered.filter(
+      (s) =>
+        s.name.toLowerCase().includes(query) ||
+        s.description.toLowerCase().includes(query) ||
+        s.mitre.toLowerCase().includes(query)
+    );
+  }, [ordered, searchQuery]);
 
-    if (category !== "all") {
-      result = result.filter((s) => s.type === category);
-    }
-
-    if (difficulties && difficulties.length > 0) {
-      result = result.filter((s) => difficulties.includes(s.difficulty));
-    }
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(
-        (s) =>
-          s.name.toLowerCase().includes(query) ||
-          s.description.toLowerCase().includes(query) ||
-          s.mitre.toLowerCase().includes(query)
-      );
-    }
-
-    return result;
-  }, [scenarios, searchQuery, category, difficulties]);
+  const recommended = recommendedScenarioId(scenarios, earned);
 
   if (!scenarios.length) {
     return <LoadingSpinner message="Loading scenarios..." />;
   }
 
-  return (
-    <div>
-      <p className="text-text-secondary text-sm mb-6">
-        {filtered.length} of {scenarios.length} labs
-      </p>
+  if (filtered.length === 0) {
+    return (
+      <div className="text-center py-14 px-6 card-surface border-dashed" aria-live="polite">
+        <SearchX size={32} className="mx-auto mb-3 text-text-faint" aria-hidden="true" />
+        <p className="text-text-main font-semibold">No labs match “{searchQuery}”</p>
+        <p className="text-text-muted text-sm mt-1">Try another word, or clear the search box above.</p>
+      </div>
+    );
+  }
 
-      {filtered.length === 0 ? (
-        <div className="text-center py-16 card-surface rounded-xl">
-          <p className="text-text-secondary text-lg">No labs match your filters.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {filtered.map((scenario) => (
-            <ScenarioCard key={scenario.id} scenario={scenario} />
-          ))}
-        </div>
-      )}
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      {filtered.map((scenario) => {
+        const total = scenarioTotalPoints(scenario);
+        const got = earned?.[scenario.id] ?? 0;
+        return (
+          <ScenarioCard
+            key={scenario.id}
+            scenario={scenario}
+            progress={earned === null ? undefined : { status: progressStatus(got, total), earned: got, total }}
+            recommended={scenario.id === recommended}
+          />
+        );
+      })}
     </div>
   );
 }

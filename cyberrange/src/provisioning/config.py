@@ -63,6 +63,12 @@ WAZUH_URL = os.getenv("WAZUH_API_URL", "https://localhost:55000")
 WAZUH_USER = os.getenv("WAZUH_SCORING_USER", "")
 # Optional secret; empty string when unset (scoring may be disabled).
 WAZUH_PASS = get_secret("WAZUH_SCORING_PW", required=False, default="") or ""
+# Separate least-privilege user for agent cleanup (agent:read + agent:delete
+# only). The read-only scoring user gets 403 on DELETE /agents, which left every
+# lab's agents registered; a same-name agent then blocks the student's next lab
+# from enrolling. Kept apart from the scoring user so scoring stays read-only.
+WAZUH_PROVISION_USER = os.getenv("WAZUH_PROVISION_USER", "")
+WAZUH_PROVISION_PASS = get_secret("WAZUH_PROVISION_PW", required=False, default="") or ""
 WAZUH_CERT_PATH = os.getenv("WAZUH_CERT_PATH", "")
 WAZUH_CA_BUNDLE = os.getenv("WAZUH_CA_BUNDLE", "")
 WAZUH_TLS_VERIFY = os.getenv("WAZUH_TLS_VERIFY", "true")

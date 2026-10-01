@@ -11,9 +11,10 @@ from db import get_db_connection, log_event
 from dvwa_compose import ensure_dvwa_compose
 from dvwa_ready import ensure_dvwa_ready
 from guest_nic import ensure_guest_nic_up
+import lab_history
 from lab_proxy import add_dvwa_http_proxy, remove_dvwa_http_proxy
 from pod_net import create_pod_network, delete_pod_network, pod_net_name, pod_subnet
-from wazuh_client import deregister_agents, get_agent_id_by_name, get_wazuh_token
+from wazuh_client import deregister_agents, get_agent_id_by_name, get_wazuh_token, remove_agents_named
 
 logger = logging.getLogger("provision_api")
 
@@ -35,6 +36,8 @@ def finalize_destroyed_pod(pod_id: int, terminal_status: str) -> None:
             "UPDATE pods SET status=? WHERE pod_id=?",
             (terminal_status, pod_id),
         )
+        # Close this lab's window for the instructor SIEM history (v8).
+        lab_history.record_lab_end(conn, pod_id, terminal_status)
     conn.close()
 
 
@@ -71,14 +74,19 @@ def wazuh_manager_ip(client) -> str:
 
 
 def get_lxd_free_mb() -> Optional[float]:
+    # The pool name is host-specific: the Ampere host's only pool is
+    # "cyberrange", so a hard-coded "default" always raised NotFound -- the
+    # admin LXD row read Unavailable and the provisioning STORAGE_FULL gate
+    # (which skips on None) was silently off.
+    pool_name = os.getenv("LXD_STORAGE_POOL", "default")
     try:
         client = pylxd.Client(project=os.getenv("LXD_PROJECT", "default"))
-        pool = client.storage_pools.get("default")
+        pool = client.storage_pools.get(pool_name)
         res = pool.resources.get()
         space = res.space
         return (int(space["total"]) - int(space["used"])) / 1024 / 1024
     except Exception as e:
-        logger.warning(f"LXD storage check failed: {e}")
+        logger.warning(f"LXD storage check failed (pool {pool_name!r}): {e}")
         return None
 
 
@@ -297,19 +305,33 @@ write_files:
         agent_ids = {}
         try:
             manager_ip = wazuh_manager_ip(client)
-            for inst_name in (meta_name, dvwa_name):
+            # Free this student's agent names first: an agent left over from a
+            # previous lab (teardown couldn't remove it) makes the manager
+            # refuse the new same-name agent, so the lab got no SIEM data.
+            stale = remove_agents_named(student_id)
+            if stale:
+                logger.info(f"removed stale Wazuh agents {stale} for {student_id}")
+            # Only machines whose image ships the agent. Waiting on one that
+            # can't exist (dvwa-base had none) held every provision for the
+            # full ~45s loop below.
+            roles = []
+            for role, inst_name in (("meta", meta_name), ("dvwa", dvwa_name)):
                 inst = client.instances.get(inst_name)
+                if inst.execute(["test", "-f", "/var/ossec/etc/ossec.conf"]).exit_code != 0:
+                    logger.warning(f"{inst_name}: no wazuh-agent in image; not enrolling it")
+                    continue
                 inst.execute(["sed", "-i", f"s/MANAGER_IP/{manager_ip}/g", "/var/ossec/etc/ossec.conf"])
                 inst.execute(["systemctl", "enable", "wazuh-agent"])
                 inst.execute(["systemctl", "start", "wazuh-agent"])
+                roles.append(role)
             token = get_wazuh_token()
             for _ in range(9):
-                for role in ("meta", "dvwa"):
+                for role in roles:
                     if role not in agent_ids:
                         aid = get_agent_id_by_name(token, f"pod-{student_id}-{role}")
                         if aid:
                             agent_ids[role] = aid
-                if len(agent_ids) == 2:
+                if len(agent_ids) == len(roles):
                     break
                 time.sleep(5)
             wazuh_agent_id = json.dumps(agent_ids) if agent_ids else None
@@ -377,7 +399,7 @@ def cleanup_after_failure(
     # every future provision attempt at the capacity check. The DB must always
     # get marked FAILED_ROLLBACK_COMPLETE regardless of what happens here.
     try:
-        deregister_agents(wazuh_agent_id)
+        deregister_agents(wazuh_agent_id, student_id)
  
         client = pylxd.Client(project=os.getenv("LXD_PROJECT", "default"))
         try:
@@ -409,7 +431,7 @@ def perform_destruction(pod: dict):
     student_id = pod["student_id"]
     wazuh_agent_id = pod.get("wazuh_agent_id")
 
-    deregister_agents(wazuh_agent_id)
+    deregister_agents(wazuh_agent_id, student_id)
 
     client = pylxd.Client(project=os.getenv("LXD_PROJECT", "default"))
     try:

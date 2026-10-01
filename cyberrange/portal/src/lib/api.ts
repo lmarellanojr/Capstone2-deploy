@@ -142,6 +142,10 @@ export interface InstructorMilestone {
   milestone_id: number
   status: string
   detection_score?: number
+  /** Which lab the attempt ran on (GET /instructor/students/{id} only). */
+  pod_id?: number
+  /** What corroborated it: "rule 5710 on agent 012", "browser:sqli-m1", ... */
+  detection_data?: string | null
   verified_at?: string
 }
 
@@ -176,6 +180,63 @@ export interface InstructorStudentDetail {
   milestones: InstructorMilestone[]
   reviews: ReviewCase[]
 }
+
+// GET /instructor/pods: serialize_instructor_pod + that student's milestone
+// history for the pod's scenario (pods_router.instructor_list_pods).
+export interface InstructorPodWithProgress extends InstructorPod {
+  milestones: InstructorMilestone[]
+}
+
+// ADM-USER — users_router.serialize_user. One app role per account (AUTH-03);
+// `role` is null when the account holds none of the three.
+export type AppRole = 'student' | 'instructor' | 'admin'
+
+export interface AdminUser {
+  id: string
+  username: string | null
+  email: string | null
+  first_name: string | null
+  last_name: string | null
+  enabled: boolean
+  role: AppRole | null
+  roles: string[]
+  created_at: string | null
+}
+
+// users_router.CreateUserRequest (extra="forbid": send exactly these keys).
+export interface CreateUserInput {
+  username: string
+  email?: string
+  first_name?: string
+  last_name?: string
+  role: AppRole
+  password: string
+  temporary_password: boolean
+}
+
+// audit_router.admin_list_audit_log — one audit_log row. `student_id` is the
+// target account (users) or pod owner (force-destroy); the acting Admin is
+// recorded in `detail` as "actor=<username>".
+export interface AuditEvent {
+  id: number
+  event_type: string
+  student_id: string | null
+  pod_id: number | null
+  vmid: string | null
+  result: string | null
+  detail: string | null
+  timestamp: string
+}
+
+export interface AuditLogPage {
+  events: AuditEvent[]
+  next_before_id: number | null
+  event_types: string[]
+}
+
+// Student-visible review case: GET /reviews/{id} returns the full row, minus
+// SCORING_CONFLICT cases, which the backend never shows a student.
+export type StudentReviewCase = ReviewCase
 
 // Provisioning API
 export const provisioning = {
@@ -337,7 +398,72 @@ export const provisioning = {
 
 // Instructor/Admin API — dashboard, students list, student progress detail.
 // Backed by GET /instructor/students[/{id}] (auth.require_role(["instructor","admin"])).
+// Instructor SIEM history (GET /instructor/students/{id}/labs ...).
+export interface InstructorLab {
+  pod_id: number
+  scenario_id: string
+  started_at: string
+  /** null while the lab is still running */
+  ended_at: string | null
+  active: boolean
+  /** true for labs from before end times were recorded (estimated window) */
+  end_estimated: boolean
+}
+
+export interface InstructorLabAlerts {
+  lab: InstructorLab
+  alerts: SiemAlert[]
+  total_count: number
+  truncated?: boolean
+  error?: string
+}
+
+export interface ReviewAlertSnapshot {
+  review_id: number
+  pod_id: number | null
+  window_start: string | null
+  window_end: string | null
+  end_estimated: boolean
+  total_count: number
+  alerts: SiemAlert[]
+  error: string | null
+  captured_at: string
+}
+
 export const instructor = {
+  listStudentLabs: async (studentId: string): Promise<{ student_id: string; labs: InstructorLab[] }> => {
+    const response = await apiClient.get(`/instructor/students/${encodeURIComponent(studentId)}/labs`)
+    return response.data
+  },
+
+  getLabAlerts: async (studentId: string, podId: number, startedAt: string): Promise<InstructorLabAlerts> => {
+    const response = await apiClient.get(
+      `/instructor/students/${encodeURIComponent(studentId)}/labs/${podId}/alerts`,
+      { params: { started_at: startedAt } }
+    )
+    return response.data
+  },
+
+  getReviewAlertSnapshot: async (reviewId: number | string): Promise<{ snapshot: ReviewAlertSnapshot | null }> => {
+    const response = await apiClient.get(`/instructor/reviews/${reviewId}/alert-snapshot`)
+    return response.data
+  },
+
+  // Read-only SIEM view of any student's ACTIVE pod (SIEM audit gap 6).
+  // Same response shape and allowlisted fields as provisioning.getAlerts.
+  getPodAlerts: async (
+    podId: number,
+    query?: { limit?: number; since_minutes?: number; rule_id?: string }
+  ): Promise<{
+    pod_id: number
+    alerts: SiemAlert[]
+    total_count: number
+    query_window_minutes: number
+    error?: string
+  }> => {
+    const response = await apiClient.get(`/instructor/pods/${podId}/alerts`, { params: query })
+    return response.data
+  },
   listStudents: async (): Promise<{ students: InstructorStudentSummary[] }> => {
     const response = await apiClient.get('/instructor/students')
     return response.data
@@ -374,6 +500,117 @@ export const instructor = {
     )
     return response.data
   },
+
+  // GAP-02: live student pods + milestone history.
+  listPods: async (): Promise<{ pods: InstructorPodWithProgress[] }> => {
+    const response = await apiClient.get('/instructor/pods')
+    return response.data
+  },
+
+  // SCORE-02 / PAPER-16. Fetched as a Blob (not a plain link) so a 503 —
+  // e.g. TELEMETRY_ANONYMIZATION_SALT missing for an anonymized export — is
+  // reported as an error instead of being saved to disk as the "export".
+  exportKnowledgeGain: async (opts: {
+    format: 'csv' | 'json'
+    anonymize: boolean
+    scenarioId?: number
+  }): Promise<Blob> => {
+    const params: Record<string, string> = {
+      format: opts.format,
+      anonymize: String(opts.anonymize),
+    }
+    if (opts.scenarioId) params.scenario_id = String(opts.scenarioId)
+    try {
+      const response = await apiClient.get('/instructor/export/knowledge-gain', {
+        params,
+        responseType: 'blob',
+      })
+      return response.data as Blob
+    } catch (err) {
+      // With responseType 'blob' an error body is a Blob too; decode it so
+      // backendDetail() can read FastAPI's JSON {detail}.
+      const e = err as { response?: { data?: unknown } }
+      if (e.response?.data instanceof Blob) {
+        try {
+          e.response.data = JSON.parse(await e.response.data.text())
+        } catch {
+          // Not JSON — leave the Blob; callers fall back to a generic message.
+        }
+      }
+      throw err
+    }
+  },
+}
+
+// A screenshot attached to a review case (GET /reviews/{id}/images).
+export interface EvidenceImage {
+  id: number
+  review_id: number
+  original_name: string | null
+  content_type: string
+  byte_size: number
+  width: number | null
+  height: number | null
+  caption: string | null
+  created_at: string
+}
+
+// Student review requests — the student half of SCORE-HYBRID/INST (the
+// instructor half is `instructor.listReviews/getReview/resolveReview`).
+export const reviews = {
+  // MANUAL_REVIEW asks an instructor to look at one milestone; the backend
+  // requires conflict_reason or report_text. Student identity comes from the
+  // token server-side, never from this body.
+  submit: async (data: {
+    scenario_id: number
+    milestone_id?: number | null
+    case_type: 'MANUAL_REVIEW' | 'WRITTEN_REPORT'
+    report_text?: string | null
+    conflict_reason?: string | null
+    evidence_data?: string | null
+  }): Promise<{ status: string; review_id: number }> => {
+    const response = await apiClient.post('/reviews/submit', data)
+    return response.data
+  },
+
+  get: async (reviewId: number): Promise<StudentReviewCase> => {
+    const response = await apiClient.get(`/reviews/${encodeURIComponent(String(reviewId))}`)
+    return response.data
+  },
+
+  // Evidence screenshots. The backend re-validates and strips metadata; the
+  // caller should shrink big images first (lib/imageCompress) because the
+  // origin proxy caps request bodies at 1 MB.
+  listImages: async (reviewId: number): Promise<{ review_id: number; images: EvidenceImage[] }> => {
+    const response = await apiClient.get(`/reviews/${encodeURIComponent(String(reviewId))}/images`)
+    return response.data
+  },
+
+  uploadImage: async (reviewId: number, file: Blob, filename: string): Promise<EvidenceImage> => {
+    const form = new FormData()
+    form.append('file', file, filename)
+    const response = await apiClient.post(`/reviews/${encodeURIComponent(String(reviewId))}/images`, form)
+    return response.data
+  },
+
+  deleteImage: async (reviewId: number, imageId: number): Promise<void> => {
+    await apiClient.delete(
+      `/reviews/${encodeURIComponent(String(reviewId))}/images/${encodeURIComponent(String(imageId))}`
+    )
+  },
+
+  /** Same-origin URL for an <img src>; the BFF adds the session's token. */
+  imageUrl: (reviewId: number, imageId: number): string =>
+    `${API_BASE}/reviews/${encodeURIComponent(String(reviewId))}/images/${encodeURIComponent(String(imageId))}`,
+
+  // Only for cases an instructor returned with RETRY.
+  resubmit: async (
+    reviewId: number,
+    data: { report_text?: string | null; conflict_reason?: string | null; evidence_data?: string | null }
+  ): Promise<{ status: string; review_id: number }> => {
+    const response = await apiClient.post(`/reviews/${encodeURIComponent(String(reviewId))}/resubmit`, data)
+    return response.data
+  },
 }
 
 // ADM-UI #31 — Admin pods list/detail/force-destroy + capacity.
@@ -400,6 +637,57 @@ export const admin = {
 
   getInfraHealth: async (): Promise<InfraHealth> => {
     const response = await apiClient.get('/admin/infra-health')
+    return response.data
+  },
+
+  // ADM-USER (#32 / PR #88) — Keycloak-backed user management.
+  listUsers: async (search?: string): Promise<{ users: AdminUser[] }> => {
+    const params: Record<string, string> = { max: '200' }
+    if (search?.trim()) params.search = search.trim()
+    const response = await apiClient.get('/admin/users', { params })
+    return response.data
+  },
+
+  createUser: async (data: CreateUserInput): Promise<AdminUser> => {
+    const response = await apiClient.post('/admin/users', data)
+    return response.data
+  },
+
+  // Disabling also ends the user's sessions (backend logout + cache revoke).
+  setUserEnabled: async (userId: string, enabled: boolean): Promise<AdminUser> => {
+    const response = await apiClient.patch(`/admin/users/${encodeURIComponent(userId)}/enabled`, { enabled })
+    return response.data
+  },
+
+  // A real role change ends the user's sessions so it applies at next sign-in.
+  setUserRole: async (userId: string, role: AppRole): Promise<AdminUser> => {
+    const response = await apiClient.put(`/admin/users/${encodeURIComponent(userId)}/role`, { role })
+    return response.data
+  },
+
+  // Also ends the user's sessions. `temporary` = forced change at next sign-in.
+  resetUserPassword: async (userId: string, password: string, temporary: boolean): Promise<AdminUser> => {
+    const response = await apiClient.put(`/admin/users/${encodeURIComponent(userId)}/password`, {
+      password,
+      temporary,
+    })
+    return response.data
+  },
+
+  // Read-only audit trail, newest first; page with next_before_id.
+  listAuditLog: async (filters: {
+    eventType?: string
+    studentId?: string
+    result?: string
+    beforeId?: number
+    limit?: number
+  } = {}): Promise<AuditLogPage> => {
+    const params: Record<string, string> = { limit: String(filters.limit ?? 100) }
+    if (filters.eventType) params.event_type = filters.eventType
+    if (filters.studentId?.trim()) params.student_id = filters.studentId.trim()
+    if (filters.result) params.result = filters.result
+    if (filters.beforeId) params.before_id = String(filters.beforeId)
+    const response = await apiClient.get('/admin/audit-log', { params })
     return response.data
   },
 }

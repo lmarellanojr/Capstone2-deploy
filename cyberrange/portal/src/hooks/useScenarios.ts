@@ -57,7 +57,9 @@ export const SCENARIOS: Scenario[] = [
     displayNumber: 2,
     name: 'SQL Injection',
     type: 'offensive',
-    description: 'Exploit DVWA SQL injection (browser + sqlmap on Kali) to extract database data.',
+    // Browser-only lab: students click Open DVWA (new tab, portal-proxied) and
+    // scoring comes from the proxied DVWA responses — no Kali/sqlmap needed.
+    description: 'Exploit DVWA in your browser with SQL injection and XSS to extract database data.',
     mitre: 'T1190',
     difficulty: 2,
     guideFile: 'scenario_02_web_application_attack_sql_injection.md',

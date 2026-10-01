@@ -45,6 +45,11 @@ jest.mock("@/components/scenario/GuideView", () => ({
   GuideView: () => <div data-testid="guide-stub" />,
 }))
 
+// Like GuideView, it renders guide markdown (react-markdown is ESM-only).
+jest.mock("@/components/scenario/GuideExtraModal", () => ({
+  GuideExtraModal: () => null,
+}))
+
 jest.mock("@/components/scenario/SiemAlertViewer", () => ({
   SiemAlertViewer: () => <div data-testid="siem-stub" />,
 }))
@@ -57,26 +62,37 @@ jest.mock("@/lib/api", () => ({
   },
 }))
 
+// Complete fixtures (no casts) so a change to Pod/Scenario breaks this test
+// at compile time instead of hiding behind `as`.
 const pod: Pod = {
   pod_id: 1,
-  scenario_id: 9,
-  status: "ACTIVE",
   student_id: "student",
-  expires_at: new Date(Date.now() + 3600_000).toISOString(),
+  status: "ACTIVE",
+  vmid_kali: null,
+  vmid_meta: null,
+  vmid_dvwa: null,
+  connection_id: null,
+  wazuh_agent_id: null,
+  scenario_id: "09",
+  created_at: null,
+  last_heartbeat: null,
+  ttl_hours: 8,
   remaining_seconds: 3600,
+  expires_at: new Date(Date.now() + 3600_000).toISOString(),
   ttl_expired: false,
-} as Pod
+}
 
 const scenario: Scenario = {
   id: "09",
   displayNumber: 3,
   name: "SIEM Alert Triage and Log Analysis",
+  type: "defensive",
   description: "test",
-  difficulty: "Intermediate",
-  estimatedTime: "2h",
-  points: 225,
+  mitre: "T1595",
+  difficulty: 2,
+  guideFile: "scenario_03_siem_alert_triage_and_log_analysis.md",
   milestones: [{ id: 1, name: "M1", description: "d", points: 50 }],
-} as Scenario
+}
 
 describe("TerminalView (LAB-LAYOUT-02)", () => {
   beforeEach(() => {

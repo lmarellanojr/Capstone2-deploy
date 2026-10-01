@@ -1012,14 +1012,25 @@ class TestScoringChecksDirectBashExecution:
         assert rc == 0
         assert token == "FAIL", stderr
 
-    def test_direct_bash_scenario_11_m1_history_pass(self, tmp_path):
-        """Scenario 11 M1: seeded history with tomcat-users inspect → PASS."""
+    def test_direct_bash_scenario_11_m1_sudo_inspect_pass(self, tmp_path):
+        """Scenario 11 M1: a sudo inspection of tomcat-users.xml → PASS."""
+        history = tmp_path / ".bash_history"
+        history.write_text("sudo cat /etc/tomcat9/tomcat-users.xml\n")
+        env = {"HOME": tmp_path.as_posix()}
+        rc, token, stderr = self._run_script(11, 1, env=env)
+        assert rc == 0
+        assert token == "PASS"
+
+    def test_direct_bash_scenario_11_m1_plain_cat_fails(self, tmp_path):
+        """Scenario 11 M1: a plain `cat` is Permission denied on the root-owned
+        file, so it must NOT score — the student never saw the credential
+        (regression for the false positive found in live testing)."""
         history = tmp_path / ".bash_history"
         history.write_text("cat /etc/tomcat9/tomcat-users.xml\n")
         env = {"HOME": tmp_path.as_posix()}
         rc, token, stderr = self._run_script(11, 1, env=env)
         assert rc == 0
-        assert token == "PASS"
+        assert token == "FAIL"
 
     def test_direct_bash_scenario_09_m1_artifact_pass(self):
         """Scenario 09 M1: alert_triage.json with required fields produces PASS."""
@@ -1052,9 +1063,11 @@ class TestScoringChecksDirectBashExecution:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 
     # SIEM-SCOPE (#112): the guide's templates must not earn M2 unedited.
+    # Backend scenario 09 is student-facing "Scenario 3"; the guide file was
+    # renamed to scenario_03_* in SCEN-UX #116 (catalog numbering).
     _S09_GUIDE = (
         Path(__file__).resolve().parents[2]
-        / "portal/public/scenarios/scenario_09_siem_alert_triage_and_log_analysis.md"
+        / "portal/public/scenarios/scenario_03_siem_alert_triage_and_log_analysis.md"
     )
 
     @classmethod

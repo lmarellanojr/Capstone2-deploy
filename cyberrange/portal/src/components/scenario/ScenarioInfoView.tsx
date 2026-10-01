@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { ArrowRight, Lightbulb, RotateCcw } from "lucide-react";
 import { Scenario, scenarioDisplayTitle } from "@/hooks/useScenarios";
 import { Badge, Button, Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui";
 import { DifficultyBadge, scenarioDuration } from "@/components/scenarios/DifficultyBadge";
 import { MilestoneItem } from "@/components/progress/MilestoneItem";
+import { ScenarioTips } from "@/components/scenario/ScenarioTips";
 import { provisioning } from "@/lib/api";
 
 interface ScenarioInfoViewProps {
@@ -10,11 +12,12 @@ interface ScenarioInfoViewProps {
   onStart: () => void;
   loading: boolean;
   error: string | null;
+  /** Reopens the "Before you start — the big picture" welcome. */
+  onShowBigPicture?: () => void;
 }
 
-export function ScenarioInfoView({ scenario, onStart, loading, error }: ScenarioInfoViewProps) {
+export function ScenarioInfoView({ scenario, onStart, loading, error, onShowBigPicture }: ScenarioInfoViewProps) {
   const totalPoints = scenario.milestones.reduce((sum, m) => sum + m.points, 0);
-  const typeVariant = scenario.type === "offensive" ? "danger" : "info";
 
   // Milestone results persist in the DB independent of any active pod
   // (score-persistence, issue #11), but this pre-lab landing page previously
@@ -47,6 +50,11 @@ export function ScenarioInfoView({ scenario, onStart, loading, error }: Scenario
   const earnedPoints = scenario.milestones
     .filter((m) => completedIds.has(m.id))
     .reduce((sum, m) => sum + m.points, 0);
+  const allDone = completedIds.size === scenario.milestones.length;
+  // Only point at a "next" task once the student has started — on a fresh
+  // lab, highlighting task 1 adds nothing.
+  const nextId =
+    completedIds.size > 0 && !allDone ? scenario.milestones.find((m) => !completedIds.has(m.id))?.id : undefined;
 
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -68,59 +76,28 @@ export function ScenarioInfoView({ scenario, onStart, loading, error }: Scenario
 
   return (
     <div className="max-w-3xl mx-auto">
-      <div className="mb-8">
-        <div className="flex flex-wrap items-center gap-3 mb-3">
-          <Badge variant={typeVariant}>{scenario.type.toUpperCase()}</Badge>
+      <div className="mb-6">
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <Badge variant={scenario.type === "offensive" ? "brand" : "info"}>
+            {scenario.type === "offensive" ? "Offensive" : "Defensive"}
+          </Badge>
           <DifficultyBadge difficulty={scenario.difficulty} />
-          <span className="text-sm text-text-secondary">
-            {scenarioDuration(scenario.difficulty)} · MITRE {scenario.mitre}
-          </span>
+          <span className="text-sm text-text-muted">{scenarioDuration(scenario.difficulty)}</span>
         </div>
         {/* GUIDE-UX-TRIAL / SCEN-UX #116: "Scenario N -- Name" so this page
             matches the catalog card and the lab header breadcrumb. */}
-        <h1 className="text-3xl font-bold mb-2 text-text-main">
-          {scenarioDisplayTitle(scenario)}
-        </h1>
+        <h1 className="text-2xl sm:text-3xl font-bold mb-2 text-text-main">{scenarioDisplayTitle(scenario)}</h1>
         <p className="text-text-secondary text-lg">{scenario.description}</p>
       </div>
 
-      {scenario.id === "06" && (
-        <div className="mb-8 p-4 alert-info text-sm">
-          <p className="font-semibold text-blue-900 mb-1">Important: DVWA access</p>
-          <p>
-            Prefer the lab&apos;s <strong>Open DVWA</strong> control (your browser, session-gated)
-            when available. Otherwise use the Kali terminal and{" "}
-            <code className="bg-blue-100 px-1 rounded">$TARGET_DVWA</code>. SQLMap must run on{" "}
-            <strong>Kali</strong> for scoring. You do not need a Kali desktop/VNC.
-          </p>
-        </div>
-      )}
-      {scenario.id === "09" && (
-        <div className="mb-8 p-4 alert-info text-sm">
-          <p className="font-semibold text-blue-900 mb-1">SIEM triage notes</p>
-          <p>
-            Generate attack noise from <strong>Kali</strong> first, then open the SIEM if{" "}
-            <strong>Open SIEM</strong> is available. Write scored files on the{" "}
-            <strong>meta</strong> tab (<code className="bg-blue-100 px-1 rounded">alert_triage.json</code>,
-            timeline, report) as described in the guide.
-          </p>
-        </div>
-      )}
-      {scenario.id === "11" && (
-        <div className="mb-8 p-4 alert-info text-sm">
-          <p className="font-semibold text-blue-900 mb-1">Work on the meta target</p>
-          <p>
-            Hardening steps run on the <strong>meta</strong> terminal tab as{" "}
-            <code className="bg-blue-100 px-1 rounded">msfadmin</code> (lab sudo). Kali is only for an
-            optional re-test of the old Tomcat exploit.
-          </p>
-        </div>
-      )}
+      <ScenarioTips scenarioId={scenario.id} className="mb-6" />
 
-      <div className="mb-8 card-surface p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-text-main">Objectives</h2>
-          <span className="text-sm text-text-secondary">
+      <section className="mb-6 card-surface p-5 sm:p-6" aria-labelledby="objectives-heading">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h2 id="objectives-heading" className="text-lg font-semibold text-text-main">
+            Objectives
+          </h2>
+          <span className="text-sm text-text-muted tabular-nums">
             {completedIds.size > 0 ? (
               <>
                 <strong className="text-text-main">{earnedPoints}</strong> / {totalPoints} pts earned
@@ -130,18 +107,19 @@ export function ScenarioInfoView({ scenario, onStart, loading, error }: Scenario
             )}
           </span>
         </div>
-        {completedIds.size === scenario.milestones.length && (
+        {allDone && (
           <div className="mb-4 p-3 alert-success text-sm font-medium flex items-center justify-between gap-3 flex-wrap">
             <span>
-              You&apos;ve already completed this scenario with full points. Starting again
-              begins a new attempt in a fresh pod.
+              You&apos;ve completed this scenario with full points. Starting again begins a new attempt in a
+              fresh lab.
             </span>
             <button
               type="button"
               onClick={() => setShowResetConfirm(true)}
-              className="text-xs font-semibold text-green-900 underline hover:no-underline whitespace-nowrap"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-green-900 underline hover:no-underline whitespace-nowrap rounded focus-ring"
             >
-              Try Again (reset score)
+              <RotateCcw size={12} aria-hidden="true" />
+              Reset score
             </button>
           </div>
         )}
@@ -154,43 +132,51 @@ export function ScenarioInfoView({ scenario, onStart, loading, error }: Scenario
               description={m.description}
               points={m.points}
               completed={completedIds.has(m.id)}
+              inProgress={m.id === nextId}
             />
           ))}
         </div>
-      </div>
+        <p className="mt-4 text-xs text-text-muted">Maps to MITRE ATT&amp;CK {scenario.mitre}</p>
+      </section>
 
       {error && error !== "POD_CAP_REACHED" && (
-        <div className="mb-6 p-4 alert-error text-sm">{error}</div>
+        <div role="alert" className="mb-6 p-4 alert-error text-sm">
+          {error}
+        </div>
       )}
       {error === "POD_CAP_REACHED" && (
-        <div className="mb-6 p-4 alert-warning text-sm">
+        <div role="alert" className="mb-6 p-4 alert-warning text-sm">
           <p className="font-semibold">All lab slots are currently full</p>
           <p className="mt-1">Please wait for another student to finish their session.</p>
         </div>
       )}
 
-      <Button
-        variant="primary"
-        size="lg"
-        loading={loading}
-        onClick={onStart}
-        disabled={loading}
-        className="w-full"
-      >
-        Start Lab →
-      </Button>
+      <div className="flex flex-col-reverse sm:flex-row gap-3">
+        {onShowBigPicture && (
+          <Button variant="secondary" size="lg" onClick={onShowBigPicture} className="sm:w-auto">
+            <Lightbulb size={18} aria-hidden="true" />
+            Big Picture
+          </Button>
+        )}
+        <Button variant="primary" size="lg" loading={loading} onClick={onStart} disabled={loading} className="flex-1">
+          {allDone ? "Start a new attempt" : completedIds.size > 0 ? "Continue lab" : "Start Lab"}
+          {!loading && <ArrowRight size={18} aria-hidden="true" />}
+        </Button>
+      </div>
 
       <Modal isOpen={showResetConfirm} onClose={() => setShowResetConfirm(false)}>
         <ModalHeader title="Reset your score for this scenario?" />
         <ModalBody>
           <p className="text-text-secondary mb-3">
             This will <strong className="text-text-main">permanently delete</strong> the{" "}
-            <strong className="text-brand">{earnedPoints} / {totalPoints} pts</strong> you&apos;ve
-            already earned on <strong className="text-text-main">{scenario.name}</strong>.
+            <strong className="text-brand">
+              {earnedPoints} / {totalPoints} pts
+            </strong>{" "}
+            you&apos;ve already earned on <strong className="text-text-main">{scenario.name}</strong>.
           </p>
           <p className="text-text-secondary">
-            This cannot be undone. Your score will go back to 0 for this scenario, and
-            you&apos;ll need to complete every milestone again from a fresh pod.
+            This cannot be undone. Your score will go back to 0 for this scenario, and you&apos;ll need to
+            complete every milestone again from a fresh lab.
           </p>
         </ModalBody>
         <ModalFooter>

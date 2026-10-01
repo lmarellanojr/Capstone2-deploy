@@ -7,7 +7,7 @@ import urllib3
 from fastapi import Depends, FastAPI
 
 from auth import require_owner as real_require_owner
-from auth import require_app_role, validate_auth_config
+from auth import require_app_role, require_role, validate_auth_config
 from auth import verify_token as real_verify_token
 import alerts_endpoint as ae
 from capacity import (
@@ -23,6 +23,7 @@ from pods_router import internal_router as browser_score_router
 from pods_router import router as pods_router
 from users_router import router as users_router
 from infra_health import router as infra_health_router
+from audit_router import router as audit_router
 from reaper import pod_ttl_reaper
 from score_poller import score_poller
 from scoring_imports import load_scoring_modules
@@ -52,11 +53,13 @@ app.include_router(pods_router)
 app.include_router(browser_score_router)
 app.include_router(users_router)
 app.include_router(infra_health_router)
+app.include_router(audit_router)
 # alerts_endpoint.py keeps its own stub-friendly verify_token_dep, so the
 # app-role guard (SEC-01 #36) is attached here rather than in that module.
 app.include_router(ae.alerts_router, dependencies=[Depends(require_app_role)])
 app.dependency_overrides[ae.verify_token_dep] = real_verify_token
 ae.require_owner = real_require_owner
+ae.require_staff = lambda claims: require_role(["instructor", "admin"], claims)
 ae.get_db_connection = get_db_connection
 
 

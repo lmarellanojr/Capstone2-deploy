@@ -16,6 +16,29 @@ from provision_api_fastapi import app
 # copies of both.
 
 
+def _create_v3_milestone_verification(conn):
+    """The milestone_verification table exactly as a real DB at schema v3 has it
+    (v1.sql's CREATE TABLE plus the student_id column migrate.py adds for v3).
+
+    These fixtures record v1-v3 as applied, so they must also contain v1's
+    tables: later migrations (v6's ux_milestone_browser_pass index) rely on
+    them, and a real v3 database always has this table.
+    """
+    conn.execute("""
+        CREATE TABLE milestone_verification (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            pod_id          INTEGER NOT NULL,
+            scenario_id     INTEGER NOT NULL,
+            milestone_id    INTEGER NOT NULL,
+            status          TEXT NOT NULL,
+            detection_score INTEGER DEFAULT 0,
+            detection_data  TEXT,
+            verified_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            student_id      TEXT
+        )
+    """)
+
+
 def student_claims(username="student1"):
     return {
         "preferred_username": username,
@@ -60,6 +83,7 @@ def test_migration_upgrades_legacy_review_cases(tmp_path):
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    _create_v3_milestone_verification(conn)
     conn.execute("""
         CREATE TABLE review_cases (
             review_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +147,7 @@ def test_migration_preserves_indexes_when_old_table_had_indexes(tmp_path):
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    _create_v3_milestone_verification(conn)
     conn.execute("""
         CREATE TABLE review_cases (
             review_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,6 +202,7 @@ def test_migration_rebuilds_when_score_has_default_zero(tmp_path, monkeypatch):
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    _create_v3_milestone_verification(conn)
     # Schema with nullable report_text BUT score DEFAULT 0!
     conn.execute("""
         CREATE TABLE review_cases (
@@ -246,6 +272,7 @@ def test_migration_additive_without_rebuild(tmp_path):
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    _create_v3_milestone_verification(conn)
     # Table with nullable report_text, score without default, timestamps, and v4 check constraints
     # Missing only case_type, conflict_reason, evidence_data
     conn.execute("""
@@ -308,6 +335,7 @@ def test_migration_rebuilds_when_timestamps_missing(tmp_path):
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    _create_v3_milestone_verification(conn)
     # Legacy table missing created_at and updated_at
     conn.execute("""
         CREATE TABLE review_cases (
@@ -352,6 +380,7 @@ def test_migration_rebuilds_when_v4_constraints_missing(tmp_path):
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    _create_v3_milestone_verification(conn)
     # Table missing CHECK constraints on score and status
     conn.execute("""
         CREATE TABLE review_cases (
@@ -399,6 +428,7 @@ def test_migration_rebuilds_when_score_exists_without_graded_by(tmp_path):
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    _create_v3_milestone_verification(conn)
     # Table with score, status, no graded_by, and no v4 checks
     conn.execute("""
         CREATE TABLE review_cases (
@@ -483,6 +513,7 @@ def test_migration_rebuild_rolls_back_atomically_on_error(tmp_path, monkeypatch)
         )
     """)
     conn.execute("INSERT INTO schema_version (version) VALUES (1), (2), (3)")
+    _create_v3_milestone_verification(conn)
     conn.execute("""
         CREATE TABLE review_cases (
             review_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -803,6 +834,11 @@ def test_instructor_student_progress_without_active_pod():
     assert single_data["active_pod"] is None
     assert len(single_data["milestones"]) == 2
     assert single_data["reviews"] == []
+    # Evidence detail for the review page: which lab each attempt ran on and
+    # what (if anything) corroborated it.
+    for m in single_data["milestones"]:
+        assert m["pod_id"] == 20
+        assert "detection_data" in m
 
 
 def test_instructor_student_progress_with_review_only():

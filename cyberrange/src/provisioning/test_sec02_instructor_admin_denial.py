@@ -127,6 +127,19 @@ ADMIN_CASES = {
         ("demote the only Admin", lambda ids: f"/admin/users/{ids['admin_demo']}/role", {"role": "student"}),
         ("promote a Student to Instructor", lambda ids: f"/admin/users/{ids['student_demo']}/role", {"role": "instructor"}),
     ],
+    # Previously missing: ADM-SYS-02 served this route without SEC-02 coverage.
+    ("GET", "/admin/infra-health"): [
+        ("read host infrastructure health", "/admin/infra-health", None),
+    ],
+    ("PUT", "/admin/users/{user_id}/password"): [
+        ("take over the only Admin by resetting its password",
+         lambda ids: f"/admin/users/{ids['admin_demo']}/password", {"password": "Probe!12345", "temporary": False}),
+        ("reset a Student's password", lambda ids: f"/admin/users/{ids['student_demo']}/password", {"password": "Probe!12345"}),
+    ],
+    ("GET", "/admin/audit-log"): [
+        ("read the full audit trail", "/admin/audit-log", None),
+        ("read Admin user-management events", "/admin/audit-log?event_type=ADMIN_USER_ROLE_SET", None),
+    ],
 }
 CASES = [(route, *case) for route, cases in ADMIN_CASES.items() for case in cases]
 CASE_IDS = [label for _, label, _, _ in CASES]
@@ -291,18 +304,42 @@ def test_instructor_denied_with_no_side_effect(world, token, route, label, url, 
     assert_no_side_effect(world, before_db, before_kc, f"{token} {label}")
 
 
+# Read-only Admin routes have no side effect to detect; what they grant is
+# disclosure. Their control proves the Admin response really carries data, so
+# the Instructor test's exact-FORBIDDEN-body assertion is what shows nothing
+# leaked. Each entry says what "data" means for that route.
+READ_ONLY_DISCLOSURE = {
+    ("GET", "/admin/infra-health"): lambda body: isinstance(body, dict) and len(body) > 0,
+    ("GET", "/admin/audit-log"): lambda body: len(body.get("events", [])) > 0,
+}
+
+
 @pytest.mark.parametrize("route,label,url,body", CASES, ids=CASE_IDS)
 def test_same_request_as_admin_has_an_effect(world, route, label, url, body):
     """Control: proves the detectors above would catch a successful action."""
     url, body = resolve(world, url, body)
+    if route == ("GET", "/admin/audit-log"):
+        # Something to disclose, so an empty table can't make this pass vacuously.
+        db.log_event("ADMIN_USER_ROLE_SET", student_id="student_demo", result="OK", detail="actor=admin_demo")
     before_db, before_kc = db_snapshot(), world["kc"].state()
 
     r = call(world, route[0], url, body, "tok-admin")
 
     assert r.status_code not in (401, 403) and r.status_code < 500, f"admin {label}: {r.status_code} {r.text[:200]}"
+    if route in READ_ONLY_DISCLOSURE:
+        assert r.status_code == 200 and READ_ONLY_DISCLOSURE[route](r.json()), (
+            f"admin {label}: returned no data -- the Instructor no-disclosure check would be vacuous"
+        )
+        return
     kc, effects = world["kc"], world["effects"]
     changed = db_snapshot() != before_db or kc.state() != before_kc or kc.calls or effects["destroy"]
     assert changed, f"admin {label}: no detectable effect -- the Instructor no-side-effect check would be vacuous"
+
+
+def test_read_only_disclosure_list_only_names_get_routes():
+    # The disclosure control must never become a way to skip effect checks on a write.
+    assert all(method == "GET" for method, _ in READ_ONLY_DISCLOSURE)
+    assert set(READ_ONLY_DISCLOSURE) <= set(ADMIN_CASES)
 
 
 @pytest.mark.parametrize("pod_id", [STUDENT_POD, FAILED_POD, OWN_POD])

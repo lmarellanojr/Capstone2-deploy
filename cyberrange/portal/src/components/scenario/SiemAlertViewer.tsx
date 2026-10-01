@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { provisioning, type SiemAlert } from '@/lib/api'
+import { instructor, provisioning, type SiemAlert } from '@/lib/api'
 import { Button } from '@/components/ui'
 import { copyToClipboard } from '@/lib/copyToClipboard'
 import { useToastContext } from '@/context/ToastContext'
@@ -44,7 +44,14 @@ function isTabHidden(): boolean {
   return typeof document !== 'undefined' && document.visibilityState === 'hidden'
 }
 
-export function SiemAlertViewer({ podId }: { podId: number }) {
+export function SiemAlertViewer({
+  podId,
+  source = 'student',
+}: {
+  podId: number
+  /** 'staff' reads the Instructor/Admin route (any student's pod, same safe fields). */
+  source?: 'student' | 'staff'
+}) {
   const { success, warning } = useToastContext()
   const [alerts, setAlerts] = useState<SiemAlert[]>([])
   const [error, setError] = useState<'manager' | null>(null)
@@ -67,7 +74,8 @@ export function SiemAlertViewer({ podId }: { podId: number }) {
     inFlight.current = true
     setLoading(true)
     try {
-      const data = await provisioning.getAlerts(podId, alertsQuery(only5710))
+      const fetchAlerts = source === 'staff' ? instructor.getPodAlerts : provisioning.getAlerts
+      const data = await fetchAlerts(podId, alertsQuery(only5710))
       if (seq !== reqSeq.current) return
       if (data.error === 'manager_unavailable') {
         setError('manager')
@@ -89,7 +97,7 @@ export function SiemAlertViewer({ podId }: { podId: number }) {
         setLoading(false)
       }
     }
-  }, [podId, only5710])
+  }, [podId, only5710, source])
 
   useEffect(() => {
     load()

@@ -70,6 +70,13 @@ class SetRoleRequest(BaseModel):
     role: AppRole
 
 
+class SetPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    password: str = Field(..., min_length=8, max_length=128)
+    # True = Keycloak forces a password change at the user's next sign-in.
+    temporary: bool = True
+
+
 def _iso(ms: Optional[int]) -> Optional[str]:
     if not ms:
         return None
@@ -317,4 +324,55 @@ def admin_set_user_role(
             if previous != [body.role]:
                 _revoke_cached_tokens(user_id, username)
     _audit(event, username, "OK", actor, f"{detail} previous={','.join(previous) or 'none'}")
+    return serialize_user(target, roles)
+
+
+@router.put("/admin/users/{user_id}/password")
+def admin_reset_user_password(
+    body: SetPasswordRequest,
+    user_id: str = Path(..., pattern=USER_ID_PATTERN),
+    claims: dict = Depends(verify_token),
+    kc: KeycloakAdminClient = Depends(get_client),
+):
+    """Set a new password for another user (e.g. a student locked out).
+
+    Same guards as every other user write: Admin-only, the caller re-checked
+    against Keycloak, serialized. An Admin can't reset their own password here
+    (they use their own Keycloak account page), so this can never lock the
+    acting Admin out. Existing sessions are ended so a leaked password stops
+    working immediately. The password is never returned, logged or audited.
+    """
+    actor = _require_admin(claims)
+    event = "ADMIN_USER_PASSWORD_RESET"
+    detail = f"temporary={body.temporary}"
+    with _write_lock:
+        target = _load_target(kc, user_id)
+        username = target.get("username")
+        _confirm_actor_still_admin(kc, actor, event, username, detail)
+        if target.get("username") == actor:
+            _audit(event, username, "DENIED", actor, f"{detail} reason=self")
+            raise HTTPException(
+                status_code=409,
+                detail="Admins can't reset their own password here; use your Keycloak account page",
+            )
+        try:
+            kc.set_password(user_id, body.password, body.temporary)
+        except KeycloakRejected:
+            _audit(event, username, "FAILED", actor, f"{detail} reason=password_policy")
+            raise HTTPException(status_code=422, detail="Password does not meet the Keycloak password policy")
+        except KeycloakAdminError as e:
+            _audit(event, username, "FAILED", actor, f"{detail} reason=keycloak")
+            raise _unavailable(e)
+        try:
+            kc.logout_user(user_id)
+            roles = kc.user_app_roles(user_id)
+            target = kc.get_user(user_id)
+        except KeycloakAdminError as e:
+            # The password DID change; report the failure honestly rather than
+            # claim the old sessions were ended.
+            _audit(event, username, "FAILED", actor, f"{detail} reason=keycloak_after_set")
+            raise _unavailable(e)
+        finally:
+            _revoke_cached_tokens(user_id, username)
+    _audit(event, username, "OK", actor, detail)
     return serialize_user(target, roles)

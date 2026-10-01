@@ -23,7 +23,7 @@ passing `verify=False`.
 
 | File | Subject / SAN | Used by | Expires |
 |------|---------------|---------|---------|
-| `wazuh-api.crt` | `CN=wazuh.com`, **SAN: `DNS:localhost` only** | provision API scoring (`config.py`, `score_verifier.py`, `wazuh_client.py`) via `WAZUH_CA_BUNDLE` | 2027-08-12 |
+| `wazuh-api.crt` | `CN=wazuh.com`, **SAN: `DNS:localhost` only** | provision API scoring (`config.py`, `score_verifier.py`, `wazuh_client.py`) via `WAZUH_CA_BUNDLE` | 2027-09-02 |
 
 ### `wazuh-api.crt` — the SAN is load-bearing
 
@@ -34,14 +34,18 @@ must use the hostname form, `https://localhost:55000`. The LXD proxy device
 listens on `127.0.0.1:55000`; `localhost` resolves there, so the hostname form
 costs nothing and is the only one that verifies.
 
-Extracted from the L3b Wazuh manager on M4. Verify a checkout still matches the
-live service before relying on it:
+Extracted from the Wazuh manager on the Ampere live host (`ssh myampere`,
+manager installed 2026-09-02) on 2026-09-30. It replaced an earlier pin from a
+different install whose fingerprint (`2B:95:7C…`) matched neither the live
+manager nor the value previously documented here (`B2:9F:8E…`), so scoring on
+Ampere failed TLS verification. Verify a checkout still matches the live
+service before relying on it:
 
 ```bash
 openssl x509 -in certs/wazuh-api.crt -noout -fingerprint -sha256
-ssh M4 'openssl s_client -connect localhost:55000 </dev/null 2>/dev/null \
+ssh myampere 'openssl s_client -connect localhost:55000 -servername localhost </dev/null 2>/dev/null \
   | openssl x509 -noout -fingerprint -sha256'
-# Both: B2:9F:8E:4C:3B:8D:B3:91:87:D0:93:36:CB:31:1D:B2:30:3C:5C:3F:E8:D3:E3:50:AE:87:D8:CF:59:37:43:22
+# Both: E2:48:A0:E6:F6:5C:A1:C3:1A:70:4A:99:D1:2D:F4:FC:95:C5:99:6C:11:36:5B:B0:A0:0E:5B:F8:06:4E:35:97
 ```
 
 ### `wazuh-api.crt` — Repository Pin Policy

@@ -1,66 +1,40 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
-import { ProvisioningOverlay } from "@/components/provisioning/ProvisioningOverlay";
 import { PodStatus } from "@/components/provisioning/PodStatus";
-import { Button } from "@/components/ui";
+import { MyVerificationRequests } from "@/components/reviews/MyVerificationRequests";
+import { Badge } from "@/components/ui";
 import { useScenarios, scenarioDisplayTitle } from "@/hooks/useScenarios";
-import { provisioning, type Pod } from "@/lib/api";
+import { useScenarioProgress } from "@/hooks/useScenarioProgress";
+import type { Pod } from "@/lib/api";
+
+// Starting a lab has exactly one path now: My Labs → a scenario → Start Lab.
+// The old dashboard "Provision New Pod" wizard duplicated that flow in
+// operator vocabulary; ProvisioningOverlay stays in the codebase, just not
+// on the student dashboard.
+
+const HOW_IT_WORKS = [
+  "Pick a lab from My Labs.",
+  "Read the Big Picture, then click Let’s Go — your private lab starts in about a minute.",
+  "Work through the tasks in the terminal. Points are detected automatically as you go.",
+  "End the session when you’re done. Your score is always saved.",
+];
 
 export default function DashboardPage() {
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
   const router = useRouter();
   const scenarios = useScenarios();
-  const [isProvisioningOpen, setIsProvisioningOpen] = useState(false);
-  const [podCreated, setPodCreated] = useState(false);
-  // Filtered list length (PROVISIONING / ACTIVE / DESTROYING) from PodStatus.
-  const [activePodCount, setActivePodCount] = useState(0);
-  // Bumped after create so PodStatus refreshes the list immediately.
-  const [listRefreshSignal, setListRefreshSignal] = useState(0);
-  const [earned, setEarned] = useState<number | null>(null);
+  const [pods, setPods] = useState<Pod[]>([]);
+  // scenarioId -> points earned; null until the first /progress response.
+  const earnedByScenario = useScenarioProgress();
 
-  useEffect(() => {
-    if (status !== "authenticated") return;
-    let active = true;
-    provisioning
-      .getProgress()
-      .then((data) => {
-        if (!active) return;
-        const seen = new Set<string>();
-        let pts = 0;
-        for (const row of data.milestones) {
-          if (row.status !== "PASS") continue;
-          const sid = String(row.scenario_id).padStart(2, "0");
-          const key = `${sid}:${row.milestone_id}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const sc = scenarios.find((s) => s.id === sid);
-          const m = sc?.milestones.find((x) => x.id === row.milestone_id);
-          if (m) pts += m.points;
-        }
-        setEarned(pts);
-      })
-      .catch(() => {
-        if (active) setEarned(0);
-      });
-    return () => {
-      active = false;
-    };
-  }, [status, scenarios]);
-
-  const handleProvisioningSubmit = useCallback(() => {
-    setPodCreated(true);
-    setListRefreshSignal((n) => n + 1);
-    setTimeout(() => setPodCreated(false), 3000);
-  }, []);
-
-  const handlePodsChange = useCallback((pods: Pod[]) => {
-    setActivePodCount(pods.length);
+  const handlePodsChange = useCallback((next: Pod[]) => {
+    setPods(next);
   }, []);
 
   const firstName = session?.user?.name?.split(" ")[0] || "Student";
@@ -68,131 +42,146 @@ export default function DashboardPage() {
     (sum, s) => sum + s.milestones.reduce((m, x) => m + x.points, 0),
     0
   );
+  const earned =
+    earnedByScenario === null ? null : Object.values(earnedByScenario).reduce((a, b) => a + b, 0);
+
+  const liveScenarioIds = useMemo(
+    () =>
+      new Set(
+        pods
+          .filter((p) => p.status === "ACTIVE" || p.status === "PROVISIONING")
+          .map((p) => (p.scenario_id != null ? String(p.scenario_id).padStart(2, "0") : ""))
+      ),
+    [pods]
+  );
+
+  const stats = [
+    { label: "Labs available", value: String(scenarios.length) },
+    {
+      label: "Points earned",
+      value: earned === null ? "…" : earned.toLocaleString(),
+      detail: `of ${totalPoints.toLocaleString()}`,
+      accent: true,
+    },
+    { label: "Active sessions", value: String(liveScenarioIds.size) },
+  ];
 
   return (
     <LayoutWrapper>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-text-main">Welcome back, {firstName}!</h1>
-        <p className="text-text-muted mt-1">Manage your labs and track your progress</p>
-      </div>
-
-      {podCreated && (
-        <div className="mb-6 p-4 alert-success text-sm">
-          Pod created successfully! Check your active pods below.
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-2xl sm:text-3xl font-bold text-text-main">Welcome back, {firstName}</h1>
+          <p className="text-text-muted mt-1">Pick up where you left off.</p>
         </div>
-      )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        {[
-          { label: "Labs Available", value: String(scenarios.length) },
-          {
-            label: "Score",
-            value:
-              earned === null
-                ? "…"
-                : `${earned.toLocaleString()} / ${totalPoints.toLocaleString()}`,
-          },
-          { label: "Active Pods", value: String(activePodCount) },
-        ].map((stat) => (
-          <div key={stat.label} className="card-surface p-6 text-center">
-            <p className="text-3xl font-bold text-text-main">{stat.value}</p>
-            <p className="text-sm text-text-muted mt-1">{stat.label}</p>
-          </div>
-        ))}
-      </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+          {stats.map((stat) => (
+            <div key={stat.label} className="card-surface p-6">
+              <p className="text-sm text-text-muted">{stat.label}</p>
+              <p className="mt-1 text-3xl font-bold tabular-nums">
+                <span className={stat.accent ? "text-brand" : "text-text-main"}>{stat.value}</span>
+                {stat.detail && earned !== null && (
+                  <span className="ml-1.5 text-base font-medium text-text-muted">{stat.detail}</span>
+                )}
+              </p>
+            </div>
+          ))}
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <div className="lg:col-span-2 card-surface p-6">
+        <section className="card-surface p-6 mb-8" aria-labelledby="continue-heading">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-text-main">Continue Learning</h2>
-            <Link href="/scenarios" className="text-sm text-brand font-semibold hover:underline">
+            <h2 id="continue-heading" className="text-lg font-bold text-text-main">
+              Continue learning
+            </h2>
+            <Link href="/scenarios" className="text-sm text-brand font-semibold hover:underline rounded focus-ring">
               View all labs →
             </Link>
           </div>
           <div className="space-y-3">
-            {scenarios.slice(0, 3).map((s) => (
-              <Link
-                key={s.id}
-                href={`/scenario/${s.id}`}
-                className="flex items-center justify-between p-4 rounded-lg border border-border hover:bg-muted transition"
-              >
-                <div>
-                  {/* GUIDE-UX-TRIAL / SCEN-UX #116: same "Scenario N" number
-                      as the catalog card and lab pages. */}
-                  <p className="font-semibold text-text-main text-sm">
-                    {scenarioDisplayTitle(s)}
-                  </p>
-                  <p className="text-xs text-text-muted mt-0.5">{s.description.slice(0, 60)}…</p>
-                </div>
-                <span className="text-xs font-semibold text-brand">Start →</span>
-              </Link>
-            ))}
+            {scenarios.map((s) => {
+              const total = s.milestones.reduce((m, x) => m + x.points, 0);
+              const got = earnedByScenario?.[s.id] ?? 0;
+              const live = liveScenarioIds.has(s.id);
+              const loaded = earnedByScenario !== null;
+              const done = loaded && got >= total;
+              const progressText = !loaded
+                ? `${total} pts`
+                : done
+                  ? `${total} pts`
+                  : got > 0
+                    ? `In progress · ${got} / ${total} pts`
+                    : `Not started · ${total} pts`;
+              const cta = live ? "Resume lab" : done ? "Review" : got > 0 ? "Continue" : "Start";
+              return (
+                <Link
+                  key={s.id}
+                  href={`/scenario/${s.id}`}
+                  className="group flex items-center justify-between gap-4 p-4 rounded-xl border border-border card-interactive"
+                >
+                  <div className="min-w-0">
+                    {/* GUIDE-UX-TRIAL / SCEN-UX #116: same "Scenario N" number
+                        as the catalog card and lab pages. */}
+                    <p className="font-semibold text-text-main text-sm sm:text-base">{scenarioDisplayTitle(s)}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                      {live && (
+                        <Badge variant="success" dot>
+                          Session active
+                        </Badge>
+                      )}
+                      {done && (
+                        <Badge variant="success" dot>
+                          Completed
+                        </Badge>
+                      )}
+                      <span>{progressText}</span>
+                    </div>
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-sm font-semibold text-brand whitespace-nowrap">
+                    {cta}
+                    <ArrowRight size={16} aria-hidden="true" className="transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </Link>
+              );
+            })}
           </div>
-        </div>
+        </section>
 
-        <div className="card-surface p-6">
-          <h2 className="text-lg font-bold text-text-main mb-4">Quick Actions</h2>
-          <Button variant="primary" onClick={() => setIsProvisioningOpen(true)} className="w-full mb-3">
-            + Provision New Pod
-          </Button>
-          <Button variant="outline" onClick={() => router.push("/scenarios")} className="w-full">
-            Browse Lab Catalog
-          </Button>
+        <MyVerificationRequests />
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <PodStatus
+              onConnect={(pod) => {
+                if (pod.scenario_id) {
+                  router.push(`/scenario/${String(pod.scenario_id).padStart(2, "0")}`);
+                } else {
+                  router.push("/scenarios");
+                }
+              }}
+              onPodsChange={handlePodsChange}
+            />
+          </div>
+
+          <section className="card-surface p-6" aria-labelledby="how-heading">
+            <h2 id="how-heading" className="text-lg font-bold text-text-main mb-4">
+              How labs work
+            </h2>
+            <ol className="space-y-4">
+              {HOW_IT_WORKS.map((step, i) => (
+                <li key={step} className="flex gap-3 text-sm text-text-secondary">
+                  <span
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand/10 text-xs font-bold text-brand"
+                    aria-hidden="true"
+                  >
+                    {i + 1}
+                  </span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ol>
+          </section>
         </div>
       </div>
-
-      <PodStatus
-        onConnect={(pod) => {
-          if (pod.scenario_id) {
-            router.push(`/scenario/${pod.scenario_id}`);
-          } else {
-            router.push("/scenarios");
-          }
-        }}
-        refreshSignal={listRefreshSignal}
-        onPodsChange={handlePodsChange}
-      />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-        <div className="card-surface p-6">
-          <h3 className="text-lg font-bold text-text-main mb-4">Getting Started</h3>
-          <ul className="space-y-2 text-text-muted text-sm">
-            <li>1. Browse the lab catalog or provision a pod</li>
-            <li>2. Wait for the pod to reach ACTIVE status</li>
-            <li>3. Connect to open the terminal</li>
-            <li>4. Complete scenario objectives for points</li>
-            <li>5. Destroy the pod when finished</li>
-          </ul>
-        </div>
-
-        <div className="card-surface p-6">
-          <h3 className="text-lg font-bold text-text-main mb-4">Resource Limits</h3>
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-text-muted">Active pods per student</span>
-              <span className="font-semibold text-text-main">1</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Host capacity</span>
-              <span className="font-semibold text-text-main">1 pod</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Memory per pod</span>
-              <span className="font-semibold text-text-main">~4 GB</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted">Storage per pod</span>
-              <span className="font-semibold text-text-main">~7 GB</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <ProvisioningOverlay
-        isOpen={isProvisioningOpen}
-        onClose={() => setIsProvisioningOpen(false)}
-        onSubmit={handleProvisioningSubmit}
-      />
     </LayoutWrapper>
   );
 }

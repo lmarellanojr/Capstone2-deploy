@@ -14,6 +14,8 @@ dependencies = [
     "urllib3",
     "uvicorn",
     "pylxd",
+    "python-multipart",  # FastAPI file uploads (evidence screenshots)
+    "pillow",            # validate + re-encode uploaded images, stripping metadata
 ]
 
 [project.optional-dependencies]

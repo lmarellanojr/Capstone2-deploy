@@ -338,3 +338,74 @@ def test_capacity_still_unauthenticated_200():
     body = res.json()
     for key in ("active_pods", "max_pods", "can_provision", "available_mb"):
         assert key in body
+
+
+# --- force-destroy audit trail (admin gaps item 2) ---
+
+
+def _audit(event="ADMIN_POD_FORCE_DESTROY"):
+    conn = db.get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT student_id, pod_id, result, detail FROM audit_log WHERE event_type=? ORDER BY id",
+            (event,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def test_force_destroy_records_which_admin_destroyed_whose_pod(monkeypatch):
+    monkeypatch.setattr("pods_router.perform_destruction", lambda pod: None)
+    _insert_pod(1, "student1", status="ACTIVE")
+    app.dependency_overrides[verify_token] = lambda: admin_claims("admin_demo")
+    assert TestClient(app).delete("/admin/pods/1/force-destroy").status_code == 200
+    [row] = _audit()
+    assert row["student_id"] == "student1"
+    assert row["pod_id"] == 1
+    assert row["result"] == "OK"
+    assert "actor=admin_demo" in row["detail"]
+    assert "previous_status=ACTIVE" in row["detail"]
+
+
+def test_force_destroy_refused_by_state_is_audited_as_failed(monkeypatch):
+    monkeypatch.setattr("pods_router.perform_destruction", lambda pod: None)
+    _insert_pod(1, "student1", status="PROVISIONING")
+    app.dependency_overrides[verify_token] = lambda: admin_claims("admin_demo")
+    assert TestClient(app).delete("/admin/pods/1/force-destroy").status_code == 409
+    [row] = _audit()
+    assert row["result"] == "FAILED"
+    assert "reason=state" in row["detail"] and "status=PROVISIONING" in row["detail"]
+
+
+def test_force_destroy_missing_pod_is_audited_as_failed(monkeypatch):
+    monkeypatch.setattr("pods_router.perform_destruction", lambda pod: None)
+    app.dependency_overrides[verify_token] = lambda: admin_claims("admin_demo")
+    assert TestClient(app).delete("/admin/pods/99/force-destroy").status_code == 404
+    [row] = _audit()
+    assert (row["pod_id"], row["result"]) == (99, "FAILED")
+    assert "reason=not_found" in row["detail"]
+
+
+@pytest.mark.parametrize("claims_fn", [student_claims, instructor_claims])
+def test_force_destroy_denied_by_role_writes_no_audit_row(monkeypatch, claims_fn):
+    # SEC-02 relies on this: a denied non-Admin request leaves audit_log untouched.
+    monkeypatch.setattr("pods_router.perform_destruction", lambda pod: None)
+    _insert_pod(1, "student1", status="ACTIVE")
+    app.dependency_overrides[verify_token] = lambda: claims_fn()
+    assert TestClient(app).delete("/admin/pods/1/force-destroy").status_code == 403
+    assert _audit() == []
+
+
+def test_force_destroy_still_succeeds_if_audit_write_fails(monkeypatch):
+    destroyed = []
+    monkeypatch.setattr("pods_router.perform_destruction", lambda pod: destroyed.append(pod["pod_id"]))
+
+    def broken_log_event(*a, **k):
+        raise RuntimeError("audit db locked")
+
+    monkeypatch.setattr("pods_router.log_event", broken_log_event)
+    _insert_pod(1, "student1", status="ACTIVE")
+    app.dependency_overrides[verify_token] = lambda: admin_claims("admin_demo")
+    assert TestClient(app).delete("/admin/pods/1/force-destroy").status_code == 200
+    assert destroyed == [1]
