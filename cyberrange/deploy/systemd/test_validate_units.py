@@ -50,6 +50,9 @@ def test_api_unit_file():
         exec_must_contain=["provision_api_fastapi.py"],
     ) == []
     assert "WorkingDirectory=/home/llms_admin/cyberrange/src/provisioning" in text
+    # Must use the venv that pull_release.sh installs pyproject dependencies into.
+    assert "ExecStart=/home/llms_admin/cyberrange/.venv/bin/python provision_api_fastapi.py" in text
+    assert "/usr/bin/python3" not in text
 
 
 def test_bridge_unit_file():

@@ -27,6 +27,11 @@ jobs:
           test -f cyberrange/portal/postcss.config.js
           test -f cyberrange/portal/tailwind.config.js
           test -f cyberrange/portal/package-lock.json
+      - name: Check provision-api dependencies are declared
+        # Hosts install only pyproject.toml dependencies; an undeclared import would
+        # crash-loop the API on the host and freeze the live site on the old build.
+        working-directory: cyberrange
+        run: python3 deploy/host/check_runtime_deps.py
       - name: Pack tree
         working-directory: cyberrange
         run: bash deploy/host/pack_tree.sh "${GITHUB_WORKSPACE}/tree.tgz"

@@ -36,6 +36,16 @@ if [[ "${1:-}" == "--rollback" ]]; then
   exit 0
 fi
 
+# --retry-bad: operator-confirmed retry of a release SHA that previously failed to
+# apply. Use it only after fixing the cause recorded in rollback/last-failure.log;
+# re-promoting the same commit cannot clear the bad-sha gate on its own.
+RETRY_BAD=0
+if [[ "${1:-}" == "--retry-bad" ]]; then
+  RETRY_BAD=1
+fi
+STUCK_FILE="${DATA}/rollback/STUCK"
+FAILURE_LOG="${DATA}/rollback/last-failure.log"
+
 if [ ! -f "${DATA}/github-release.env" ] || [ ! -f "${DATA}/github-release.token" ]; then
   echo "pull skipped: token/env missing"
   exit 0
@@ -104,11 +114,43 @@ fi
 NEW_SHA="$APPLY_OUT"
 
 if [ -f "${DATA}/rollback/bad-sha" ] && [ "$(tr -d '\r\n' < "${DATA}/rollback/bad-sha")" = "$NEW_SHA" ]; then
-  echo "pull-release skip: $NEW_SHA already failed; waiting for a newer Release"
-  exit 0
+  if [ "$RETRY_BAD" = "1" ]; then
+    echo "pull-release: --retry-bad given; retrying previously failed $NEW_SHA" >&2
+    rm -f "${DATA}/rollback/bad-sha" "$STUCK_FILE"
+  else
+    # Loud, not silent: a skipped release means the live site is frozen on an older
+    # build while the GitHub Action and Release both look green.
+    LIVE_SHA="$(tr -d '\r\n' < "${ROOT}/DEPLOYED_SHA" 2>/dev/null || echo unknown)"
+    MSG="pull-release STUCK: release ${NEW_SHA} failed to apply earlier; live site stays on ${LIVE_SHA}."
+    MSG="${MSG} Cause: ${FAILURE_LOG}. Fix it, then run: pull_release.sh --retry-bad"
+    echo "$MSG" >&2
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MSG" > "$STUCK_FILE"
+    exit 0
+  fi
 fi
 
+# Everything an operator needs to see why an apply failed, written to the journal
+# (stderr) and kept in rollback/last-failure.log so it survives log rotation.
+# Never fails: it runs on the error path under `set -euo pipefail`.
+dump_failure_context() {
+  local reason="$1" u
+  echo "==== pull-release FAILED for ${NEW_SHA}: ${reason} ($(date -u +%Y-%m-%dT%H:%M:%SZ)) ===="
+  for u in cyberrange-provision-api cyberrange-portal cyberrange-ssh-bridge; do
+    echo "-- ${u}: $(systemctl --user is-active "$u" 2>/dev/null || true)," \
+      "restarts=$(systemctl --user show -p NRestarts --value "$u" 2>/dev/null || true)"
+  done
+  echo "-- provision-api journal (last 30 lines)"
+  journalctl --user -u cyberrange-provision-api -n 30 --no-pager 2>/dev/null || true
+  if [ -f /tmp/provision-api.log ]; then
+    echo "-- /tmp/provision-api.log (last 60 lines; Python tracebacks land here)"
+    tail -n 60 /tmp/provision-api.log 2>/dev/null || true
+  fi
+}
+
 fail_apply() {
+  local reason="${1:-unknown}"
+  mkdir -p "${DATA}/rollback"
+  dump_failure_context "$reason" 2>&1 | tee "$FAILURE_LOG" >&2 || true
   echo "$NEW_SHA" > "${DATA}/rollback/bad-sha"
   restore_snapshot
   restart_units
@@ -138,7 +180,7 @@ PY
 )"
 if [ "$GOT" != "$WANT" ]; then
   echo "pull-release lockfile integrity mismatch" >&2
-  fail_apply
+  fail_apply "portal lockfile integrity mismatch"
 fi
 
 LAST=""
@@ -149,7 +191,7 @@ if [ "$GOT" != "$LAST" ]; then
   (
     cd "${ROOT}/portal"
     npm ci --omit=dev
-  ) || fail_apply
+  ) || fail_apply "npm ci failed"
 fi
 
 # Python API deps: `npm ci` above only covers the portal. The provision-api's
@@ -180,13 +222,23 @@ print("\n".join(data.get("project", {}).get("dependencies", [])))
 PY
 )"
     if [ -n "$DEPS" ]; then
-      printf '%s\n' "$DEPS" | "$VENV_PY" -m pip install -r /dev/stdin || fail_apply
+      printf '%s\n' "$DEPS" | "$VENV_PY" -m pip install -r /dev/stdin || fail_apply "pip install of pyproject dependencies failed"
     fi
   fi
 fi
 
+# The dependencies above go into ${ROOT}/.venv. If provision-api is started with a
+# different interpreter (the repo unit used /usr/bin/python3; live hosts relied on a
+# hand-made drop-in), new packages land where the API never looks -- say so loudly.
+API_EXEC="$(systemctl --user show -p ExecStart --value cyberrange-provision-api 2>/dev/null || true)"
+case "$API_EXEC" in
+  *"${ROOT}/.venv/bin/python"*) ;;
+  *) echo "pull-release WARNING: cyberrange-provision-api does not run ${VENV_PY};" \
+       "Python dependencies installed there are not used. Re-run deploy/systemd/install-user-units.sh." >&2 ;;
+esac
+
 restart_units
-sleep 10
+BASE_RESTARTS="$(systemctl --user show -p NRestarts --value cyberrange-provision-api 2>/dev/null || echo 0)"
 
 health() {
   local code body
@@ -208,13 +260,40 @@ health() {
   return 0
 }
 
-if ! health; then
+# Poll instead of one probe after a fixed sleep: slow starters get up to HEALTH_TIMEOUT
+# seconds, while a crash-looping provision-api (e.g. a missing Python package) is caught
+# after a couple of automatic restarts instead of waiting out the whole timeout.
+HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
+wait_healthy() {
+  local waited=0 delay=5 restarts
+  while :; do
+    sleep "$delay"
+    waited=$((waited + delay))
+    if health; then
+      return 0
+    fi
+    restarts="$(systemctl --user show -p NRestarts --value cyberrange-provision-api 2>/dev/null || echo 0)"
+    if [ "$(( ${restarts:-0} - ${BASE_RESTARTS:-0} ))" -ge 2 ] 2>/dev/null; then
+      echo "pull-release: provision-api is crash-looping (restarted $(( restarts - BASE_RESTARTS )) times since apply)" >&2
+      return 1
+    fi
+    if [ "$waited" -ge "$HEALTH_TIMEOUT" ]; then
+      echo "pull-release: services not healthy after ${waited}s" >&2
+      return 1
+    fi
+    if [ "$delay" -lt 15 ]; then
+      delay=$((delay + 5))
+    fi
+  done
+}
+
+if ! wait_healthy; then
   echo "pull-release health check failed" >&2
-  fail_apply
+  fail_apply "health check failed after apply"
 fi
 
 echo "$NEW_SHA" > "${ROOT}/DEPLOYED_SHA"
 echo "$GOT" > "${DATA}/rollback/last-lock.sha"
 [ -n "$PYHASH" ] && echo "$PYHASH" > "${DATA}/rollback/last-pyproject.sha"
-rm -f "${DATA}/rollback/bad-sha"
+rm -f "${DATA}/rollback/bad-sha" "$STUCK_FILE"
 echo "pull-release OK ${NEW_SHA}"
