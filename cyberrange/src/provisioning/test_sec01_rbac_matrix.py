@@ -129,6 +129,7 @@ ROUTE_POLICY = {
     ("PATCH", "/admin/users/{user_id}/enabled"): (ADMIN, f"/admin/users/{ANY_UUID}/enabled", {"enabled": True}),
     ("PUT", "/admin/users/{user_id}/role"): (ADMIN, f"/admin/users/{ANY_UUID}/role", {"role": "student"}),
     ("PUT", "/admin/users/{user_id}/password"): (ADMIN, f"/admin/users/{ANY_UUID}/password", {"password": "Probe!12345"}),
+    ("DELETE", "/admin/users/{user_id}/mfa"): (ADMIN, f"/admin/users/{ANY_UUID}/mfa", None),
     ("GET", "/admin/audit-log"): (ADMIN, "/admin/audit-log", None),
 }
 

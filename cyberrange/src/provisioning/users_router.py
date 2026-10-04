@@ -376,3 +376,51 @@ def admin_reset_user_password(
             _revoke_cached_tokens(user_id, username)
     _audit(event, username, "OK", actor, detail)
     return serialize_user(target, roles)
+
+
+@router.delete("/admin/users/{user_id}/mfa")
+def admin_reset_user_mfa(
+    user_id: str = Path(..., pattern=USER_ID_PATTERN),
+    claims: dict = Depends(verify_token),
+    kc: KeycloakAdminClient = Depends(get_client),
+):
+    """Remove another user's authenticator (e.g. a lost phone).
+
+    SEC-03 requires a TOTP code from every user, so a user who lost their phone
+    cannot sign in at all. Deleting their OTP credential sends them through the
+    QR enrolment page on their next sign-in. Same guards as the password reset:
+    Admin-only, the caller re-checked against Keycloak, serialized, never on the
+    caller's own account. Existing sessions are ended so whoever holds the old
+    device or session is signed out. Idempotent: a user with no authenticator
+    is reported with removed=0.
+    """
+    actor = _require_admin(claims)
+    event = "ADMIN_USER_MFA_RESET"
+    with _write_lock:
+        target = _load_target(kc, user_id)
+        username = target.get("username")
+        _confirm_actor_still_admin(kc, actor, event, username, "")
+        if target.get("username") == actor:
+            _audit(event, username, "DENIED", actor, "reason=self")
+            raise HTTPException(
+                status_code=409,
+                detail="Admins can't reset their own authenticator here; ask another Admin",
+            )
+        try:
+            removed = kc.remove_otp_credentials(user_id)
+        except KeycloakAdminError as e:
+            _audit(event, username, "FAILED", actor, "reason=keycloak")
+            raise _unavailable(e)
+        try:
+            kc.logout_user(user_id)
+            roles = kc.user_app_roles(user_id)
+            target = kc.get_user(user_id)
+        except KeycloakAdminError as e:
+            # The authenticator WAS removed; report the failure honestly rather
+            # than claim the old sessions were ended.
+            _audit(event, username, "FAILED", actor, f"removed={removed} reason=keycloak_after_remove")
+            raise _unavailable(e)
+        finally:
+            _revoke_cached_tokens(user_id, username)
+    _audit(event, username, "OK", actor, f"removed={removed}")
+    return serialize_user(target, roles)

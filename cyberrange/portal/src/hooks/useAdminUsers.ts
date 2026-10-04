@@ -13,7 +13,7 @@ export function useAdminUsers() {
   const [error, setError] = useState<string | null>(null)
   const [forbidden, setForbidden] = useState(false)
   // user id -> in-flight write, so only that row's controls disable.
-  const [pending, setPending] = useState<Record<string, 'enabled' | 'role' | 'password'>>({})
+  const [pending, setPending] = useState<Record<string, 'enabled' | 'role' | 'password' | 'mfa'>>({})
   const search = useRef('')
   const requestSeq = useRef(0)
 
@@ -50,7 +50,7 @@ export function useAdminUsers() {
     setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)))
 
   /** Throws a user-safe message string on failure. */
-  const runWrite = async (userId: string, kind: 'enabled' | 'role' | 'password', call: () => Promise<AdminUser>) => {
+  const runWrite = async (userId: string, kind: 'enabled' | 'role' | 'password' | 'mfa', call: () => Promise<AdminUser>) => {
     setPending((p) => ({ ...p, [userId]: kind }))
     try {
       replace(await call())
@@ -72,6 +72,8 @@ export function useAdminUsers() {
 
   const resetPassword = (userId: string, password: string, temporary: boolean) =>
     runWrite(userId, 'password', () => admin.resetUserPassword(userId, password, temporary))
+
+  const resetMfa = (userId: string) => runWrite(userId, 'mfa', () => admin.resetUserMfa(userId))
 
   /** Throws a user-safe message string on failure. */
   const createUser = async (input: CreateUserInput): Promise<AdminUser> => {
@@ -95,6 +97,7 @@ export function useAdminUsers() {
     setEnabled,
     setRole,
     resetPassword,
+    resetMfa,
     createUser,
   }
 }

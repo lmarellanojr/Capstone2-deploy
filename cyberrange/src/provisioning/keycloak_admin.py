@@ -253,6 +253,19 @@ class KeycloakAdminClient:
         rep["enabled"] = enabled
         self._request("PUT", f"/users/{user_id}", json=rep)
 
+    def remove_otp_credentials(self, user_id: str) -> int:
+        """Delete every OTP (authenticator) credential the user has; returns how many.
+
+        SEC-03 makes the browser flow's OTP Form REQUIRED, so a user left with no
+        OTP credential is sent through CONFIGURE_TOTP (QR enrolment) on their
+        next sign-in. Passwords and other credential types are never touched.
+        """
+        creds = self._request("GET", f"/users/{user_id}/credentials").json()
+        otp = [c for c in creds if c.get("type") == "otp"]
+        for c in otp:
+            self._request("DELETE", f"/users/{user_id}/credentials/{c['id']}")
+        return len(otp)
+
     def logout_user(self, user_id: str) -> None:
         """End every session so refresh tokens stop working and introspection reports inactive."""
         self._request("POST", f"/users/{user_id}/logout")
