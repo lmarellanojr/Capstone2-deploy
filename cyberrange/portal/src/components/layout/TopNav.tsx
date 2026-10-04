@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, Menu, Search } from "lucide-react";
 import { Logo } from "./Logo";
@@ -129,8 +129,12 @@ export function TopNav({
                 type="button"
                 role="menuitem"
                 onClick={() => {
-                  signOut({ callbackUrl: "/api/auth/federated-logout" });
+                  // Straight to the logout route, not next-auth's signOut(): signOut
+                  // deletes the session cookie first, and with it the id_token that
+                  // lets Keycloak log out without a "Do you want to log out?" page.
+                  // The route clears the session cookie itself.
                   setShowDropdown(false);
+                  window.location.assign("/api/auth/federated-logout");
                 }}
                 className="w-full flex items-center gap-2 text-left px-4 py-3 text-danger hover:bg-muted transition text-sm font-medium focus:outline-none focus-visible:bg-muted"
               >
