@@ -300,7 +300,21 @@ def get_client() -> KeycloakAdminClient:
             )
             if not _client.configured:
                 logger.warning(
-                    "ADM-USER: KEYCLOAK_USER_ADMIN_CLIENT_SECRET / Keycloak base URL not set; "
-                    "/admin/users endpoints will answer 503"
+                    "ADM-USER: user management is NOT configured "
+                    "(KEYCLOAK_USER_ADMIN_CLIENT_SECRET / Keycloak base URL not set); "
+                    "/admin/users endpoints will answer 503 until "
+                    "deploy/host/setup_user_admin_client.sh is run and the API restarted "
+                    "(manual 04, Step 9)"
                 )
         return _client
+
+
+def log_configuration_status() -> bool:
+    """Called once at API startup (#145) so a host that skipped
+    setup_user_admin_client.sh says so in the journal right away, instead of
+    only when an Admin first opens Admin -> Users. Never raises: student flows
+    must not depend on user management."""
+    client = get_client()  # logs the NOT configured warning itself
+    if client.configured:
+        logger.info("ADM-USER: user management configured (client %s)", client.client_id)
+    return client.configured

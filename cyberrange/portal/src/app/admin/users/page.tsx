@@ -7,6 +7,7 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, Button, LoadingSpinner, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { CreateUserModal } from "@/components/admin/CreateUserModal";
 import { ResetPasswordModal } from "@/components/admin/ResetPasswordModal";
+import { UserAdminSetupHint } from "@/components/admin/UserAdminSetupHint";
 import { adminNavItems } from "@/lib/navigation";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { useToastContext } from "@/context/ToastContext";
@@ -131,14 +132,7 @@ export default function AdminUsersPage() {
         <div role="alert" className="mb-4 p-3 alert-error text-sm flex flex-wrap items-center justify-between gap-3">
           <span>
             {error}
-            {/* ADM-USER contract §7: every /admin/users* call answers 503 until
-                the one-time host setup has created the user-admin client. */}
-            {/not configured/i.test(error) && (
-              <span className="block mt-1 text-xs">
-                One-time setup: run <code className="bg-white/60 px-1 rounded">deploy/host/setup_user_admin_client.sh</code> on
-                the host, then restart the provision API.
-              </span>
-            )}
+            <UserAdminSetupHint message={error} />
           </span>
           <Button variant="secondary" size="sm" onClick={() => void refresh()}>
             Try again

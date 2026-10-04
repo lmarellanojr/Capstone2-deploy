@@ -11,6 +11,7 @@ import {
   type CreateUserErrors,
   type CreateUserForm,
 } from "@/lib/adminUserValidation";
+import { UserAdminSetupHint } from "./UserAdminSetupHint";
 
 const EMPTY: CreateUserForm = {
   username: "",
@@ -227,6 +228,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
           {serverError && (
             <div role="alert" className="alert-error p-3 text-sm">
               {serverError}
+              <UserAdminSetupHint message={serverError} />
             </div>
           )}
           {/* Enter submits from any field. */}

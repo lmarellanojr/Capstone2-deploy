@@ -587,6 +587,55 @@ python3 -m pytest deploy/systemd/test_validate_units.py -q
 
 ---
 
+## Step 9: Admin user management (one-time)
+
+The portal's **Admin → Users** page (list, create, enable/disable, role change,
+password and MFA reset) talks to Keycloak through a dedicated service-account
+client, `cyberrange-user-admin`. Nothing above creates it, and its secret is not
+in git, so **every fresh host needs this step once**. Without it every
+`/admin/users` call answers `503 User management is not configured`, and the
+Admin → Users page shows that message with a pointer back here (#145).
+
+Run it after Step 1e (the realm must exist) and Step 7c (the API must be
+installed):
+
+```bash
+cd ~/cyberrange
+bash deploy/host/setup_user_admin_client.sh
+systemctl --user restart cyberrange-provision-api.service
+```
+
+Expected tail:
+
+```text
+GET users?max=1                    HTTP 200
+GET roles/student                  HTTP 200
+...
+USER_ADMIN_SETUP_OK
+```
+
+What it does: creates (or re-locks) the confidential, service-account-only
+client `cyberrange-user-admin` with exactly `view-users`, `query-users`,
+`manage-users` and `view-realm`; forces `registrationAllowed=false`; and writes
+`KEYCLOAK_USER_ADMIN_CLIENT_ID` / `KEYCLOAK_USER_ADMIN_CLIENT_SECRET` into
+`env/.env` without printing the secret. It is idempotent and does **not** rotate
+the secret on re-run. Full contract: `docs/ADM-USER-contract.md` §7.
+
+Verify:
+
+```bash
+grep -c '^KEYCLOAK_USER_ADMIN_CLIENT_SECRET=.\+' ~/cyberrange/env/.env   # → 1
+journalctl --user -u cyberrange-provision-api --since -2min --no-pager \
+  | grep -c 'user management is NOT configured'                         # → 0
+```
+
+Then sign in as an Admin and open **Admin → Users**: the user list loads and
+**Create user** works. You need at least one account with the `admin` realm
+role to reach that page; `deploy/host/create_demo_accounts.sh` creates
+`admin_demo`, `instructor_demo` and `student_demo`.
+
+---
+
 ## Not in this chapter
 
 | Task | Where |
@@ -626,6 +675,11 @@ installed. Step 6.
 `KEYCLOAK_CLIENT_SECRET` differs between `env/.env`, `portal/.env.local` and the
 Keycloak realm. Usually caused by copying `.env.local.example` over a working
 `.env.local`. See also Chapter 09, Issue 3.
+
+**Admin → Users says "User management is not configured"**
+The `cyberrange-user-admin` client was never created on this host, or the API
+was not restarted afterwards. Step 9. The API also logs
+`ADM-USER: user management is NOT configured` once at startup.
 
 **Services vanish after you disconnect**
 Linger is off. Step 0.
