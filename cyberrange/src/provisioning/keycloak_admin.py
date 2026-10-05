@@ -62,6 +62,15 @@ class KeycloakRejected(KeycloakAdminError):
     """Keycloak refused the input (HTTP 400), e.g. the realm password policy."""
 
 
+class KeycloakOtpRemovalIncomplete(KeycloakAdminError):
+    """An OTP credential DELETE failed part-way. `removed` were confirmed deleted
+    before it; the failed one may or may not have been applied by Keycloak."""
+
+    def __init__(self, removed: int, cause: KeycloakAdminError):
+        super().__init__(f"OTP removal incomplete after {removed} deleted: {cause}")
+        self.removed = removed
+
+
 def _derive_base_and_realm() -> tuple[Optional[str], Optional[str]]:
     base = os.getenv("KEYCLOAK_BASE_URL", "").strip() or None
     realm = os.getenv("KEYCLOAK_REALM", "").strip() or None
@@ -252,6 +261,27 @@ class KeycloakAdminClient:
         rep = self._request("GET", f"/users/{user_id}").json()
         rep["enabled"] = enabled
         self._request("PUT", f"/users/{user_id}", json=rep)
+
+    def remove_otp_credentials(self, user_id: str) -> int:
+        """Delete every OTP (authenticator) credential the user has; returns how many.
+
+        SEC-03 makes the browser flow's OTP Form REQUIRED, so a user left with no
+        OTP credential is sent through CONFIGURE_TOTP (QR enrolment) on their
+        next sign-in. Passwords and other credential types are never touched.
+        A failed DELETE raises KeycloakOtpRemovalIncomplete, so the caller knows
+        the user's credentials may already have changed (an earlier delete went
+        through, or Keycloak applied the failed one) and still ends sessions.
+        """
+        creds = self._request("GET", f"/users/{user_id}/credentials").json()
+        otp = [c for c in creds if c.get("type") == "otp"]
+        removed = 0
+        for c in otp:
+            try:
+                self._request("DELETE", f"/users/{user_id}/credentials/{c['id']}")
+            except KeycloakAdminError as e:
+                raise KeycloakOtpRemovalIncomplete(removed, e) from e
+            removed += 1
+        return removed
 
     def logout_user(self, user_id: str) -> None:
         """End every session so refresh tokens stop working and introspection reports inactive."""

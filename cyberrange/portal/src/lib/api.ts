@@ -674,6 +674,13 @@ export const admin = {
     return response.data
   },
 
+  // SEC-03: removes the user's authenticator (lost phone) and ends their
+  // sessions; they enrol a new one at next sign-in. Password is untouched.
+  resetUserMfa: async (userId: string): Promise<AdminUser> => {
+    const response = await apiClient.delete(`/admin/users/${encodeURIComponent(userId)}/mfa`)
+    return response.data
+  },
+
   // Read-only audit trail, newest first; page with next_before_id.
   listAuditLog: async (filters: {
     eventType?: string

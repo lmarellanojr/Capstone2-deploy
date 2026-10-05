@@ -24,6 +24,7 @@ from keycloak_admin import (
     KeycloakConflict,
     KeycloakNotConfigured,
     KeycloakNotFound,
+    KeycloakOtpRemovalIncomplete,
     KeycloakRejected,
 )
 from provision_api_fastapi import app
@@ -48,6 +49,7 @@ class FakeKeycloak:
         self.users: dict[str, dict] = {}
         self.roles: dict[str, set] = {}
         self.passwords: dict[str, tuple] = {}
+        self.otp: dict[str, int] = {}  # user id -> number of OTP credentials
         self.logged_out: list[str] = []
         self.fail_on: set = set()
         self.reject_password = False
@@ -121,7 +123,16 @@ class FakeKeycloak:
         self._maybe_fail("set_enabled")
         self.users[user_id]["enabled"] = enabled
 
+    def remove_otp_credentials(self, user_id):
+        self._maybe_fail("remove_otp_credentials")
+        if "remove_otp_partial" in self.fail_on:
+            # First authenticator deleted, the next DELETE fails.
+            self.otp[user_id] -= 1
+            raise KeycloakOtpRemovalIncomplete(1, KeycloakAdminError("DELETE failed"))
+        return self.otp.pop(user_id, 0)
+
     def logout_user(self, user_id):
+        self._maybe_fail("logout_user")
         self.logged_out.append(user_id)
 
     def set_app_role(self, user_id, role):
@@ -175,6 +186,7 @@ ROUTES = [
     ("patch", f"/admin/users/{PLACEHOLDER_ID}/enabled", {"enabled": False}),
     ("put", f"/admin/users/{PLACEHOLDER_ID}/role", {"role": "student"}),
     ("put", f"/admin/users/{PLACEHOLDER_ID}/password", {"password": "New!pass-5678"}),
+    ("delete", f"/admin/users/{PLACEHOLDER_ID}/mfa", None),
 ]
 
 
@@ -585,6 +597,7 @@ def test_no_unauthenticated_route_can_create_users():
         ("/admin/users/{user_id}/enabled", "PATCH"),
         ("/admin/users/{user_id}/role", "PUT"),
         ("/admin/users/{user_id}/password", "PUT"),
+        ("/admin/users/{user_id}/mfa", "DELETE"),
     }
 
 
@@ -679,6 +692,128 @@ def test_reset_password_keycloak_down_is_503(client, kc):
     kc.fail_on.add("set_password")
     assert client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"}).status_code == 503
     assert audit_rows("ADMIN_USER_PASSWORD_RESET")[-1]["result"] == "FAILED"
+
+
+# --- MFA reset (SEC-03: lost phone) -------------------------------------------------
+
+
+def test_reset_mfa_removes_authenticator_ends_sessions_and_evicts_tokens(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.otp[uid] = 1
+    token = _cache_token_for(uid, "student_demo")
+    r = client.delete(f"/admin/users/{uid}/mfa")
+    assert r.status_code == 200
+    assert r.json()["username"] == "student_demo"
+    assert uid not in kc.otp
+    assert kc.logged_out == [uid]
+    assert introspect_cache.get_cached(token) is None
+    rows = audit_rows("ADMIN_USER_MFA_RESET")
+    assert [(r["student_id"], r["result"]) for r in rows] == [("student_demo", "OK")]
+    assert "actor=admin_demo" in rows[0]["detail"] and "removed=1" in rows[0]["detail"]
+
+
+def test_reset_mfa_is_idempotent_for_a_user_without_an_authenticator(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    assert client.delete(f"/admin/users/{uid}/mfa").status_code == 200
+    assert "removed=0" in audit_rows("ADMIN_USER_MFA_RESET")[-1]["detail"]
+
+
+def test_reset_mfa_leaves_the_password_alone(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.passwords[uid] = ("Old!pass-1234", False)
+    kc.otp[uid] = 1
+    client.delete(f"/admin/users/{uid}/mfa")
+    assert kc.passwords[uid] == ("Old!pass-1234", False)
+
+
+def test_admin_cannot_reset_own_mfa(client, kc):
+    as_caller(ADMIN)
+    kc.otp[kc.admin_id] = 1
+    r = client.delete(f"/admin/users/{kc.admin_id}/mfa")
+    assert r.status_code == 409
+    assert kc.otp[kc.admin_id] == 1
+    assert kc.logged_out == []
+    assert audit_rows("ADMIN_USER_MFA_RESET")[-1]["result"] == "DENIED"
+
+
+def test_reset_mfa_unknown_or_service_account_404(client, kc):
+    as_caller(ADMIN)
+    assert client.delete(f"/admin/users/{PLACEHOLDER_ID}/mfa").status_code == 404
+    svc = kc.add("service-account-cyberrange-user-admin")
+    kc.otp[svc] = 1
+    assert client.delete(f"/admin/users/{svc}/mfa").status_code == 404
+    assert kc.otp[svc] == 1
+
+
+def test_reset_mfa_rejects_a_non_uuid_id(client, kc):
+    as_caller(ADMIN)
+    assert client.delete("/admin/users/not-a-uuid/mfa").status_code == 422
+
+
+def test_demoted_admin_with_cached_claims_cannot_reset_mfa(client, kc):
+    kc.add("ex_admin", "student")
+    as_caller(claims("ex_admin", "admin"))
+    uid = kc.add("student_demo", "student")
+    kc.otp[uid] = 1
+    assert client.delete(f"/admin/users/{uid}/mfa").status_code == 403
+    assert kc.otp[uid] == 1
+    assert audit_rows("ADMIN_USER_MFA_RESET")[-1]["result"] == "DENIED"
+
+
+def test_reset_mfa_keycloak_down_is_503_and_keeps_sessions(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.otp[uid] = 1
+    kc.fail_on.add("remove_otp_credentials")
+    assert client.delete(f"/admin/users/{uid}/mfa").status_code == 503
+    assert kc.otp[uid] == 1
+    assert kc.logged_out == []
+    assert audit_rows("ADMIN_USER_MFA_RESET")[-1]["result"] == "FAILED"
+
+
+def test_reset_mfa_failure_after_removal_is_reported_honestly(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.otp[uid] = 1
+    token = _cache_token_for(uid, "student_demo")
+    kc.fail_on.add("logout_user")
+    assert client.delete(f"/admin/users/{uid}/mfa").status_code == 503
+    assert uid not in kc.otp  # it WAS removed
+    row = audit_rows("ADMIN_USER_MFA_RESET")[-1]
+    assert row["result"] == "FAILED" and "removed=1" in row["detail"] and "keycloak_after_remove" in row["detail"]
+    assert introspect_cache.get_cached(token) is None
+
+
+def test_reset_mfa_partial_removal_ends_sessions_evicts_tokens_and_audits(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.otp[uid] = 2
+    token = _cache_token_for(uid, "student_demo")
+    kc.fail_on.add("remove_otp_partial")
+    assert client.delete(f"/admin/users/{uid}/mfa").status_code == 503
+    assert kc.otp[uid] == 1  # the first authenticator WAS removed
+    assert kc.logged_out == [uid]
+    assert introspect_cache.get_cached(token) is None
+    row = audit_rows("ADMIN_USER_MFA_RESET")[-1]
+    assert row["result"] == "FAILED"
+    assert "removed=1" in row["detail"] and "sessions=ended" in row["detail"]
+    assert "keycloak_partial_remove" in row["detail"]
+
+
+def test_reset_mfa_partial_removal_still_evicts_tokens_when_logout_fails(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.otp[uid] = 2
+    token = _cache_token_for(uid, "student_demo")
+    kc.fail_on.update({"remove_otp_partial", "logout_user"})
+    assert client.delete(f"/admin/users/{uid}/mfa").status_code == 503
+    assert introspect_cache.get_cached(token) is None
+    row = audit_rows("ADMIN_USER_MFA_RESET")[-1]
+    assert row["result"] == "FAILED"
+    assert "removed=1" in row["detail"] and "sessions=not_ended" in row["detail"]
 
 
 # --- KeycloakAdminClient HTTP behaviour -------------------------------------------
@@ -818,3 +953,41 @@ def test_base_and_realm_derived_from_introspect_url(monkeypatch):
         "http://10.115.77.12/auth/realms/cyber-range/protocol/openid-connect/token/introspect",
     )
     assert keycloak_admin._derive_base_and_realm() == ("http://10.115.77.12/auth", "cyber-range")
+
+
+def test_client_remove_otp_deletes_only_otp_credentials():
+    creds = [
+        {"id": "pw-1", "type": "password"},
+        {"id": "otp-1", "type": "otp"},
+        {"id": "otp-2", "type": "otp"},
+        {"id": "wa-1", "type": "webauthn"},
+    ]
+    kc, s = make_client([TOKEN_OK, FakeResponse(200, creds), FakeResponse(204), FakeResponse(204)])
+    assert kc.remove_otp_credentials("u1") == 2
+    calls = [(m, url.rsplit("/admin/realms/cyber-range", 1)[-1]) for m, url, _ in s.calls[1:]]
+    assert calls == [
+        ("GET", "/users/u1/credentials"),
+        ("DELETE", "/users/u1/credentials/otp-1"),
+        ("DELETE", "/users/u1/credentials/otp-2"),
+    ]
+
+
+def test_client_remove_otp_reports_progress_when_a_later_delete_fails():
+    creds = [{"id": "otp-1", "type": "otp"}, {"id": "otp-2", "type": "otp"}]
+    kc, _ = make_client([TOKEN_OK, FakeResponse(200, creds), FakeResponse(204), FakeResponse(500)])
+    with pytest.raises(KeycloakOtpRemovalIncomplete) as exc:
+        kc.remove_otp_credentials("u1")
+    assert exc.value.removed == 1
+
+
+def test_client_remove_otp_listing_failure_is_a_plain_error():
+    kc, _ = make_client([TOKEN_OK, FakeResponse(500)])
+    with pytest.raises(KeycloakAdminError) as exc:
+        kc.remove_otp_credentials("u1")
+    assert not isinstance(exc.value, KeycloakOtpRemovalIncomplete)
+
+
+def test_client_remove_otp_with_no_authenticator_deletes_nothing():
+    kc, s = make_client([TOKEN_OK, FakeResponse(200, [{"id": "pw-1", "type": "password"}])])
+    assert kc.remove_otp_credentials("u1") == 0
+    assert [m for m, _, _ in s.calls[1:]] == ["GET"]

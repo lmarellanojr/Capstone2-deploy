@@ -1,6 +1,6 @@
 "use client";
 
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { Logo } from "@/components/layout/Logo";
@@ -54,7 +54,7 @@ export default function NoRolePage() {
         <Button
           variant="secondary"
           className="w-full"
-          onClick={() => signOut({ callbackUrl: "/api/auth/federated-logout" })}
+          onClick={() => window.location.assign("/api/auth/federated-logout")}
         >
           Sign out
         </Button>

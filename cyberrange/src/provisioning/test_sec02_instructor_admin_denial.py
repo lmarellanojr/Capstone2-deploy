@@ -136,6 +136,10 @@ ADMIN_CASES = {
          lambda ids: f"/admin/users/{ids['admin_demo']}/password", {"password": "Probe!12345", "temporary": False}),
         ("reset a Student's password", lambda ids: f"/admin/users/{ids['student_demo']}/password", {"password": "Probe!12345"}),
     ],
+    ("DELETE", "/admin/users/{user_id}/mfa"): [
+        ("strip the only Admin's authenticator", lambda ids: f"/admin/users/{ids['admin_demo']}/mfa", None),
+        ("reset a Student's authenticator", lambda ids: f"/admin/users/{ids['student_demo']}/mfa", None),
+    ],
     ("GET", "/admin/audit-log"): [
         ("read the full audit trail", "/admin/audit-log", None),
         ("read Admin user-management events", "/admin/audit-log?event_type=ADMIN_USER_ROLE_SET", None),
@@ -176,7 +180,7 @@ class RecordingKeycloak(FakeKeycloak):
         return attr
 
     def state(self):
-        return copy.deepcopy((self.users, self.roles, self.passwords, self.logged_out))
+        return copy.deepcopy((self.users, self.roles, self.passwords, self.otp, self.logged_out))
 
 
 class _Introspection:
@@ -284,7 +288,7 @@ def test_every_admin_only_route_is_covered():
 
 def test_keycloak_spy_covers_the_admin_client_api():
     # Guards the "zero Keycloak calls" assertion against a vacuous pass.
-    assert {"list_users", "create_user", "set_enabled", "set_app_role", "delete_user", "logout_user"} <= set(KC_API)
+    assert {"list_users", "create_user", "set_enabled", "set_app_role", "delete_user", "logout_user", "remove_otp_credentials"} <= set(KC_API)
 
 
 # --- core: Instructor denied, nothing happened --------------------------------

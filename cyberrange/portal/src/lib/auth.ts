@@ -98,6 +98,9 @@ async function doRefresh(token: JWT): Promise<JWT> {
       roles: decodeRoles(refreshed.access_token),
       accessTokenExpires: Date.now() + refreshed.expires_in * 1000,
       refreshToken: refreshed.refresh_token ?? token.refreshToken,
+      // Keycloak returns a fresh id_token on refresh (scope includes openid);
+      // keep the newest one for the logout id_token_hint.
+      idToken: refreshed.id_token ?? token.idToken,
       error: undefined,
     }
   } catch (e) {
@@ -175,6 +178,10 @@ export const authOptions: NextAuthOptions = {
       if (account) {
         token.accessToken = account.access_token
         token.refreshToken = account.refresh_token
+        // Kept server-side only (never copied into the session the browser
+        // reads): federated-logout sends it to Keycloak as id_token_hint so the
+        // logout completes without Keycloak's "Do you want to log out?" page.
+        token.idToken = account.id_token
         token.roles = decodeRoles(account.access_token)
         const expiresInSec =
           (account.expires_at as number | undefined) ??
