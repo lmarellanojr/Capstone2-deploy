@@ -21,12 +21,13 @@
 # user who deletes their authenticator in the account console is made to
 # enrol again instead of silently dropping back to password-only.
 #
-# Deliberately NOT changed: the direct-grant (password grant) flow. Only the
-# confidential `portal` client allows that grant, so it needs the client
-# secret that lives on the server; the live verify_* scripts use it. A user
-# who has NOT enrolled yet still gets a password-grant token there; once a
-# user enrols, Keycloak's own "Direct Grant - Conditional OTP" asks for a
-# `totp` code on that path too.
+# Deliberately NOT changed: the realm's direct-grant (password grant) flow.
+# The confidential `portal` client allows that grant, so it needs the client
+# secret that lives on the server. A user who has NOT enrolled yet still gets
+# a password-grant token there; once a user enrols, Keycloak's own "Direct
+# Grant - Conditional OTP" asks for a `totp` code on that path too. The live
+# verify_* scripts therefore sign in through a separate client and dedicated
+# accounts set up by setup_verify_accounts.sh, which refuses everyone else.
 #
 # Idempotent. Prints settings only -- never a secret.
 #

@@ -14,11 +14,15 @@
 # NOT read-only: creates two throwaway users per run (adm_user_test_<HHMMSS>,
 # a student, and adm_admin_test_<HHMMSS>, an admin that gets revoked), changes
 # roles, disables/enables, and leaves both DISABLED. It never modifies the demo
-# accounts. Revoked tokens are expected to fail IMMEDIATELY (the API evicts
+# or verify accounts. The acting Admin, Student and Instructor are the SEC-03
+# verify accounts (verify_admin, verify_student, verify_instructor), so the
+# script keeps working after the demo accounts enrol MFA. Revoked tokens are expected to fail IMMEDIATELY (the API evicts
 # them from its introspection cache), so there are no waits.
 set -uo pipefail
 REPO=/home/llms_admin/cyberrange
-set -a; . "$REPO/env/.env"; . /home/llms_admin/cyberrange-data/demo-accounts.env; set +a
+VERIFY_ENV=/home/llms_admin/cyberrange-data/verify-accounts.env
+[[ -f "$VERIFY_ENV" ]] || { echo "missing $VERIFY_ENV -- run setup_verify_accounts.sh first"; exit 1; }
+set -a; . "$REPO/env/.env"; . "$VERIFY_ENV"; set +a
 API="http://${API_BIND_HOST}:${API_BIND_PORT}"
 TOKEN_URL="${KEYCLOAK_INTROSPECT_URL%/introspect}"
 RESP=$(mktemp); chmod 600 "$RESP"; trap 'rm -f "$RESP"' EXIT
@@ -28,12 +32,18 @@ TEST_ADMIN="adm_admin_test_$(date +%H%M%S)"
 NOBODY=00000000-0000-0000-0000-000000000000
 FAILS=0
 
-token() {  # token <user> <password> -> access token, or "ERR:<reason>"
+_token() {  # _token <client id> <client secret> <user> <password> -> access token, or "ERR:<reason>"
   curl -sS -X POST "$TOKEN_URL" -d grant_type=password \
-    -d "client_id=$KEYCLOAK_CLIENT_ID" -d "client_secret=$KEYCLOAK_CLIENT_SECRET" \
-    -d "username=$1" -d "password=$2" -d scope=openid \
+    -d "client_id=$1" --data-urlencode "client_secret=$2" \
+    -d "username=$3" --data-urlencode "password=$4" -d scope=openid \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("access_token") or "ERR:"+d.get("error_description", d.get("error","?")))'
 }
+# The verify_* accounts sign in through the cyberrange-verify client, which
+# needs no code and refuses every other account (setup_verify_accounts.sh).
+token() { _token "$VERIFY_CLIENT_ID" "$VERIFY_CLIENT_SECRET" "$@"; }
+# The throwaway users this script creates never enrol an authenticator, so the
+# portal client's own direct-grant flow still issues them a token without one.
+portal_token() { _token "$KEYCLOAK_CLIENT_ID" "$KEYCLOAK_CLIENT_SECRET" "$@"; }
 
 roles_of() {  # app roles in a JWT, decoded locally
   python3 -c 'import base64,json,sys
@@ -82,11 +92,11 @@ profile() {  # profile <label> -- first/last name + email of $TEST_USER as GET /
 
 echo "=== ADM-USER #32 evidence  $(date -u +%FT%TZ)  api=$API  branch=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)@$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)"
 
-echo; echo "=== 1. Demo account tokens"
-ADMIN_TOK=$(token admin_demo "$ADMIN_DEMO_PASSWORD")
-STU_TOK=$(token student_demo "$STUDENT_DEMO_PASSWORD")
-INS_TOK=$(token instructor_demo "$INSTRUCTOR_DEMO_PASSWORD")
-for pair in "admin_demo:$ADMIN_TOK:admin" "student_demo:$STU_TOK:student" "instructor_demo:$INS_TOK:instructor"; do
+echo; echo "=== 1. Verify account tokens"
+ADMIN_TOK=$(token verify_admin "$VERIFY_ADMIN_PASSWORD")
+STU_TOK=$(token verify_student "$VERIFY_STUDENT_PASSWORD")
+INS_TOK=$(token verify_instructor "$VERIFY_INSTRUCTOR_PASSWORD")
+for pair in "verify_admin:$ADMIN_TOK:admin" "verify_student:$STU_TOK:student" "verify_instructor:$INS_TOK:instructor"; do
   IFS=: read -r name tok want <<<"$pair"
   if [[ $tok == ERR:* ]]; then check 1 "$name login" "$tok"; continue; fi
   got=$(roles_of "$tok"); [ "$got" = "$want" ]; check $? "$name login" "roles=$got"
@@ -118,7 +128,7 @@ TEST_ID_MASK=$TEST_ID
 call 409 "admin: duplicate username"               POST  /admin/users "$ADMIN_TOK" "$CREATE"
 call 422 "admin: non-app role rejected"            POST  /admin/users "$ADMIN_TOK" "${CREATE/\"role\":\"student\"/\"role\":\"realm-admin\"}"
 call 422 "admin: smuggled realmRoles rejected"     POST  /admin/users "$ADMIN_TOK" "${CREATE%\}},\"realmRoles\":[\"admin\"]}"
-T1=$(token "$TEST_USER" "$TEST_PW")
+T1=$(portal_token "$TEST_USER" "$TEST_PW")
 [[ $T1 != ERR:* ]] && [ "$(roles_of "$T1")" = student ]; check $? "new user can sign in as student" "roles=$( [[ $T1 == ERR:* ]] && echo "$T1" || roles_of "$T1")"
 profile "list returns name + email (brief representation)"
 
@@ -126,24 +136,24 @@ echo; echo "=== 5. Role assignment + role refresh"
 call 200 "new user's student token works (now cached)" GET /pods "$T1"
 call 200 "admin: set role -> instructor"           PUT   "/admin/users/$TEST_ID/role" "$ADMIN_TOK" '{"role":"instructor"}'
 call 401 "old token rejected immediately"          GET   /pods "$T1"
-T2=$(token "$TEST_USER" "$TEST_PW")
+T2=$(portal_token "$TEST_USER" "$TEST_PW")
 [ "$(roles_of "$T2")" = instructor ]; check $? "fresh sign-in carries new role" "roles=$(roles_of "$T2")"
 call 200 "instructor endpoint now allowed"         GET   /instructor/pods "$T2"
 call 403 "still no admin access"                   GET   /admin/users "$T2"
 
 echo; echo "=== 6. Disable / enable"
 call 200 "admin: disable user"                     PATCH "/admin/users/$TEST_ID/enabled" "$ADMIN_TOK" '{"enabled":false}'
-R=$(token "$TEST_USER" "$TEST_PW")
+R=$(portal_token "$TEST_USER" "$TEST_PW")
 [[ $R == ERR:* ]]; check $? "disabled user cannot sign in" "${R:0:60}"
 call 401 "cached token rejected immediately"       GET   /pods "$T2"
 call 200 "admin: enable user"                      PATCH "/admin/users/$TEST_ID/enabled" "$ADMIN_TOK" '{"enabled":true}'
-T3=$(token "$TEST_USER" "$TEST_PW")
+T3=$(portal_token "$TEST_USER" "$TEST_PW")
 [[ $T3 != ERR:* ]]; check $? "re-enabled user can sign in" "roles=$( [[ $T3 == ERR:* ]] && echo "$T3" || roles_of "$T3")"
 profile "name + email survive disable then enable"
 
 echo; echo "=== 7. Admin self-protection"
-ADMIN_ID=$(curl -sS -H "Authorization: Bearer $ADMIN_TOK" "$API/admin/users?search=admin_demo" \
-  | python3 -c 'import json,sys; print(next((u["id"] for u in json.load(sys.stdin)["users"] if u["username"]=="admin_demo"),""))')
+ADMIN_ID=$(curl -sS -H "Authorization: Bearer $ADMIN_TOK" "$API/admin/users?search=verify_admin" \
+  | python3 -c 'import json,sys; print(next((u["id"] for u in json.load(sys.stdin)["users"] if u["username"]=="verify_admin"),""))')
 TEST_ID_MASK=$ADMIN_ID
 call 409 "admin cannot disable self"               PATCH "/admin/users/$ADMIN_ID/enabled" "$ADMIN_TOK" '{"enabled":false}'
 call 409 "admin cannot change own role"            PUT   "/admin/users/$ADMIN_ID/role" "$ADMIN_TOK" '{"role":"student"}'
@@ -153,14 +163,14 @@ echo; echo "=== 7b. Revoked Admin cannot act on a still-valid token"
 ADMIN2_BODY=$(printf '{"username":"%s","role":"admin","password":"%s","temporary_password":false}' "$TEST_ADMIN" "$TEST_PW")
 call 201 "admin: create second admin $TEST_ADMIN"  POST  /admin/users "$ADMIN_TOK" "$ADMIN2_BODY"
 ADMIN2_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "$RESP" 2>/dev/null)
-A2=$(token "$TEST_ADMIN" "$TEST_PW")
+A2=$(portal_token "$TEST_ADMIN" "$TEST_PW")
 [ "$(roles_of "$A2")" = admin ]; check $? "second admin signs in" "roles=$(roles_of "$A2")"
 call 200 "second admin token works (now cached)"   GET   /admin/users "$A2"
 TEST_ID_MASK=$ADMIN2_ID
-call 200 "admin_demo demotes second admin"          PUT   "/admin/users/$ADMIN2_ID/role" "$ADMIN_TOK" '{"role":"student"}'
+call 200 "verify_admin demotes second admin"        PUT   "/admin/users/$ADMIN2_ID/role" "$ADMIN_TOK" '{"role":"student"}'
 TEST_ID_MASK=$ADMIN_ID
 call 401 "revoked admin cannot create an admin"    POST  /admin/users "$A2" "$(printf '{"username":"%s_x","role":"admin","password":"%s"}' "$TEST_ADMIN" "$TEST_PW")"
-call 401 "revoked admin cannot disable admin_demo" PATCH "/admin/users/$ADMIN_ID/enabled" "$A2" '{"enabled":false}'
+call 401 "revoked admin cannot disable verify_admin" PATCH "/admin/users/$ADMIN_ID/enabled" "$A2" '{"enabled":false}'
 TEST_ID_MASK=$ADMIN2_ID
 call 200 "cleanup: disable second admin"           PATCH "/admin/users/$ADMIN2_ID/enabled" "$ADMIN_TOK" '{"enabled":false}'
 TEST_ID_MASK=$TEST_ID

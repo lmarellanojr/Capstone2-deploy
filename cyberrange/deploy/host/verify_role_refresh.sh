@@ -4,23 +4,28 @@
 # (doRefresh() re-decodes roles from the freshly-issued token rather than
 # carrying forward the roles captured at initial sign-in).
 #
-# Method: get an initial token pair for student_demo, decode its roles
+# Method: get an initial token pair for verify_student, decode its roles
 # (expect only "student"), temporarily grant it "instructor" too, use the
 # REFRESH token (not a fresh login) to mint a new access token, decode again
 # (expect "student" AND "instructor" now present), then revoke "instructor"
 # again so the account is restored to the single-role state the frozen
-# contract (docs/AUTH-03-role-contract.md) requires. Read/write against a
-# demo account's role assignment only; no other user or config touched.
+# contract (docs/AUTH-03-role-contract.md) requires. Read/write against that
+# account's role assignment only; no other user or config touched.
+#
+# SEC-03: verify_student is the dedicated verify account from
+# setup_verify_accounts.sh, signed in through the cyberrange-verify client, so
+# this keeps working after the demo accounts enrol MFA (student_demo would
+# need a TOTP code for the password grant).
 # Prints usernames/roles/pass-fail only -- never passwords.
 set -euo pipefail
 export PATH="/snap/bin:/usr/sbin:/usr/bin:/bin"
 REPO=/home/llms_admin/cyberrange
 ENV_FILE="$REPO/env/.env"
-CREDS_FILE=/home/llms_admin/cyberrange-data/demo-accounts.env
+CREDS_FILE=/home/llms_admin/cyberrange-data/verify-accounts.env
 ADMIN_ENV="$REPO/deploy/keycloak/admin.env"
 
 [[ -f "$ENV_FILE" ]] || { echo "missing $ENV_FILE"; exit 1; }
-[[ -f "$CREDS_FILE" ]] || { echo "missing $CREDS_FILE -- run create_demo_accounts.sh first"; exit 1; }
+[[ -f "$CREDS_FILE" ]] || { echo "missing $CREDS_FILE -- run setup_verify_accounts.sh first"; exit 1; }
 [[ -f "$ADMIN_ENV" ]] || { echo "missing $ADMIN_ENV"; exit 1; }
 
 lxc exec guacamole -- rm -f /tmp/rr-env.env /tmp/rr-creds.env /tmp/rr-admin.env
@@ -54,11 +59,11 @@ decode_roles() {
     || true
 }
 
-echo "=== AUTH-03 role refresh validation (student_demo) ==="
+echo "=== AUTH-03 role refresh validation (verify_student) ==="
 
 resp=$(curl -sS -X POST "$TOKEN_URL" \
-  -d grant_type=password -d client_id="$KEYCLOAK_CLIENT_ID" -d client_secret="$KEYCLOAK_CLIENT_SECRET" \
-  -d username=student_demo -d password="$STUDENT_DEMO_PASSWORD" -d scope=openid)
+  -d grant_type=password -d client_id="$VERIFY_CLIENT_ID" --data-urlencode client_secret="$VERIFY_CLIENT_SECRET" \
+  -d username=verify_student --data-urlencode password="$VERIFY_STUDENT_PASSWORD" -d scope=openid)
 access_token=$(echo "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 refresh_token=$(echo "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["refresh_token"])')
 before_roles=$(decode_roles "$access_token")
@@ -68,13 +73,13 @@ kcadm.sh config credentials --server http://127.0.0.1:8083/auth --realm master -
 
 # Best-effort revocation attempt only -- NOT proof of success on its own.
 attempt_revert() {
-  kcadm.sh remove-roles -r cyber-range --uusername student_demo --rolename instructor 2>/dev/null || true
+  kcadm.sh remove-roles -r cyber-range --uusername verify_student --rolename instructor 2>/dev/null || true
 }
 
 # Direct final-state check via a fresh admin query -- not an assumption from
 # the removal command's own exit code.
 student_app_roles() {
-  kcadm.sh get-roles -r cyber-range --uusername student_demo --fields name --format csv --noquotes \
+  kcadm.sh get-roles -r cyber-range --uusername verify_student --fields name --format csv --noquotes \
     | grep -E '^(student|instructor|admin)$' | sort | tr '\n' '/' || true
 }
 
@@ -96,19 +101,19 @@ finalize_revert() {
   final_check="$(student_app_roles)"
   if [ "$final_check" = "student/" ]; then
     confirmed_reverted=1
-    echo "reverted: confirmed student_demo app roles = $final_check"
+    echo "reverted: confirmed verify_student app roles = $final_check"
     return 0
   fi
-  echo "CLEANUP_FAILED: student_demo app roles are [$final_check] after two revert attempts, expected exactly [student/]"
+  echo "CLEANUP_FAILED: verify_student app roles are [$final_check] after two revert attempts, expected exactly [student/]"
   return 1
 }
-trap 'finalize_revert || echo "EXIT_TRAP: cleanup could not be confirmed on exit -- MANUAL INTERVENTION REQUIRED for student_demo (expected app roles: student/)"' EXIT
+trap 'finalize_revert || echo "EXIT_TRAP: cleanup could not be confirmed on exit -- MANUAL INTERVENTION REQUIRED for verify_student (expected app roles: student/)"' EXIT
 
-kcadm.sh add-roles -r cyber-range --uusername student_demo --rolename instructor
-echo "granted: temporary extra role 'instructor' on student_demo"
+kcadm.sh add-roles -r cyber-range --uusername verify_student --rolename instructor
+echo "granted: temporary extra role 'instructor' on verify_student"
 
 resp2=$(curl -sS -X POST "$TOKEN_URL" \
-  -d grant_type=refresh_token -d client_id="$KEYCLOAK_CLIENT_ID" -d client_secret="$KEYCLOAK_CLIENT_SECRET" \
+  -d grant_type=refresh_token -d client_id="$VERIFY_CLIENT_ID" --data-urlencode client_secret="$VERIFY_CLIENT_SECRET" \
   -d refresh_token="$refresh_token")
 new_access_token=$(echo "$resp2" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))')
 
