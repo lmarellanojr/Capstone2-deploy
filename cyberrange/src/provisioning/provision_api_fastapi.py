@@ -22,6 +22,7 @@ from logging_config import configure_logging
 from pods_router import internal_router as browser_score_router
 from pods_router import router as pods_router
 from users_router import router as users_router
+import keycloak_admin
 from infra_health import router as infra_health_router
 from audit_router import router as audit_router
 from reaper import pod_ttl_reaper
@@ -79,6 +80,13 @@ def _validate_capacity_config_startup():
 @app.on_event("startup")
 def startup_event():
     init_db()
+
+
+@app.on_event("startup")
+def _log_user_management_status():
+    # #145: say at startup, not on the first /admin/users call, when the
+    # user-admin client is missing. Warn only; the API still starts.
+    keycloak_admin.log_configuration_status()
 
 
 @app.on_event("startup")

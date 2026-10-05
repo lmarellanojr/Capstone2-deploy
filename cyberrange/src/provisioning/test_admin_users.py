@@ -991,3 +991,41 @@ def test_client_remove_otp_with_no_authenticator_deletes_nothing():
     kc, s = make_client([TOKEN_OK, FakeResponse(200, [{"id": "pw-1", "type": "password"}])])
     assert kc.remove_otp_credentials("u1") == 0
     assert [m for m, _, _ in s.calls[1:]] == ["GET"]
+
+
+# --- #145: say it at startup when user management is not configured ----------------
+
+
+def _fresh_client_env(monkeypatch, **env):
+    for name in ("KEYCLOAK_USER_ADMIN_CLIENT_SECRET", "KEYCLOAK_BASE_URL", "KEYCLOAK_REALM", "KEYCLOAK_INTROSPECT_URL"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(keycloak_admin, "_client", None)  # rebuilt from this env; restored afterwards
+
+
+def test_startup_status_warns_with_the_fix_when_not_configured(monkeypatch, caplog):
+    _fresh_client_env(monkeypatch, KEYCLOAK_BASE_URL="http://kc/auth", KEYCLOAK_REALM="cyber-range")
+    with caplog.at_level("WARNING", logger="provision_api"):
+        assert keycloak_admin.log_configuration_status() is False
+    text = caplog.text
+    assert "user management is NOT configured" in text
+    assert "setup_user_admin_client.sh" in text and "Step 9" in text
+
+
+def test_startup_status_is_quiet_when_configured(monkeypatch, caplog):
+    _fresh_client_env(
+        monkeypatch,
+        KEYCLOAK_BASE_URL="http://kc/auth",
+        KEYCLOAK_REALM="cyber-range",
+        KEYCLOAK_USER_ADMIN_CLIENT_SECRET="s3cret",
+    )
+    with caplog.at_level("INFO", logger="provision_api"):
+        assert keycloak_admin.log_configuration_status() is True
+    assert "NOT configured" not in caplog.text
+    assert "s3cret" not in caplog.text  # never log the secret
+
+
+def test_startup_status_check_is_registered_on_the_api():
+    names = {getattr(h, "__name__", "") for h in app.router.on_startup}
+    assert "_log_user_management_status" in names
