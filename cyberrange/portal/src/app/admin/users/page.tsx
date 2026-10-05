@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { KeyRound, RefreshCw, Search, UserPlus, Users } from "lucide-react";
+import { KeyRound, RefreshCw, Search, ShieldOff, UserPlus, Users } from "lucide-react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, Button, LoadingSpinner, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { CreateUserModal } from "@/components/admin/CreateUserModal";
@@ -24,7 +24,8 @@ const ROLE_LABEL: Record<AppRole, string> = { student: "Student", instructor: "I
 
 type PendingChange =
   | { kind: "disable"; user: AdminUser }
-  | { kind: "role"; user: AdminUser; role: AppRole };
+  | { kind: "role"; user: AdminUser; role: AppRole }
+  | { kind: "mfa"; user: AdminUser };
 
 function displayName(u: AdminUser) {
   const full = [u.first_name, u.last_name].filter(Boolean).join(" ");
@@ -38,7 +39,7 @@ export default function AdminUsersPage() {
   const { data: session } = useSession();
   const actor = session?.user?.name ?? "";
   const { success, error: toastError } = useToastContext();
-  const { users, loading, error, forbidden, pending, search, refresh, setEnabled, setRole, resetPassword, createUser } =
+  const { users, loading, error, forbidden, pending, search, refresh, setEnabled, setRole, resetPassword, resetMfa, createUser } =
     useAdminUsers();
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
@@ -63,6 +64,9 @@ export default function AdminUsersPage() {
       if (change.kind === "disable") {
         await setEnabled(change.user.id, false);
         success(`${change.user.username} is disabled and signed out.`);
+      } else if (change.kind === "mfa") {
+        await resetMfa(change.user.id);
+        success(`${change.user.username}'s authenticator was reset. They'll set up a new one at next sign-in.`);
       } else {
         await setRole(change.user.id, change.role);
         success(`${change.user.username} is now ${ROLE_LABEL[change.role]}. It applies at their next sign-in.`);
@@ -231,6 +235,17 @@ export default function AdminUsersPage() {
                               <KeyRound size={14} aria-hidden="true" />
                               Reset password
                             </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={!!busy}
+                              loading={busy === "mfa"}
+                              onClick={() => setConfirm({ kind: "mfa", user: u })}
+                              aria-label={`Reset MFA for ${u.username}`}
+                            >
+                              <ShieldOff size={14} aria-hidden="true" />
+                              Reset MFA
+                            </Button>
                             {u.enabled ? (
                               <Button
                                 variant="danger-outline"
@@ -285,7 +300,9 @@ export default function AdminUsersPage() {
               title={
                 confirm.kind === "disable"
                   ? `Disable ${confirm.user.username}?`
-                  : `Make ${confirm.user.username} ${ROLE_LABEL[confirm.role]}?`
+                  : confirm.kind === "mfa"
+                    ? `Reset ${confirm.user.username}'s authenticator?`
+                    : `Make ${confirm.user.username} ${ROLE_LABEL[confirm.role]}?`
               }
             />
             <ModalBody>
@@ -293,6 +310,12 @@ export default function AdminUsersPage() {
                 <p className="text-text-secondary">
                   They&apos;ll be signed out everywhere right away and won&apos;t be able to sign in until you enable
                   the account again. Their scores and history are kept.
+                </p>
+              ) : confirm.kind === "mfa" ? (
+                <p className="text-text-secondary">
+                  Use this when they&apos;ve lost or replaced their phone. Their current authenticator stops working,
+                  they&apos;re signed out everywhere, and at their next sign-in they&apos;ll scan a new QR code. Their
+                  password doesn&apos;t change.
                 </p>
               ) : (
                 <p className="text-text-secondary">
@@ -312,7 +335,7 @@ export default function AdminUsersPage() {
                 loading={confirmBusy}
                 onClick={() => void runChange(confirm)}
               >
-                {confirm.kind === "disable" ? "Disable and sign out" : "Change role"}
+                {confirm.kind === "disable" ? "Disable and sign out" : confirm.kind === "mfa" ? "Reset authenticator" : "Change role"}
               </Button>
             </ModalFooter>
           </>

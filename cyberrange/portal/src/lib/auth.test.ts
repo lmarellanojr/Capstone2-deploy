@@ -75,3 +75,30 @@ describe("jwt callback / roles backfill", () => {
     expect(result.roles).toEqual([])
   })
 })
+
+// Logout without id_token_hint makes Keycloak show "Do you want to log out?".
+// The id_token is kept in the server-side JWT for federated-logout, and is
+// never copied into the session object the browser can read.
+describe("id_token for logout", () => {
+  const sessionCallback = authOptions.callbacks!.session as (args: { session: any; token: any }) => Promise<any>
+
+  it("stores the id_token on initial sign-in", async () => {
+    const account = { access_token: fakeAccessToken(["student"]), refresh_token: "r", id_token: "id-token-abc", expires_in: 300 }
+    const result = await jwtCallback({ token: {}, account })
+    expect(result.idToken).toBe("id-token-abc")
+  })
+
+  it("keeps the id_token on the reuse path", async () => {
+    const token = { accessToken: fakeAccessToken(["student"]), roles: ["student"], idToken: "id-1", accessTokenExpires: Date.now() + 2 * 60_000 }
+    const result = await jwtCallback({ token, account: undefined })
+    expect(result.idToken).toBe("id-1")
+  })
+
+  it("never exposes the id_token in the session", async () => {
+    const session = await sessionCallback({
+      session: { user: { name: "student_demo" } },
+      token: { accessToken: "a", idToken: "id-secret", roles: ["student"] },
+    })
+    expect(JSON.stringify(session)).not.toContain("id-secret")
+  })
+})

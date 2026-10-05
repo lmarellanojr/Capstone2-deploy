@@ -17,6 +17,7 @@ Admin-only, server-side Keycloak operations on the `cyber-range` realm:
 - enable / disable a user
 - replace a user's application role
 - reset another user's password (added after #32; see §2)
+- reset another user's authenticator after a lost phone (SEC-03 MFA; see §2)
 
 **Not provided, by design:**
 
@@ -39,6 +40,7 @@ All five routes use `verify_token` followed by `require_role(["admin"])`.
 | `PATCH` | `/admin/users/{id}/enabled` | `{ "enabled": bool }` | **200** `User` |
 | `PUT` | `/admin/users/{id}/role` | `{ "role": "student" \| "instructor" \| "admin" }` | **200** `User` |
 | `PUT` | `/admin/users/{id}/password` | `{ "password": "<8-128 chars>", "temporary": true }` | **200** `User` |
+| `DELETE` | `/admin/users/{id}/mfa` | none | **200** `User` |
 
 `{id}` is the Keycloak user UUID taken from `User.id`, not the username. `max` is capped at 200. `search` matches Keycloak's username, email and name search.
 
@@ -94,6 +96,7 @@ All five routes use `verify_token` followed by `require_role(["admin"])`.
 | 403 | Write by a caller whose token still says `admin` but who is no longer an enabled Admin in Keycloak (revoked moments ago) | `Forbidden: Insufficient privileges` |
 | 409 | An Admin tries to disable themselves or change their own role | `Admins cannot disable or change the role of their own account` |
 | 409 | An Admin tries to reset their own password through this API | `Admins can't reset their own password here; use your Keycloak account page` |
+| 409 | An Admin tries to reset their own authenticator through this API | `Admins can't reset their own authenticator here; ask another Admin` |
 | 409 | Disabling or demoting the last enabled Admin (backstop; not reachable through the normal flow) | `Cannot disable or demote the last enabled Admin` |
 | 422 | Validation: bad username/email/role, short password, unknown field, `{id}` not a UUID, `max` > 200 | FastAPI validation body |
 | 422 | Keycloak's password policy rejected the password (create: the user isn't created; reset: nothing changes) | `Password does not meet the Keycloak password policy` |
@@ -110,6 +113,7 @@ Create is all-or-nothing. If setting the password or the role fails after the Ke
 - **Role change** also ends the user's sessions, whenever the role actually changes, so the new role applies at their next sign-in. Their cached tokens are evicted too, so a demoted Admin's existing token stops working on the next request. Re-sending the same role is a no-op and doesn't sign them out.
 - **Enable** doesn't end any session.
 - **Password reset** ends all of the user's sessions and evicts their cached tokens, so the old password and any live session stop working at once. `temporary` defaults to `true` (Keycloak forces a new password at next sign-in). The password is never returned, logged or audited.
+- **MFA reset** deletes the user's OTP (authenticator) credentials only; the password and roles are untouched. It ends all of the user's sessions and evicts their cached tokens. Because SEC-03 makes the OTP step REQUIRED, the user is shown the QR enrolment page at their next sign-in. It is idempotent: a user with no authenticator returns 200 and is audited with `removed=0`. If Keycloak fails part-way through deleting several authenticators, the route still tries to end the user's sessions, always evicts their cached tokens, returns 503, and audits `FAILED` with `removed=<n> sessions=ended|not_ended reason=keycloak_partial_remove`; retrying the reset finishes the job.
 - **Self-protection:** hide or disable the Disable and Change-role controls on the signed-in Admin's own row (`User.username === session.user` username). The API enforces this regardless with a 409.
 - **Writes re-check the caller against Keycloak.** A token that still says `admin` is not trusted for create, enable/disable or role changes: the caller must currently be an enabled Admin in Keycloak, or the call returns 403. Writes are also serialized. Together with self-protection, this means the realm can't be left without an enabled Admin through this API, even with several Admins acting at once.
 
@@ -125,6 +129,7 @@ Every write, including denied attempts (`reason=self`, `reason=actor_not_admin`,
 | `ADMIN_USER_DISABLE` / `ADMIN_USER_ENABLE` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo` |
 | `ADMIN_USER_ROLE_SET` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo role=instructor previous=student` |
 | `ADMIN_USER_PASSWORD_RESET` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo temporary=True` |
+| `ADMIN_USER_MFA_RESET` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo removed=1` |
 
 Admins can read the trail in the portal at `/admin/audit`, backed by the read-only `GET /admin/audit-log` (`audit_router.py`; filters `event_type`, `student_id`, `result`; keyset paging with `before_id`). Admin force-destroys are audited too, as `ADMIN_POD_FORCE_DESTROY` (`student_id` = pod owner, `detail` = `actor=… previous_status=…`).
 
@@ -134,8 +139,8 @@ Admins can read the trail in the portal at `/admin/audit`, backed by the read-on
 
 The portal now uses the live API; the fixture data (`mockUsers`, `lib/mock/adminMock.ts`) is gone.
 
-- Proxies (all via `proxyToApi`, ids validated as UUIDs before forwarding): `app/api/admin/users/route.ts` (`GET`/`POST`), `users/[id]/enabled` (`PATCH`), `users/[id]/role` (`PUT`), `users/[id]/password` (`PUT`), and `app/api/admin/audit-log/route.ts` (`GET`). Instructor-denial coverage for each is in `portal/src/lib/sec02AdminDenial.test.ts`.
-- `admin/users/page.tsx`: live list with search, create, role change and disable (both confirmed, since they sign the user out), enable, and password reset. `name` = `first_name` + `last_name` falling back to `username`; `role: null` shows as "No role"; there is no last-login column. The signed-in Admin's own row offers none of these actions.
+- Proxies (all via `proxyToApi`, ids validated as UUIDs before forwarding): `app/api/admin/users/route.ts` (`GET`/`POST`), `users/[id]/enabled` (`PATCH`), `users/[id]/role` (`PUT`), `users/[id]/password` (`PUT`), `users/[id]/mfa` (`DELETE`), and `app/api/admin/audit-log/route.ts` (`GET`). Instructor-denial coverage for each is in `portal/src/lib/sec02AdminDenial.test.ts`.
+- `admin/users/page.tsx`: live list with search, create, role change and disable (both confirmed, since they sign the user out), enable, password reset, and authenticator (MFA) reset. `name` = `first_name` + `last_name` falling back to `username`; `role: null` shows as "No role"; there is no last-login column. The signed-in Admin's own row offers none of these actions.
 - A 503 "not configured" response shows the §7 one-time setup step.
 
 ## 7. Deployment (one-time per host)

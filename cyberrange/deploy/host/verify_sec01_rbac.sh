@@ -5,9 +5,11 @@
 # Run on the LXD host after the provision API is running this branch:
 #   bash ~/cyberrange/deploy/host/verify_sec01_rbac.sh | tee ~/sec01-backend-evidence.txt
 #
-# Callers: unauthenticated, student_demo, instructor_demo, admin_demo. (The
-# "authenticated but no application role" row is covered by the unit matrix;
-# there is no role-less demo account to sign in as.)
+# Callers: unauthenticated, verify_student, verify_instructor, verify_admin --
+# the SEC-03 verify accounts from setup_verify_accounts.sh, signed in through
+# the cyberrange-verify client, so MFA on the demo accounts doesn't block this.
+# (The "authenticated but no application role" row is covered by the unit
+# matrix; there is no role-less account to sign in as.)
 #
 # No pods, users, reviews or progress change: owner routes use a pod id that
 # does not exist, allowed writes get an invalid body (422) or a missing target
@@ -20,7 +22,9 @@
 # Prints status codes only -- never tokens, passwords or secrets.
 set -uo pipefail
 REPO=/home/llms_admin/cyberrange
-set -a; . "$REPO/env/.env"; . /home/llms_admin/cyberrange-data/demo-accounts.env; set +a
+VERIFY_ENV=/home/llms_admin/cyberrange-data/verify-accounts.env
+[[ -f "$VERIFY_ENV" ]] || { echo "missing $VERIFY_ENV -- run setup_verify_accounts.sh first"; exit 1; }
+set -a; . "$REPO/env/.env"; . "$VERIFY_ENV"; set +a
 API="http://${API_BIND_HOST}:${API_BIND_PORT}"
 TOKEN_URL="${KEYCLOAK_INTROSPECT_URL%/introspect}"
 NOPOD=999999
@@ -29,9 +33,11 @@ NOUSER=00000000-0000-0000-0000-000000000000
 FAILS=0
 
 token() {  # token <user> <password> -> access token, or "ERR:<reason>"
+  # cyberrange-verify client: password grant for the verify_* accounts only,
+  # so this still works after they or the demo accounts enrol MFA.
   curl -sS -X POST "$TOKEN_URL" -d grant_type=password \
-    -d "client_id=$KEYCLOAK_CLIENT_ID" -d "client_secret=$KEYCLOAK_CLIENT_SECRET" \
-    -d "username=$1" -d "password=$2" -d scope=openid \
+    -d "client_id=$VERIFY_CLIENT_ID" --data-urlencode "client_secret=$VERIFY_CLIENT_SECRET" \
+    -d "username=$1" --data-urlencode "password=$2" -d scope=openid \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("access_token") or "ERR:"+d.get("error_description", d.get("error","?")))'
 }
 
@@ -44,8 +50,9 @@ status() {  # status <METHOD> <path> <token|""> [json]
 
 echo "=== SEC-01 backend RBAC evidence  $(date -u +%FT%TZ)  api=$API"
 declare -A TOK=([unauthenticated]="")
-for pair in student:student_demo:STUDENT_DEMO_PASSWORD instructor:instructor_demo:INSTRUCTOR_DEMO_PASSWORD admin:admin_demo:ADMIN_DEMO_PASSWORD; do
-  IFS=: read -r role user pwvar <<<"$pair"
+for pair in student:VERIFY_STUDENT instructor:VERIFY_INSTRUCTOR admin:VERIFY_ADMIN; do
+  IFS=: read -r role uservar <<<"$pair"
+  user=${!uservar}; pwvar=${uservar}_PASSWORD
   t=$(token "$user" "${!pwvar}")
   [[ $t == ERR:* ]] && { echo "cannot sign in as $user: $t"; exit 1; }
   TOK[$role]=$t
@@ -83,7 +90,7 @@ ROUTES=(
   "POST|/reviews/$NOPOD/resubmit|app_role|{\"report_text\":\"x\"}|{\"report_text\":\"x\"}"
   "GET|/instructor/pods|instructor||"
   "GET|/instructor/students|instructor||"
-  "GET|/instructor/students/student_demo|instructor||"
+  "GET|/instructor/students/$VERIFY_STUDENT|instructor||"
   "GET|/instructor/reviews|instructor||"
   "GET|/instructor/reviews/$NOPOD|instructor||"
   "POST|/instructor/reviews/$NOPOD/resolve|instructor|{\"status\":\"APPROVED\"}|{\"status\":\"APPROVED\"}"
@@ -111,7 +118,7 @@ for row in "${ROUTES[@]}"; do
   printf '%-7s %-40s %-11s %-17s %-17s %-17s %-17s\n' "$method" "$path" "$policy" "${cells[@]}"
 done
 
-echo; echo "=== Manual URL/API bypass attempts (student_demo)"
+echo; echo "=== Manual URL/API bypass attempts ($VERIFY_STUDENT)"
 chk() {  # chk <label> <got> <want: code or a|b alternatives>
   if [[ "$2" =~ ^($3)$ ]]; then echo "PASS  $1 -> $2"; else echo "FAIL  $1 -> $2 (want $3)"; FAILS=$((FAILS+1)); fi
 }
@@ -126,7 +133,7 @@ chk "token with its signature stripped on GET /pods" "$(status GET /pods "${TOK[
 
 # IDOR on a real pod, read-only routes only, if one exists.
 VICTIM=$(curl -sS -H "Authorization: Bearer ${TOK[admin]}" "$API/pods" \
-  | python3 -c 'import json,sys; p=[x for x in json.load(sys.stdin).get("pods",[]) if x.get("student_id") not in ("student_demo","instructor_demo","admin_demo")]; print(p[0]["pod_id"] if p else "")')
+  | python3 -c 'import json,sys; p=[x for x in json.load(sys.stdin).get("pods",[]) if x.get("student_id") not in ("student_demo","instructor_demo","admin_demo","verify_student","verify_instructor","verify_admin")]; print(p[0]["pod_id"] if p else "")')
 if [ -n "$VICTIM" ]; then
   echo; echo "=== IDOR: another user's live pod ($VICTIM), read-only routes"
   for c in student instructor; do
@@ -136,7 +143,7 @@ if [ -n "$VICTIM" ]; then
   done
   chk "admin GET /pods/<victim>/status (admin inspect)" "$(status GET "/pods/$VICTIM/status" "${TOK[admin]}")" 200
 else
-  echo; echo "=== IDOR: skipped (no live pod owned by a non-demo user); covered by the unit matrix"
+  echo; echo "=== IDOR: skipped (no live pod owned by a non-demo, non-verify user); covered by the unit matrix"
 fi
 
 echo; echo "=== RESULT: $FAILS failure(s)"

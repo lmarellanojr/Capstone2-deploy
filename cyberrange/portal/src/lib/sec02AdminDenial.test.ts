@@ -20,6 +20,7 @@ import { GET as listUsers, POST as createUser } from "@/app/api/admin/users/rout
 import { PATCH as setEnabled } from "@/app/api/admin/users/[id]/enabled/route"
 import { PUT as setRole } from "@/app/api/admin/users/[id]/role/route"
 import { PUT as resetPassword } from "@/app/api/admin/users/[id]/password/route"
+import { DELETE as resetMfa } from "@/app/api/admin/users/[id]/mfa/route"
 import { GET as auditLog } from "@/app/api/admin/audit-log/route"
 import { adminNavItems, instructorNavItems } from "./navigation"
 import { hasRequiredRole, requiredRolesForPath } from "./routeRoles"
@@ -139,6 +140,15 @@ describe("user-management proxy routes with an Instructor session", () => {
         ),
     },
     {
+      name: "DELETE /api/admin/users/{id}/mfa",
+      upstream: new RegExp(`/admin/users/${USER_ID}/mfa$`),
+      method: "DELETE",
+      call: () =>
+        resetMfa(jsonRequest(`/api/admin/users/${USER_ID}/mfa`, "DELETE", undefined, FORGED), {
+          params: Promise.resolve({ id: USER_ID }),
+        }),
+    },
+    {
       name: "GET /api/admin/audit-log",
       upstream: /\/admin\/audit-log\?event_type=ADMIN_USER_ROLE_SET$/,
       method: "GET",
@@ -165,6 +175,14 @@ describe("user-management proxy routes with an Instructor session", () => {
 
   it("rejects a non-UUID user id before any upstream call", async () => {
     const res = await setRole(jsonRequest("/api/admin/users/..%2Fpods/role", "PUT", { role: "admin" }), {
+      params: Promise.resolve({ id: "../pods" }),
+    })
+    expect(res.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("rejects a non-UUID user id on the MFA reset route before any upstream call", async () => {
+    const res = await resetMfa(jsonRequest("/api/admin/users/..%2Fpods/mfa", "DELETE"), {
       params: Promise.resolve({ id: "../pods" }),
     })
     expect(res.status).toBe(400)
@@ -197,6 +215,7 @@ describe("/api/admin surface", () => {
       "pods/[id]/force-destroy",
       "users",
       "users/[id]/enabled",
+      "users/[id]/mfa",
       "users/[id]/password",
       "users/[id]/role",
     ])
