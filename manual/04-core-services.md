@@ -629,10 +629,24 @@ journalctl --user -u cyberrange-provision-api --since -2min --no-pager \
   | grep -c 'user management is NOT configured'                         # → 0
 ```
 
-Then sign in as an Admin and open **Admin → Users**: the user list loads and
-**Create user** works. You need at least one account with the `admin` realm
-role to reach that page; `deploy/host/create_demo_accounts.sh` creates
-`admin_demo`, `instructor_demo` and `student_demo`.
+You need at least one account with the `admin` realm role to reach the Admin
+pages. If you do not have one yet, create the demo accounts now (the realm from
+Step 1e is all it needs):
+
+```bash
+cd ~/cyberrange
+bash deploy/host/create_demo_accounts.sh
+# → STUDENT_DEMO_CREATED / INSTRUCTOR_DEMO_CREATED / ADMIN_DEMO_CREATED
+#   (…_EXISTS on a re-run), then
+#   credentials written to /home/llms_admin/cyberrange-data/demo-accounts.env (not printed)
+grep ADMIN_DEMO_PASSWORD ~/cyberrange-data/demo-accounts.env
+```
+
+The file is mode 600 and holds `admin_demo`, `instructor_demo` and
+`student_demo` passwords. Re-running the script generates new passwords.
+
+Then sign in as `admin_demo` and open **Admin → Users**: the user list loads and
+**Create user** works for Student, Instructor and Admin.
 
 ---
 
