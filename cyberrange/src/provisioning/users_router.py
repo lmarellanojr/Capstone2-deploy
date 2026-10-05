@@ -24,6 +24,7 @@ from keycloak_admin import (
     KeycloakConflict,
     KeycloakNotConfigured,
     KeycloakNotFound,
+    KeycloakOtpRemovalIncomplete,
     KeycloakRejected,
     get_client,
     primary_role,
@@ -408,6 +409,21 @@ def admin_reset_user_mfa(
             )
         try:
             removed = kc.remove_otp_credentials(user_id)
+        except KeycloakOtpRemovalIncomplete as e:
+            # Some authenticator may already be gone, so treat the user as
+            # changed: try to end their sessions and always drop cached tokens.
+            sessions = "ended"
+            try:
+                kc.logout_user(user_id)
+            except KeycloakAdminError:
+                sessions = "not_ended"
+            finally:
+                _revoke_cached_tokens(user_id, username)
+            _audit(
+                event, username, "FAILED", actor,
+                f"removed={e.removed} sessions={sessions} reason=keycloak_partial_remove",
+            )
+            raise _unavailable(e)
         except KeycloakAdminError as e:
             _audit(event, username, "FAILED", actor, "reason=keycloak")
             raise _unavailable(e)

@@ -24,6 +24,7 @@ from keycloak_admin import (
     KeycloakConflict,
     KeycloakNotConfigured,
     KeycloakNotFound,
+    KeycloakOtpRemovalIncomplete,
     KeycloakRejected,
 )
 from provision_api_fastapi import app
@@ -124,6 +125,10 @@ class FakeKeycloak:
 
     def remove_otp_credentials(self, user_id):
         self._maybe_fail("remove_otp_credentials")
+        if "remove_otp_partial" in self.fail_on:
+            # First authenticator deleted, the next DELETE fails.
+            self.otp[user_id] -= 1
+            raise KeycloakOtpRemovalIncomplete(1, KeycloakAdminError("DELETE failed"))
         return self.otp.pop(user_id, 0)
 
     def logout_user(self, user_id):
@@ -782,6 +787,35 @@ def test_reset_mfa_failure_after_removal_is_reported_honestly(client, kc):
     assert introspect_cache.get_cached(token) is None
 
 
+def test_reset_mfa_partial_removal_ends_sessions_evicts_tokens_and_audits(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.otp[uid] = 2
+    token = _cache_token_for(uid, "student_demo")
+    kc.fail_on.add("remove_otp_partial")
+    assert client.delete(f"/admin/users/{uid}/mfa").status_code == 503
+    assert kc.otp[uid] == 1  # the first authenticator WAS removed
+    assert kc.logged_out == [uid]
+    assert introspect_cache.get_cached(token) is None
+    row = audit_rows("ADMIN_USER_MFA_RESET")[-1]
+    assert row["result"] == "FAILED"
+    assert "removed=1" in row["detail"] and "sessions=ended" in row["detail"]
+    assert "keycloak_partial_remove" in row["detail"]
+
+
+def test_reset_mfa_partial_removal_still_evicts_tokens_when_logout_fails(client, kc):
+    as_caller(ADMIN)
+    uid = kc.add("student_demo", "student")
+    kc.otp[uid] = 2
+    token = _cache_token_for(uid, "student_demo")
+    kc.fail_on.update({"remove_otp_partial", "logout_user"})
+    assert client.delete(f"/admin/users/{uid}/mfa").status_code == 503
+    assert introspect_cache.get_cached(token) is None
+    row = audit_rows("ADMIN_USER_MFA_RESET")[-1]
+    assert row["result"] == "FAILED"
+    assert "removed=1" in row["detail"] and "sessions=not_ended" in row["detail"]
+
+
 # --- KeycloakAdminClient HTTP behaviour -------------------------------------------
 
 
@@ -936,6 +970,21 @@ def test_client_remove_otp_deletes_only_otp_credentials():
         ("DELETE", "/users/u1/credentials/otp-1"),
         ("DELETE", "/users/u1/credentials/otp-2"),
     ]
+
+
+def test_client_remove_otp_reports_progress_when_a_later_delete_fails():
+    creds = [{"id": "otp-1", "type": "otp"}, {"id": "otp-2", "type": "otp"}]
+    kc, _ = make_client([TOKEN_OK, FakeResponse(200, creds), FakeResponse(204), FakeResponse(500)])
+    with pytest.raises(KeycloakOtpRemovalIncomplete) as exc:
+        kc.remove_otp_credentials("u1")
+    assert exc.value.removed == 1
+
+
+def test_client_remove_otp_listing_failure_is_a_plain_error():
+    kc, _ = make_client([TOKEN_OK, FakeResponse(500)])
+    with pytest.raises(KeycloakAdminError) as exc:
+        kc.remove_otp_credentials("u1")
+    assert not isinstance(exc.value, KeycloakOtpRemovalIncomplete)
 
 
 def test_client_remove_otp_with_no_authenticator_deletes_nothing():
