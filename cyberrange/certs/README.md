@@ -50,19 +50,46 @@ ssh myampere 'openssl s_client -connect localhost:55000 -servername localhost </
 
 ### `wazuh-api.crt` — Repository Pin Policy
 
-**Purpose:** L3b self-signed SIEM API certificate for manager-only setup.
+**Purpose:** Self-signed Wazuh manager API certificate used by provision-API
+scoring via `WAZUH_CA_BUNDLE` (typically `~/cyberrange/certs/wazuh-api.crt`).
 
-**Authority:** This file is tracked in git as the **source of truth** for the certificate fingerprint. When Wazuh manager generates its server certificate on first install, the certificate is extracted and committed to this repo. Future certificate rotations will update this file in git.
+**Authority (two roles):**
 
-**When to update:** Update this file only when performing an **actual certificate rotation** (e.g., new Wazuh install, cert expiry, manual rotation). Do not update on every deployment — the extraction script (`setup_wazuh_tls_host.sh` on M4) may create local copies for runtime environment-variable injection, but the repo pin remains the authoritative source. Clients pin this file, not temporary runtime extracts.
+1. **Committed pin (this file)** — bootstrap / fresh-tree **starter** and the
+   documented fingerprint reference in git. `pack_tree` still ships it in
+   release tarballs so a host with no cert file can install a starter pin.
+2. **Host file on Ampere** — after Manual 02 §4e extract (or any live
+   re-extract), the file at `~/cyberrange/certs/wazuh-api.crt` is the
+   **runtime** pin for that host and must match **that** host’s
+   `wazuh-manager` cert. Per-Ampère pins differ; do **not** copy a pin
+   across hosts.
 
-**Scope:** This policy applies to **L3b scope only** (manager-only setup on OVN mon-net). Layer 5 production hardening will introduce proper PKI and may change the trust model entirely.
+`pull_release` / `release_sync.extract_tree` **preserves** an existing
+`certs/wazuh-api.crt` (exact relpath). Routine promotes do **not** overwrite
+a host pin with the git starter. Missing file → tarball starter is installed.
+
+**When to update git:** Only on an intentional starter-pin change (new
+reference install, documented rotation). Do not commit every host’s live
+extract.
+
+**Scope:** L3b / Ampere self-signed manager API. Layer 5 may replace this
+with proper PKI.
 
 ## Rotation
 
-Re-extracting a certificate changes the fingerprint and **breaks every pinned
-client at once**. When a service's cert is regenerated: extract the new one,
-replace the file here, update the fingerprint in the table above, and redeploy
-the hosts that consume it in the same change. Certificates in this directory
-are checked for expiry as part of Layer 5 production hardening, which also
-replaces these self-signed certs with proper PKI.
+Three distinct ops paths (do not conflate them):
+
+- **A — Routine `pull_release`:** no cert step; existing host pin is preserved.
+- **B — Install a newer git starter onto a live host:** backup then
+  remove/rename `~/cyberrange/certs/wazuh-api.crt`, run `pull_release` so
+  the missing file is extracted from the tarball; verify SHA-256.
+- **C — Live manager cert regenerated / TLS verify failed (`curl` exit 60):**
+  re-extract from that host’s `wazuh-manager` per Manual 02 §4e onto
+  `~/cyberrange/certs/wazuh-api.crt` (installs the **live** cert, not the
+  git pin). Update git later only if this host’s pin should become the
+  committed starter.
+
+Re-extracting changes the fingerprint for clients that pin the old file.
+Verify with `openssl x509 -fingerprint -sha256` against
+`openssl s_client -connect localhost:55000` on the same host. Never set
+`WAZUH_TLS_VERIFY=false` to bypass a mismatch.

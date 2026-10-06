@@ -14,6 +14,8 @@ DENY_NAMES = {
     "github-release.env",
 }
 DENY_DIR_PARTS = {".git", "node_modules", "cyberrange-data"}
+# Exact relpath; skip overwrite when present. Keep out of DENY_NAMES (fresh install + snapshots).
+PRESERVE_IF_EXISTS = {"certs/wazuh-api.crt"}
 
 
 class ManifestError(ValueError):
@@ -91,6 +93,8 @@ def extract_tree(tar_path: Path, dest: Path) -> list[str]:
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             if not member.isfile():
+                continue
+            if name in PRESERVE_IF_EXISTS and target.is_file():
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             src = tf.extractfile(member)
