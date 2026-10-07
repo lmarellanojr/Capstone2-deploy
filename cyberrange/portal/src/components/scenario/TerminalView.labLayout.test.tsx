@@ -104,8 +104,8 @@ describe("TerminalView (LAB-LAYOUT-02)", () => {
     jest.useRealTimers()
   })
 
-  it("uses a responsive right-panel width instead of fixed w-96", async () => {
-    const { container, unmount } = render(
+  it("renders the terminal container with min-w-0 and min-h-0 for grid safety", async () => {
+    const { unmount } = render(
       <TerminalView pod={pod} scenario={scenario} onEnd={jest.fn()} />
     )
 
@@ -113,16 +113,10 @@ describe("TerminalView (LAB-LAYOUT-02)", () => {
       await Promise.resolve()
     })
 
-    const panel = screen.getByTestId("lab-right-panel")
-    const classes = panel.className.split(/\s+/)
+    const containerEl = screen.getByTestId("lab-terminal-container")
+    const classes = containerEl.className.split(/\s+/)
     expect(classes).toEqual(
-      expect.arrayContaining(["w-full", "lg:w-[44%]", "xl:w-[46%]", "lg:min-w-[24rem]", "flex-shrink-0"])
-    )
-    expect(classes).not.toContain("w-96")
-
-    const root = container.firstElementChild as HTMLElement
-    expect(root.className.split(/\s+/)).toEqual(
-      expect.arrayContaining(["flex-col", "lg:flex-row"])
+      expect.arrayContaining(["flex", "flex-col", "flex-1", "w-full", "min-w-0", "min-h-0"])
     )
     unmount()
   })
