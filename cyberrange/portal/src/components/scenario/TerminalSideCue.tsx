@@ -1,14 +1,48 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { Info, X } from 'lucide-react'
+import React, { useState } from 'react'
+import { AlertTriangle, Info, X } from 'lucide-react'
 
 interface TerminalSideCueProps {
   taskId: number
   cueText?: string
+  tone?: 'info' | 'warning'
 }
 
-export function TerminalSideCue({ taskId, cueText }: TerminalSideCueProps) {
+const TONE_STYLES = {
+  info: {
+    card: 'bg-secondary/95 border-border text-text-main',
+    icon: 'text-brand',
+    Icon: Info,
+    label: 'Terminal tip',
+  },
+  warning: {
+    card: 'bg-amber-50/95 border-amber-300 text-amber-950',
+    icon: 'text-amber-600',
+    Icon: AlertTriangle,
+    label: 'Terminal warning',
+  },
+} as const
+
+// Cues are short one-liners, so only the two inline marks they use are
+// supported: `code` and **bold**. Everything else renders as plain text.
+function renderInline(text: string): React.ReactNode[] {
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, i) => {
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return (
+        <code key={i} className="font-mono text-[11px] bg-muted px-1 rounded">
+          {part.slice(1, -1)}
+        </code>
+      )
+    }
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>
+    }
+    return part
+  })
+}
+
+export function TerminalSideCue({ taskId, cueText, tone = 'info' }: TerminalSideCueProps) {
   const [dismissedTaskIds, setDismissedTaskIds] = useState<Set<number>>(new Set())
 
   // Reset or check dismissal state per task
@@ -22,16 +56,22 @@ export function TerminalSideCue({ taskId, cueText }: TerminalSideCueProps) {
     setDismissedTaskIds((prev) => new Set(prev).add(taskId))
   }
 
+  const style = TONE_STYLES[tone]
+  const { Icon } = style
+
   return (
     <div
       className="absolute top-12 right-4 z-20 max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
       role="complementary"
-      aria-label="Terminal tip"
+      aria-label={style.label}
+      data-tone={tone}
     >
-      <div className="pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl bg-secondary/95 backdrop-blur-sm border border-border shadow-overlay text-text-main text-xs">
-        <Info size={16} className="text-brand shrink-0 mt-0.5" aria-hidden="true" />
-        <p className="flex-1 leading-relaxed text-text-main select-text">
-          {cueText}
+      <div
+        className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl backdrop-blur-sm border shadow-overlay text-xs ${style.card}`}
+      >
+        <Icon size={16} className={`${style.icon} shrink-0 mt-0.5`} aria-hidden="true" />
+        <p className="flex-1 leading-relaxed select-text">
+          {renderInline(cueText)}
         </p>
         <button
           type="button"

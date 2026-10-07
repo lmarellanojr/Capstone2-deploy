@@ -9,6 +9,9 @@ export interface Milestone {
   points: number
   goal?: string
   cue?: string
+  // `warning` for the trap a student is most likely to misread (e.g. a
+  // command whose success signal is empty output); default is `info`.
+  cueTone?: 'info' | 'warning'
 }
 
 export interface Scenario {
@@ -130,9 +133,31 @@ export const SCENARIOS: Scenario[] = [
     difficulty: 3,
     guideFile: 'scenario_04_vulnerability_hardening.md',
     milestones: [
-      { id: 1, name: 'Identify the Weakness', description: 'Inspect the Tomcat manager configuration on the meta target and confirm the default tomcat/tomcat credential is present.', points: 50 },
-      { id: 2, name: 'Apply the Remediation', description: 'Rotate or remove the default Tomcat manager credential on the meta target.', points: 75 },
-      { id: 3, name: 'Confirm the Exploit Path Is Closed', description: 'Verify the Tomcat manager endpoint no longer authenticates with the default credential.', points: 75 },
+      {
+        id: 1,
+        name: 'Identify the Weakness',
+        goal: 'On the meta tab, read the Tomcat users config',
+        description: 'Confirm the default tomcat/tomcat Manager credential is present. Scoring reads the inspection command from your meta shell history.',
+        cue: 'All work in this scenario is on the **meta** tab — confirm the prompt reads `msfadmin@pod-…-meta`.',
+        points: 50,
+      },
+      {
+        id: 2,
+        name: 'Apply the Remediation',
+        goal: 'Replace the default password and restart Tomcat',
+        description: 'Then check the config for the old password. Success is empty output: the check prints nothing once the default is gone.',
+        cue: '⚠ **Empty output = success.** If the `grep` prints a line, the default password is still there — re-run the `sed`, then check again.',
+        cueTone: 'warning',
+        points: 75,
+      },
+      {
+        id: 3,
+        name: 'Confirm the Exploit Path Is Closed',
+        goal: 'Send one request with the old credential and read the status code',
+        description: 'The Tomcat Manager should now reject tomcat/tomcat with HTTP 401 or 403.',
+        cue: '`200` = still open (bad); `401`/`403` = fixed. For the strongest proof, re-run the Scenario 1 Metasploit module from Kali and watch it fail.',
+        points: 75,
+      },
     ],
   },
 ]

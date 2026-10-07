@@ -56,6 +56,7 @@ interface TerminalViewProps {
   fetchedAtMs?: number
   currentTaskId?: number
   currentTaskCue?: string
+  currentTaskCueTone?: 'info' | 'warning'
   externalGuideExtra?: GuideExtra | null
   onCloseGuideExtra?: () => void
   onOpenTools?: () => void
@@ -80,6 +81,7 @@ export function TerminalView({
   canRestart = false,
   currentTaskId,
   currentTaskCue,
+  currentTaskCueTone,
   externalGuideExtra,
   onCloseGuideExtra,
   onOpenTools,
@@ -116,6 +118,9 @@ export function TerminalView({
   const isBrowserLab = scenario.id === '06'
   const showOpenDvwa = scenario.id === '06'
   const showOpenSiem = scenario.id === '09'
+  // Scenario 4 (Vulnerability Hardening): every scored step runs on meta, and
+  // the common mistake is editing on Kali — so meta is marked as the work tab.
+  const isMetaWorkLab = scenario.id === '11'
 
   useEffect(() => {
     if (!showOpenDvwa && !showOpenSiem) return
@@ -148,6 +153,9 @@ export function TerminalView({
 
   const selectTab = (tab: TermTab) => {
     setActiveTab(tab)
+    // The explainers describe Kali as the attack box; in the hardening lab the
+    // status line already says Kali is unscored, so skip the attacker framing.
+    if (isMetaWorkLab) return
     const explainer = tab === 'kali-cli' ? 'kali' : tab === 'meta' ? 'meta' : null
     if (explainer && !explainedTabs.current.has(explainer)) {
       explainedTabs.current.add(explainer)
@@ -347,7 +355,7 @@ export function TerminalView({
 
         {/* Floating Side Cue for current task */}
         {currentTaskId && currentTaskCue && (
-          <TerminalSideCue taskId={currentTaskId} cueText={currentTaskCue} />
+          <TerminalSideCue taskId={currentTaskId} cueText={currentTaskCue} tone={currentTaskCueTone} />
         )}
 
         {isBrowserLab ? (
@@ -384,9 +392,35 @@ export function TerminalView({
                   className={termTabClass(tab)}
                 >
                   {TAB_LABEL[tab]}
+                  {isMetaWorkLab && tab === 'meta' && (
+                    <span className="ml-2 inline-flex items-center rounded-full bg-brand/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-brand">
+                      Scored
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
+
+            {isMetaWorkLab && (
+              <div
+                data-testid="lab-terminal-status-line"
+                className={`flex items-center gap-2 px-3 py-1 text-[11px] font-mono shrink-0 border-b ${
+                  activeTab === 'meta'
+                    ? 'bg-brand/10 border-brand/30 text-brand'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${activeTab === 'meta' ? 'bg-brand' : 'bg-amber-500'}`}
+                  aria-hidden="true"
+                />
+                <span className="truncate">
+                  {activeTab === 'meta'
+                    ? 'meta · all scored work happens here (msfadmin, sudo)'
+                    : 'Kali · optional playground — not scored. Switch to meta for the tasks.'}
+                </span>
+              </div>
+            )}
 
             <div className="flex-1 min-h-0 bg-terminal-bg overflow-hidden relative">
               {activeTab === 'kali-cli' && token && termTabs.includes('kali-cli') && (

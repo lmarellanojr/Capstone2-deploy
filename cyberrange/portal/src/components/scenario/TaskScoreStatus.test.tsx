@@ -124,4 +124,20 @@ describe('TaskScoreStatus', () => {
     )
     expect(screen.getByText('✓ Milestone scored · +50 pts')).toBeTruthy()
   })
+
+  it('tells Scenario 4 students that scoring reads the meta host', () => {
+    render(
+      <TaskScoreStatus
+        milestone={mockMilestone}
+        completed={false}
+        isFlag={false}
+        scenarioId="11"
+      />
+    )
+    expect(screen.getByRole('status').textContent).toBe(
+      'Scoring reads the meta host state — this ticks automatically a few seconds after the step works.'
+    )
+    expect(screen.getByText('meta').tagName).toBe('STRONG')
+    expect(screen.queryByPlaceholderText(/e\.g\./)).toBeNull()
+  })
 })
