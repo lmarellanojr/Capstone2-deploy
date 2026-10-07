@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { ChevronDown, ChevronUp, FileDown, Info, Keyboard, ShieldAlert } from 'lucide-react'
 import { Pod } from '@/lib/api'
-import { Milestone, Scenario } from '@/hooks/useScenarios'
+import { Milestone, Scenario, scenarioLabSurface } from '@/hooks/useScenarios'
 import { GuideView } from '@/components/scenario/GuideView'
 import { TaskScoreStatus } from '@/components/scenario/TaskScoreStatus'
 import { Button } from '@/components/ui/Button'
@@ -48,6 +48,8 @@ export function ExercisePanel({
   onOpenScoringInfo,
 }: ExercisePanelProps) {
   const [guideOpen, setGuideOpen] = useState(false)
+  const isSiem = scenarioLabSurface(scenario) === 'siem'
+  const taskNumber = currentTask.guideTaskNumber ?? taskIndex + 1
 
   // Fallback to description if concise goal string is not defined
   const goalText = currentTask.goal || currentTask.description
@@ -98,10 +100,10 @@ export function ExercisePanel({
       <div className="border-b border-border pb-3 mb-3 shrink-0">
         <div className="flex items-center justify-between gap-2 mb-1.5">
           <span className="text-[11px] font-bold uppercase tracking-wider text-brand">
-            Task {taskIndex + 1} of {totalTasks}
+            {isSiem ? `Task ${taskNumber} · ${currentTask.unscored ? 'Preparation' : `${taskNumber} of ${scenario.milestones.length} milestones`}` : `Task ${taskIndex + 1} of ${totalTasks}`}
           </span>
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-muted text-text-main border border-border">
-            {currentTask.points} pts
+            {currentTask.unscored ? 'Prep — not scored' : `${currentTask.points} pts`}
           </span>
         </div>
         <h2 className="text-lg font-bold text-text-main leading-snug">
@@ -111,12 +113,32 @@ export function ExercisePanel({
 
       {/* Scrollable exercise instructions & status */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0">
+        {isSiem && scenario.brief && (
+          <div className="space-y-2 text-sm text-text-muted leading-relaxed">
+            {scenario.brief.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+          </div>
+        )}
+        {isSiem && !currentTask.unscored && (
+          <p className="alert-warning p-3 text-xs leading-relaxed">
+            <strong>Write on Target: meta.</strong> Files created on Kali never score. Confirm the prompt reads <code className="break-all">msfadmin@pod-…-meta</code>.
+          </p>
+        )}
         {/* Goal-oriented instructions */}
         <div className="space-y-2">
           <div className="text-xs font-semibold uppercase tracking-wider text-text-muted">
             Instructions
           </div>
           <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-2 text-sm text-text-main">
+            {currentTask.instructions ? (
+              <ul aria-label="Instruction checklist" className="space-y-3">
+                {currentTask.instructions.map((instruction) => (
+                  <li key={instruction} className="flex gap-2 leading-relaxed">
+                    <span aria-hidden="true" className="mt-1 h-3 w-3 shrink-0 rounded-sm border border-border-strong" />
+                    <span>{instruction}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : <>
             <p className="font-medium leading-relaxed">
               {goalText}
             </p>
@@ -125,6 +147,7 @@ export function ExercisePanel({
                 {currentTask.description}
               </p>
             )}
+            </>}
           </div>
         </div>
 
@@ -148,7 +171,8 @@ export function ExercisePanel({
           <TaskScoreStatus
             milestone={currentTask}
             completed={completed}
-            isFlag={isFlag}
+            isFlag={!isSiem && isFlag}
+            metaFileScoring={isSiem}
             scenarioId={scenario.id}
             onFlagPass={() => onFlagPass(currentTask.id)}
             disabled={expired}
@@ -156,7 +180,7 @@ export function ExercisePanel({
         </div>
 
         {/* Manual check / Instructor review (when not complete and not flag) */}
-        {!completed && !isFlag && (
+        {!isSiem && !completed && !isFlag && (
           <div className="pt-1">
             {lockedReview ? (
               <div
@@ -210,11 +234,13 @@ export function ExercisePanel({
           </div>
         )}
 
-        {/* Type it yourself hint */}
-        <div className="flex items-center gap-2 p-2.5 rounded-lg bg-chip/60 border border-border text-xs text-text-muted">
-          <Keyboard size={15} className="text-text-faint shrink-0" aria-hidden="true" />
-          <span>Type the commands yourself; Copy is in the Guide below if you get stuck.</span>
-        </div>
+        {/* Type-it-yourself hint (hidden on pure flag tasks; SIEM has no flag submit). */}
+        {(!isFlag || isSiem) && (
+          <div className="flex items-center gap-2 p-2.5 rounded-lg bg-chip/60 border border-border text-xs text-text-muted">
+            <Keyboard size={15} className="text-text-faint shrink-0" aria-hidden="true" />
+            <span>Type the commands yourself; Copy is in the Guide below if you get stuck.</span>
+          </div>
+        )}
 
         {/* Collapsible Guide View */}
         <div className="border border-border rounded-xl overflow-hidden bg-secondary">
@@ -225,7 +251,7 @@ export function ExercisePanel({
               aria-expanded={guideOpen}
               className="flex items-center gap-2 text-xs font-bold text-text-main hover:text-brand transition focus-ring"
             >
-              <span>Walkthrough Guide</span>
+              <span>{isSiem ? 'Guide for this task' : 'Walkthrough Guide'}</span>
               {guideOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
             </button>
             <button

@@ -11,16 +11,21 @@ import { Badge, Button, LoadingSpinner, Modal, ModalHeader, ModalBody, ModalFoot
 import {
   ScenarioInfoView,
   ProvisioningView,
-  TerminalView,
   SessionExpiredOverlay,
   BigPictureModal,
   LabCountdown,
 } from '@/components/scenario'
+import { LabSurface } from '@/components/scenario/LabSurface'
 import { ExercisePanel } from '@/components/scenario/ExercisePanel'
 import { ScenarioOutline } from '@/components/scenario/ScenarioOutline'
 import { type GuideExtra } from '@/components/scenario/GuideExtraModal'
 import { VerificationRequestModal } from '@/components/reviews/VerificationRequestModal'
-import { useScenarios, scenarioDisplayTitle, isFlagMilestone } from '@/hooks/useScenarios'
+import {
+  useScenarios,
+  scenarioDisplayTitle,
+  scenarioLabSurface,
+  isFlagMilestone,
+} from '@/hooks/useScenarios'
 import { useScenarioPod } from '@/hooks/useScenarioPod'
 import { useScenarioMilestones } from '@/hooks/useScenarioMilestones'
 import { useMyReviews } from '@/hooks/useMyReviews'
@@ -51,7 +56,13 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   )
 
   // Unconditional hook execution: single polling source for milestone state
+  // Prep (id 0) is presentation-only — never passed to score polling.
   const milestones = useMemo(() => scenario?.milestones ?? [], [scenario])
+  const isSiem = scenario ? scenarioLabSurface(scenario) === 'siem' : false
+  const presentationTasks = useMemo(() => {
+    if (!scenario) return []
+    return scenario.prepTask ? [scenario.prepTask, ...scenario.milestones] : scenario.milestones
+  }, [scenario])
   const {
     completed,
     lockedReview,
@@ -74,6 +85,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
 
   const myReviews = useMyReviews()
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
+  const [preferPrep, setPreferPrep] = useState(false)
   const [guideExtra, setGuideExtra] = useState<GuideExtra | null>(null)
   const [requestFor, setRequestFor] = useState<{ milestoneId: number; mode: 'new' | 'retry' } | null>(null)
   const [showEndConfirm, setShowEndConfirm] = useState(false)
@@ -84,25 +96,46 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   const [bigPictureOpen, setBigPictureOpen] = useState(false)
   const autoOpened = useRef(false)
 
-  // Auto-advance active task when the selected task completes
+  useEffect(() => {
+    setPreferPrep(Boolean(scenario?.prepTask))
+    setSelectedTaskId(null)
+  }, [scenario?.id, scenario?.prepTask])
+
+  // Auto-advance active task when the selected scored task completes
   const prevCompletedRef = useRef<Set<number>>(new Set())
   useEffect(() => {
     if (
       selectedTaskId !== null &&
+      selectedTaskId !== 0 &&
       completed.has(selectedTaskId) &&
       !prevCompletedRef.current.has(selectedTaskId)
     ) {
+      setPreferPrep(false)
       setSelectedTaskId(null)
     }
     prevCompletedRef.current = new Set(completed)
   }, [completed, selectedTaskId])
 
-  // Current active task
-  const currentTaskId = selectedTaskId ?? nextMilestoneId ?? scenario?.milestones[0]?.id ?? 1
-  const currentTaskIndex = scenario
-    ? Math.max(0, scenario.milestones.findIndex((m) => m.id === currentTaskId))
-    : 0
-  const currentMilestone = scenario?.milestones[currentTaskIndex]
+  useEffect(() => {
+    if (completed.size > 0) setPreferPrep(false)
+  }, [completed])
+
+  const handleSelectTask = useCallback((taskId: number) => {
+    if (taskId !== 0) setPreferPrep(false)
+    setSelectedTaskId(taskId)
+  }, [])
+
+  // Current active task (SIEM starts on unscored prep when nothing scored yet)
+  const currentTaskId =
+    selectedTaskId ??
+    (preferPrep && scenario?.prepTask
+      ? scenario.prepTask.id
+      : nextMilestoneId ?? scenario?.milestones[0]?.id ?? 1)
+  const currentTaskIndex = Math.max(
+    0,
+    presentationTasks.findIndex((m) => m.id === currentTaskId)
+  )
+  const currentMilestone = presentationTasks[currentTaskIndex]
 
   useEffect(() => {
     if (phase !== 'idle' || !scenario || autoOpened.current) return
@@ -211,10 +244,12 @@ export default function ScenarioDetailPage({ params }: PageProps) {
             {phase === 'active' && pod && (
               <div className="order-last sm:order-none w-full sm:w-auto flex justify-center sm:justify-start">
                 <ScenarioOutline
-                  tasks={scenario.milestones}
+                  tasks={presentationTasks}
                   currentTaskId={currentTaskId}
                   completedTaskIds={completed}
-                  onSelectTask={setSelectedTaskId}
+                  onSelectTask={handleSelectTask}
+                  freeNavigation={isSiem}
+                  startNumber={isSiem ? 0 : 1}
                 />
               </div>
             )}
@@ -275,8 +310,8 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                       scenario={scenario}
                       currentTask={currentMilestone}
                       taskIndex={currentTaskIndex}
-                      totalTasks={scenario.milestones.length}
-                      completed={completed.has(currentMilestone.id)}
+                      totalTasks={presentationTasks.length}
+                      completed={!currentMilestone.unscored && completed.has(currentMilestone.id)}
                       isFlag={isFlagMilestone(scenario.id, currentMilestone.id)}
                       lockedReview={lockedReview.has(currentMilestone.id)}
                       verifying={verifying.has(currentMilestone.id)}
@@ -292,9 +327,9 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                   </div>
                 )}
 
-                {/* Right Pane: TerminalView */}
+                {/* Right pane: surface chosen by scenario metadata (terminal/dvwa/siem) */}
                 <div className="min-w-0 min-h-0 h-full flex flex-col">
-                  <TerminalView
+                  <LabSurface
                     pod={pod}
                     scenario={scenario}
                     onEnd={endSession}
@@ -304,6 +339,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                     canRestart={false}
                     currentTaskId={currentTaskId}
                     currentTaskCue={currentMilestone?.cue}
+                    currentTaskCueVariant={currentMilestone?.cueVariant}
                     externalGuideExtra={guideExtra}
                     onCloseGuideExtra={() => setGuideExtra(null)}
                     onOpenTools={() => setGuideExtra('tools')}
@@ -330,7 +366,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                   )}
                   <div className="hidden md:flex items-center gap-3 border-l border-border pl-4">
                     <span className="text-xs text-text-muted font-medium">
-                      {doneCount} of {scenario.milestones.length} tasks done
+                      {doneCount} of {scenario.milestones.length} milestones done
                     </span>
                     <div
                       className="h-2 w-24 sm:w-28 rounded-full bg-muted overflow-hidden"
@@ -345,10 +381,40 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                         style={{ width: `${milestonesLoading ? 0 : progressPct}%` }}
                       />
                     </div>
+                    {isSiem && (
+                      <div className="flex items-center gap-1.5" aria-hidden="true">
+                        {scenario.milestones.map((m) => (
+                          <span
+                            key={m.id}
+                            className={`h-2 w-2 rounded-full ${completed.has(m.id) ? 'bg-brand' : 'bg-border-strong'}`}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {isSiem && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={currentTaskIndex <= 0}
+                        onClick={() => handleSelectTask(presentationTasks[currentTaskIndex - 1].id)}
+                      >
+                        Prev
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={currentTaskIndex >= presentationTasks.length - 1}
+                        onClick={() => handleSelectTask(presentationTasks[currentTaskIndex + 1].id)}
+                      >
+                        Next
+                      </Button>
+                    </>
+                  )}
                   <Button
                     variant="danger-outline"
                     size="sm"

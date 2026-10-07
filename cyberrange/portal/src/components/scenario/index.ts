@@ -1,6 +1,7 @@
 export { ScenarioInfoView } from './ScenarioInfoView'
 export { ProvisioningView } from './ProvisioningView'
 export { TerminalView } from './TerminalView'
+export { LabSurface } from './LabSurface'
 export { ExercisePanel } from './ExercisePanel'
 export { ScenarioOutline } from './ScenarioOutline'
 export { TaskScoreStatus } from './TaskScoreStatus'

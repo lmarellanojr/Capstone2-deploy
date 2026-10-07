@@ -146,7 +146,9 @@ describe("TerminalView (LAB-LAYOUT-02)", () => {
 
     const cardHeader = screen.getByTestId("lab-terminal-card-header")
     expect(within(cardHeader).getByRole("heading", { name: "Target: meta (lab)" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Close modal" })).toBeInTheDocument()
+    // SIEM uses a persistent host status line instead of the one-shot tab explainer modal.
+    expect(screen.getByRole("status")).toHaveTextContent(/You are on meta/i)
+    expect(screen.queryByRole("button", { name: "Close modal" })).not.toBeInTheDocument()
     expect(within(cardHeader).getByText(/Target:\s*10\.0\.51\.20/)).toBeInTheDocument()
     unmount()
   })

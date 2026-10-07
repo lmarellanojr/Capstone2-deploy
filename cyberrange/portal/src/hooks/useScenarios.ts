@@ -9,6 +9,10 @@ export interface Milestone {
   points: number
   goal?: string
   cue?: string
+  cueVariant?: 'info' | 'warning'
+  instructions?: string[]
+  guideTaskNumber?: number
+  unscored?: boolean
 }
 
 export interface Scenario {
@@ -29,6 +33,14 @@ export interface Scenario {
   difficulty: 1 | 2 | 3
   guideFile: string
   milestones: Milestone[]
+  labSurface?: 'terminal' | 'dvwa' | 'siem'
+  prepTask?: Milestone
+  brief?: [string, string]
+}
+
+/** Legacy callers can omit metadata; the catalog declares every surface. */
+export function scenarioLabSurface(scenario: Pick<Scenario, 'id' | 'labSurface'>) {
+  return scenario.labSurface ?? (scenario.id === '06' ? 'dvwa' : scenario.id === '09' ? 'siem' : 'terminal')
 }
 
 // GUIDE-UX-TRIAL / SCEN-UX #116: "Scenario N -- Name" for any screen that
@@ -40,6 +52,7 @@ export function scenarioDisplayTitle(scenario: Pick<Scenario, 'displayNumber' | 
 export const SCENARIOS: Scenario[] = [
   {
     id: '01',
+    labSurface: 'terminal',
     displayNumber: 1,
     name: 'Network Reconnaissance & Exploitation',
     type: 'offensive',
@@ -88,6 +101,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: '06',
+    labSurface: 'dvwa',
     displayNumber: 2,
     name: 'SQL Injection',
     type: 'offensive',
@@ -107,6 +121,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: '09',
+    labSurface: 'siem',
     displayNumber: 3,
     name: 'SIEM Alert Triage',
     type: 'defensive',
@@ -114,14 +129,38 @@ export const SCENARIOS: Scenario[] = [
     mitre: 'T1595',
     difficulty: 2,
     guideFile: 'scenario_03_siem_alert_triage_and_log_analysis.md',
+    brief: [
+      'You are the defender. Generate suspicious activity, inspect the Wazuh alerts, and separate a failed SSH login from routine scan noise.',
+      'Turn your evidence into a triage record, a timeline, and a report. Save all three files on meta; the checker scores them automatically. There is no flag to submit.',
+    ],
+    prepTask: {
+      id: 0, name: 'Generate the alerts', description: 'Prepare the evidence you will investigate.', points: 0,
+      unscored: true, guideTaskNumber: 0,
+      instructions: ['On Kali, generate a failed SSH login and light scan activity against meta.', 'Open SIEM, find your meta agent’s rule 5710 alert, and note its real time for Task 2.'],
+      cue: 'Open the SIEM now and note the rule 5710 time — you need it for Task 2.',
+      cueVariant: 'info',
+    },
     milestones: [
-      { id: 1, name: 'Start Triage', description: 'Generate noise from Kali, open the SIEM (if available), and write alert_triage.json on meta with rule/severity fields.', points: 50 },
-      { id: 2, name: 'True Positive Classification', description: 'Classify true positives and write incident_timeline.md (or mark TPs in the triage file) on meta.', points: 100 },
-      { id: 3, name: 'Incident Summary', description: 'Write incident_report.txt on meta (>200 chars) covering systems, evidence, and recommended actions.', points: 75 },
+      {
+        id: 1, name: 'Open a triage record', description: 'Capture the alert as a structured case record.', points: 50, guideTaskNumber: 1,
+        instructions: ['Switch to Target: meta and confirm the prompt identifies the meta host.', 'Write alert_triage.json with the rule, severity, and agent you observed; replace the template values.'],
+        cue: 'Write on the meta tab — files created on Kali never score. Confirm the prompt reads msfadmin@pod-…-meta.', cueVariant: 'warning',
+      },
+      {
+        id: 2, name: 'Build the timeline', description: 'Classify observed events and put them in time order.', points: 100, guideTaskNumber: 2,
+        instructions: ['On meta, write incident_timeline.md with the observed events and their classifications.', 'Replace every HH:MM with the real rule 5710 time and remove events you did not see.'],
+        cue: 'Replace every HH:MM with the real 5710 time. A left-in placeholder, a made-up time, or an empty time all fail Milestone 2.', cueVariant: 'warning',
+      },
+      {
+        id: 3, name: 'Write the incident report', description: 'Turn your findings into actions for a supervisor.', points: 75, guideTaskNumber: 3,
+        instructions: ['On meta, write incident_report.txt with the affected systems, evidence, and recommended response.', 'Use more than 200 characters and concrete actions such as block, rotate, isolate, and tune.'],
+        cue: '200+ characters; use action words — block, rotate, isolate, tune.', cueVariant: 'info',
+      },
     ],
   },
   {
     id: '11',
+    labSurface: 'terminal',
     displayNumber: 4,
     name: 'Vulnerability Hardening',
     type: 'defensive',

@@ -27,7 +27,7 @@ A **SIEM** (Security Information and Event Management) collects logs from many m
 
 **Kali** is where you generate the suspicious activity (a failed SSH login, a scan). **meta** is the monitored target, and, importantly, the place you **write your triage files**. Your Wazuh agents are named like `pod-<you>-meta`.
 
-The #1 thing to get right Scoring reads three files **on the meta host** , not on Kali. Generate noise on Kali, but **write your triage files on the meta tab**. Files created on Kali will not score. 
+> **Important:** Scoring reads three files on the **meta** host, not Kali. Generate noise on Kali, but write your triage files on the meta tab — files created on Kali will not score. 
 
 Task | Milestone | What you produce (on meta)  
 --- | --- | ---  
@@ -39,7 +39,7 @@ Task | Milestone | What you produce (on meta)
 
 Unlike the attack scenarios, there's nothing to “exploit.” You demonstrate analyst skill by producing three **artifact files on meta**. The checker reads those files automatically.
 
-Scoring is automatic - each artifact file is checked within a few seconds of you saving it. Make sure your files are correct (especially a real rule-5710 time on Milestone 2) before expecting a task to tick.
+> **Scoring:** Scoring is automatic — each artifact file is checked within a few seconds of you saving it. Make sure your files are correct (especially a real rule-5710 time on Milestone 2) before expecting a task to tick.
 
 Templates are a starting point only If the SIEM table is empty or the manager is busy, you can still finish, but **copying a template without editing it does not pass**. Replace placeholders with times and rule IDs from **your** run (SIEM table or meta `auth.log`). Getting real Wazuh values is both better practice and what the Milestone 2 check looks for. 
 
@@ -111,7 +111,7 @@ Make it real In the SIEM table, click a row to copy its timestamp and rule ID (a
 
 **Then:** scoring runs automatically - the triage-start milestone ticks within a few seconds.
 
-What you can do with this This JSON is the seed of a **case file**. As you triage more events you append records; a real SOC feeds these into a ticketing system so nothing is lost and the next analyst can pick up where you left off. 
+> **What you can do with this:** This JSON is the seed of a **case file**. As you triage more events you append records; a real SOC feeds these into a ticketing system so nothing is lost and the next analyst can pick up where you left off. 
 
 
 ### Task 2: build the timeline
@@ -151,7 +151,7 @@ Delete lines for events you did not see.
 
 **Then:** scoring runs automatically - the timeline milestone ticks within a few seconds.
 
-What you can do with this A timeline is what responders use to judge **scope** and decide what to contain first. It also becomes the backbone of the report in Task 3, you're already halfway to the deliverable. 
+> **What you can do with this:** A timeline is what responders use to judge **scope** and decide what to contain first. It also becomes the backbone of the report in Task 3 — you're already halfway to the deliverable. 
 
 
 ### Task 3: write the incident report
@@ -183,7 +183,7 @@ EOF
 
 **Then:** scoring runs automatically - the incident-summary milestone ticks within a few seconds.
 
-What you can do with this This is the deliverable that drives the response, who to notify, what to block, which credentials to rotate. In a real SOC it's attached to the ticket and read by an on-call lead, so clarity beats length. 
+> **What you can do with this:** This is the deliverable that drives the response, who to notify, what to block, which credentials to rotate. In a real SOC it's attached to the ticket and read by an on-call lead, so clarity beats length. 
 
 **Scenario complete** when all three milestones pass, you generated, triaged, and reported an incident end to end. 
 

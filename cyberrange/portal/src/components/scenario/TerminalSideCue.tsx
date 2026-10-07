@@ -1,14 +1,15 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { Info, X } from 'lucide-react'
+import React, { useState } from 'react'
+import { AlertTriangle, Info, X } from 'lucide-react'
 
 interface TerminalSideCueProps {
   taskId: number
   cueText?: string
+  variant?: 'info' | 'warning'
 }
 
-export function TerminalSideCue({ taskId, cueText }: TerminalSideCueProps) {
+export function TerminalSideCue({ taskId, cueText, variant = 'info' }: TerminalSideCueProps) {
   const [dismissedTaskIds, setDismissedTaskIds] = useState<Set<number>>(new Set())
 
   // Reset or check dismissal state per task
@@ -24,12 +25,12 @@ export function TerminalSideCue({ taskId, cueText }: TerminalSideCueProps) {
 
   return (
     <div
-      className="absolute top-12 right-4 z-20 max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
+      className="absolute bottom-4 right-3 left-3 sm:left-auto z-[5] sm:max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
       role="complementary"
       aria-label="Terminal tip"
     >
-      <div className="pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl bg-secondary/95 backdrop-blur-sm border border-border shadow-overlay text-text-main text-xs">
-        <Info size={16} className="text-brand shrink-0 mt-0.5" aria-hidden="true" />
+      <div className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-overlay text-xs ${variant === 'warning' ? 'alert-warning' : 'bg-secondary border-border text-text-main'}`}>
+        {variant === 'warning' ? <AlertTriangle size={16} className="text-warning shrink-0 mt-0.5" aria-hidden="true" /> : <Info size={16} className="text-brand shrink-0 mt-0.5" aria-hidden="true" />}
         <p className="flex-1 leading-relaxed text-text-main select-text">
           {cueText}
         </p>
