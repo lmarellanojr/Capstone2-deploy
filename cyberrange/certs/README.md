@@ -68,6 +68,13 @@ scoring via `WAZUH_CA_BUNDLE` (typically `~/cyberrange/certs/wazuh-api.crt`).
 `certs/wazuh-api.crt` (exact relpath). Routine promotes do **not** overwrite
 a host pin with the git starter. Missing file → tarball starter is installed.
 
+After extract (and on unchanged-SHA skip), `pull_release` also runs
+`deploy/host/sync_wazuh_api_cert.py` (#154): if `wazuh-manager` is up, the
+host pin is refreshed from the live manager cert when fingerprints match
+`localhost:55000` and SAN has `DNS:localhost`. That heals Admin TLS-Degraded
+on every Ampere domain without a hand-run Manual 02 block. Preserve stops
+tarball clobber; auto-sync fixes an already-wrong pin.
+
 **When to update git:** Only on an intentional starter-pin change (new
 reference install, documented rotation). Do not commit every host’s live
 extract.
