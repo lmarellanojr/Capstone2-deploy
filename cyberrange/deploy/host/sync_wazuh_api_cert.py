@@ -5,14 +5,19 @@ on-disk pin does not match the manager cert on localhost:55000. #152 preserves
 an existing pin against tarball overwrite; this helper refreshes the pin from
 the live manager so every domain can heal on pull_release (or a one-shot run).
 
-Best-effort by default: missing manager / proxy down → skip (exit 0).
-Use --strict for operator one-shots that must fail loudly.
+Best-effort by default:
+  skipped  — manager guest missing / proxy unreachable (benign)
+  failed   — validation passed but install write failed (loud; pull still continues)
+  installed / unchanged — success paths
+Use --strict for operator one-shots that must fail loudly on skipped/failed.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -23,7 +28,11 @@ from typing import Callable
 
 MANAGER_CRT = "/var/ossec/api/configuration/ssl/server.crt"
 DEFAULT_CONNECT = "localhost:55000"
+S_CLIENT_TIMEOUT_S = 3
+TCP_PROBE_TIMEOUT_S = 1.0
 FINGERPRINT_RE = re.compile(r"(?:=)([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){19,})")
+# Exact DNS:localhost token (not localhost.localdomain / localhost6).
+DNS_LOCALHOST_RE = re.compile(r"(?:^|[\s,])DNS:localhost(?:[\s,]|$)", re.I)
 
 
 @dataclass(frozen=True)
@@ -34,7 +43,11 @@ class SyncResult:
 
 
 class SyncError(RuntimeError):
-    pass
+    """Hard failure during validation or install."""
+
+
+class SyncSkip(RuntimeError):
+    """Benign absence / unreachable — map to status=skipped."""
 
 
 def _openssl_fingerprint(pem: bytes) -> str:
@@ -66,22 +79,39 @@ def _openssl_has_dns_localhost(pem: bytes) -> bool:
     text = b"\n".join([proc.stdout or b"", proc.stderr or b""]).decode(
         "utf-8", errors="replace"
     )
-    return "DNS:localhost" in text
+    return bool(DNS_LOCALHOST_RE.search(text))
+
+
+def _parse_connect(connect: str) -> tuple[str, int]:
+    host, _, port_s = connect.rpartition(":")
+    if not host or not port_s.isdigit():
+        raise SyncError(f"invalid --connect {connect!r}; expected host:port")
+    return host, int(port_s)
+
+
+def _tcp_probe(connect: str = DEFAULT_CONNECT, timeout_s: float = TCP_PROBE_TIMEOUT_S) -> None:
+    host, port = _parse_connect(connect)
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return
+    except OSError as exc:
+        raise SyncSkip(f"{connect} not accepting connections: {exc}") from exc
 
 
 def _live_server_pem(connect: str = DEFAULT_CONNECT, servername: str = "localhost") -> bytes:
+    _tcp_probe(connect)
     proc = subprocess.run(
         ["openssl", "s_client", "-connect", connect, "-servername", servername],
         input=b"",
         check=False,
         capture_output=True,
-        timeout=20,
+        timeout=S_CLIENT_TIMEOUT_S,
     )
     blob = proc.stdout or b""
     start = blob.find(b"-----BEGIN CERTIFICATE-----")
     end = blob.find(b"-----END CERTIFICATE-----")
     if start < 0 or end < 0:
-        raise SyncError(
+        raise SyncSkip(
             f"no certificate from {connect} (s_client rc={proc.returncode})"
         )
     end += len(b"-----END CERTIFICATE-----")
@@ -107,11 +137,14 @@ def _extract_manager_pem(lxc_bin: str = "lxc") -> bytes:
     )
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or b"").decode("utf-8", errors="replace").strip()
-        raise SyncError(f"lxc exec cat {MANAGER_CRT} failed: {err}")
+        raise SyncSkip(f"lxc exec cat {MANAGER_CRT} failed: {err}")
     data = proc.stdout or b""
-    if b"BEGIN CERTIFICATE" not in data:
+    start = data.find(b"-----BEGIN CERTIFICATE-----")
+    end = data.find(b"-----END CERTIFICATE-----")
+    if start < 0 or end < 0:
         raise SyncError("manager crt output is not a PEM certificate")
-    return data
+    end += len(b"-----END CERTIFICATE-----")
+    return data[start:end] + b"\n"
 
 
 def sync_wazuh_api_cert(
@@ -154,21 +187,39 @@ def sync_wazuh_api_cert(
                     "unchanged", "host pin already matches live manager", ext_fp
                 )
 
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            bak = data_dir / f"wazuh-api.crt.bak-{stamp}"
-            shutil.copy2(dest, bak)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+            bak = data_dir / f"wazuh-api.crt.bak-{stamp}-{os.getpid()}"
+            try:
+                shutil.copy2(dest, bak)
+            except OSError as exc:
+                raise SyncError(f"backup failed: {exc}") from exc
 
-        tmp = data_dir / "wazuh-api.crt.new"
-        tmp.write_bytes(extracted)
-        tmp.chmod(0o644)
-        shutil.move(str(tmp), str(dest))
-        dest.chmod(0o644)
+        # Atomic same-dir replace (Bug: cross-FS move from cyberrange-data).
+        tmp = dest.parent / ".wazuh-api.crt.new"
+        try:
+            tmp.write_bytes(extracted)
+            tmp.chmod(0o644)
+            os.replace(tmp, dest)
+            dest.chmod(0o644)
+        except OSError as exc:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            raise SyncError(f"install failed: {exc}") from exc
+
         return SyncResult("installed", f"wrote {dest}", ext_fp)
-    except Exception as exc:  # noqa: BLE001 — boundary for best-effort pulls
+
+    except SyncSkip as exc:
+        return SyncResult("skipped", str(exc))
+    except SyncError as exc:
         if best_effort:
-            return SyncResult("skipped", f"{type(exc).__name__}: {exc}")
-        if isinstance(exc, SyncError):
-            raise
+            return SyncResult("failed", str(exc))
+        raise
+    except Exception as exc:  # noqa: BLE001 — unexpected → failed (not skipped)
+        if best_effort:
+            return SyncResult("failed", f"{type(exc).__name__}: {exc}")
         raise SyncError(str(exc)) from exc
 
 
@@ -194,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="exit non-zero on sync failure (default: best-effort skip)",
+        help="exit non-zero on sync skipped/failed (default: best-effort)",
     )
     args = parser.parse_args(argv)
 
@@ -209,10 +260,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wazuh-api.crt sync FAILED: {exc}", file=sys.stderr)
         return 1
 
-    print(f"wazuh-api.crt sync {result.status}: {result.detail}")
+    stream = sys.stderr if result.status == "failed" else sys.stdout
+    print(f"wazuh-api.crt sync {result.status}: {result.detail}", file=stream)
     if result.fingerprint:
-        print(f"fingerprint={result.fingerprint}")
-    if args.strict and result.status in {"skipped", "failed"}:
+        print(f"fingerprint={result.fingerprint}", file=stream)
+
+    if result.status == "failed":
+        # Non-zero so pull_release can echo loudly; pull still treats as non-fatal.
+        return 2
+    if args.strict and result.status == "skipped":
         return 1
     return 0
 

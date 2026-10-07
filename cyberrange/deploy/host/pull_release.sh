@@ -24,12 +24,22 @@ restart_units() {
 # Fixes Admin Wazuh TLS-Degraded on every Ampere domain after Promote apply
 # (#154); complements #152 preserve-if-exists for tarball extracts.
 sync_wazuh_api_cert() {
-  local helper="${ROOT}/deploy/host/sync_wazuh_api_cert.py"
+  local helper="${ROOT}/deploy/host/sync_wazuh_api_cert.py" rc=0
   if [ ! -f "$helper" ]; then
     return 0
   fi
-  "$PY" "$helper" --root "$ROOT" --data "$DATA" || \
-    echo "pull-release: wazuh-api.crt sync non-fatal failure" >&2
+  set +e
+  "$PY" "$helper" --root "$ROOT" --data "$DATA"
+  rc=$?
+  set -e
+  # Helper: 0 ok/skipped/unchanged/installed; 2 = failed after validation (loud).
+  # Never abort the pull — only surface the failure so operators notice.
+  if [ "$rc" -eq 2 ]; then
+    echo "pull-release: wazuh-api.crt sync FAILED (non-fatal; host may stay TLS-Degraded)" >&2
+  elif [ "$rc" -ne 0 ]; then
+    echo "pull-release: wazuh-api.crt sync exited $rc (non-fatal)" >&2
+  fi
+  return 0
 }
 
 restore_snapshot() {
