@@ -80,9 +80,34 @@ with proper PKI.
 Three distinct ops paths (do not conflate them):
 
 - **A — Routine `pull_release`:** no cert step; existing host pin is preserved.
-- **B — Install a newer git starter onto a live host:** backup then
-  remove/rename `~/cyberrange/certs/wazuh-api.crt`, run `pull_release` so
-  the missing file is extracted from the tarball; verify SHA-256.
+- **B — Install a newer git starter onto a live host:** `pull_release` alone
+  does **not** re-extract when the release SHA already equals `DEPLOYED_SHA`
+  (`--check-apply` returns unchanged and exits before `--extract`). Removing
+  the host pin and calling `pull_release` without forcing apply leaves the
+  host **cert-less**. Use a forced full apply:
+
+  ```bash
+  export XDG_RUNTIME_DIR=/run/user/$(id -u)
+  export DBUS_SESSION_BUS_ADDRESS=unix:path=${XDG_RUNTIME_DIR}/bus
+  ROOT=$HOME/cyberrange
+  systemctl --user stop cyberrange-pull-release.timer
+  cp -a "$ROOT/certs/wazuh-api.crt" \
+    "$ROOT/certs/wazuh-api.crt.bak.$(date +%Y%m%d%H%M)"
+  rm -f "$ROOT/certs/wazuh-api.crt"
+  cp -a "$ROOT/DEPLOYED_SHA" "$ROOT/DEPLOYED_SHA.bak.force"
+  printf '%040d\n' 0 > "$ROOT/DEPLOYED_SHA"
+  bash "$ROOT/deploy/host/pull_release.sh"
+  ls -l "$ROOT/certs/wazuh-api.crt"
+  openssl x509 -in "$ROOT/certs/wazuh-api.crt" -noout -fingerprint -sha256
+  ```
+
+  This forces a **full** release apply (snapshot, tree extract, lock check,
+  unit restarts), not a cert-only repair. Keep the cert and `DEPLOYED_SHA`
+  backups until fingerprint and Admin checks pass. On failure, restore both
+  backups from those copies (`fail_apply` does not restore `DEPLOYED_SHA`);
+  clear `~/cyberrange-data/rollback/bad-sha` only after fixing the cause, then
+  retry. A successful pull rewrites `DEPLOYED_SHA` to the real release SHA.
+  Restart `cyberrange-pull-release.timer` when finished.
 - **C — Live manager cert regenerated / TLS verify failed (`curl` exit 60):**
   re-extract from that host’s `wazuh-manager` per Manual 02 §4e onto
   `~/cyberrange/certs/wazuh-api.crt` (installs the **live** cert, not the

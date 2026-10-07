@@ -81,10 +81,15 @@ Minimum `.env` keys (values from Manual 06):
 ```bash
 WAZUH_API_URL=https://localhost:55000
 WAZUH_TLS_VERIFY=true
-WAZUH_CA_BUNDLE=/home/llms_admin/cyberrange/certs/wazuh-api.crt
+WAZUH_CA_BUNDLE=/home/<deploy-user>/cyberrange/certs/wazuh-api.crt
 WAZUH_SCORING_USER=scoring
 WAZUH_SCORING_PW=<password from Manual 06>
 ```
+
+Replace `<deploy-user>` with the host deploy user (often `llms_admin` on Ampere).
+systemd `EnvironmentFile=` does **not** expand `$HOME`; a literal `$HOME/...`
+value breaks the running API pin path even when a shell `source` of the same
+file looks fine.
 
 ---
 
@@ -226,7 +231,7 @@ After pull, optional hygiene:
 
 1. Re-run the Step 3 auth test.
 2. If `curl_exit=60`, follow path **C** (live re-extract) and restart the API.
-3. To install a newer **git** starter onto a host that already has a pin (path **B**): backup then remove/rename the host file, run `pull_release`, verify fingerprint. See `cyberrange/certs/README.md`.
+3. To install a newer **git** starter onto a host that already has a pin (path **B**): `pull_release` alone will **not** re-extract when `DEPLOYED_SHA` already matches the release SHA. Follow the forced-apply procedure in `cyberrange/certs/README.md` path B (stop pull timer, backup/remove cert, write a dummy `DEPLOYED_SHA`, run `pull_release`, verify fingerprint, restore backups on failure, restart timer). Do not remove the cert and call bare `pull_release` — that leaves the host cert-less.
 
 Rollback uses the same `--extract` path, so preserve applies there too (host pin is not clobbered by a stale snapshotted pin).
 

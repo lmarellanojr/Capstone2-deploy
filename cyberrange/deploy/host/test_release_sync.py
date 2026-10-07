@@ -135,6 +135,30 @@ def test_snapshot_paths_includes_wazuh_api_crt(tmp_path: Path):
     assert ".env" not in names
 
 
+def test_extract_tree_preserves_dangling_symlink_wazuh_api_crt(tmp_path: Path):
+    dest = tmp_path / "dest"
+    (dest / "certs").mkdir(parents=True)
+    pin = dest / "certs" / "wazuh-api.crt"
+    try:
+        pin.symlink_to("missing.crt")
+    except OSError as exc:
+        pytest.skip(f"symlink not permitted here: {exc}")
+    assert pin.is_symlink()
+    assert not (dest / "certs" / "missing.crt").exists()
+
+    tar_path = tmp_path / "tree.tgz"
+    src_cert = tmp_path / "tarball-cert.pem"
+    src_cert.write_text("STARTER_PIN\n", encoding="utf-8")
+    with tarfile.open(tar_path, "w:gz") as tf:
+        tf.add(src_cert, arcname="certs/wazuh-api.crt")
+
+    written = extract_tree(tar_path, dest)
+    assert pin.is_symlink()
+    assert pin.readlink().as_posix() == "missing.crt"
+    assert not (dest / "certs" / "missing.crt").exists()
+    assert "certs/wazuh-api.crt" not in written
+
+
 def test_extract_rejects_path_escape(tmp_path: Path):
     tar_path = tmp_path / "evil.tgz"
     dest = tmp_path / "dest"

@@ -94,7 +94,9 @@ def extract_tree(tar_path: Path, dest: Path) -> list[str]:
                 continue
             if not member.isfile():
                 continue
-            if name in PRESERVE_IF_EXISTS and target.is_file():
+            # Lexical path: resolved target hides dangling symlinks at the pin path.
+            raw = dest / name
+            if name in PRESERVE_IF_EXISTS and (raw.is_symlink() or raw.is_file()):
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             src = tf.extractfile(member)
