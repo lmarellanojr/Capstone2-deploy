@@ -74,6 +74,91 @@ def test_extract_tree_skips_env_and_does_not_clobber(tmp_path: Path):
     assert "portal/.env.local" not in written
 
 
+def test_extract_tree_preserves_existing_wazuh_api_crt(tmp_path: Path):
+    tar_path = tmp_path / "tree.tgz"
+    src_cert = tmp_path / "tarball-cert.pem"
+    src_cert.write_text("TARBALL_PIN\n", encoding="utf-8")
+    sibling = tmp_path / "pods_router.py"
+    sibling.write_text("new\n", encoding="utf-8")
+    with tarfile.open(tar_path, "w:gz") as tf:
+        tf.add(src_cert, arcname="certs/wazuh-api.crt")
+        tf.add(sibling, arcname="src/pods_router.py")
+
+    dest = tmp_path / "dest"
+    (dest / "certs").mkdir(parents=True)
+    (dest / "certs" / "wazuh-api.crt").write_text("HOST_PIN\n", encoding="utf-8")
+    written = extract_tree(tar_path, dest)
+    assert (dest / "certs" / "wazuh-api.crt").read_text(encoding="utf-8") == "HOST_PIN\n"
+    assert (dest / "src" / "pods_router.py").read_text(encoding="utf-8") == "new\n"
+    assert "certs/wazuh-api.crt" not in written
+    assert "src/pods_router.py" in written
+
+
+def test_extract_tree_installs_wazuh_api_crt_when_missing(tmp_path: Path):
+    tar_path = tmp_path / "tree.tgz"
+    src_cert = tmp_path / "tarball-cert.pem"
+    src_cert.write_text("STARTER_PIN\n", encoding="utf-8")
+    with tarfile.open(tar_path, "w:gz") as tf:
+        tf.add(src_cert, arcname="certs/wazuh-api.crt")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    written = extract_tree(tar_path, dest)
+    assert (dest / "certs" / "wazuh-api.crt").read_text(encoding="utf-8") == "STARTER_PIN\n"
+    assert "certs/wazuh-api.crt" in written
+
+
+def test_extract_tree_other_wazuh_api_crt_basename_still_extracts(tmp_path: Path):
+    tar_path = tmp_path / "tree.tgz"
+    other = tmp_path / "other-cert.pem"
+    other.write_text("OTHER\n", encoding="utf-8")
+    with tarfile.open(tar_path, "w:gz") as tf:
+        tf.add(other, arcname="other/wazuh-api.crt")
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    written = extract_tree(tar_path, dest)
+    assert (dest / "other" / "wazuh-api.crt").read_text(encoding="utf-8") == "OTHER\n"
+    assert "other/wazuh-api.crt" in written
+
+
+def test_snapshot_paths_includes_wazuh_api_crt(tmp_path: Path):
+    root = tmp_path / "tree"
+    (root / "certs").mkdir(parents=True)
+    (root / "certs" / "wazuh-api.crt").write_text("HOST_PIN\n", encoding="utf-8")
+    (root / ".env").write_text("nope", encoding="utf-8")
+    snap = tmp_path / "snap.tgz"
+    snapshot_paths(root, snap)
+    with tarfile.open(snap, "r:gz") as tf:
+        names = tf.getnames()
+    assert "certs/wazuh-api.crt" in names
+    assert ".env" not in names
+
+
+def test_extract_tree_preserves_dangling_symlink_wazuh_api_crt(tmp_path: Path):
+    dest = tmp_path / "dest"
+    (dest / "certs").mkdir(parents=True)
+    pin = dest / "certs" / "wazuh-api.crt"
+    try:
+        pin.symlink_to("missing.crt")
+    except OSError as exc:
+        pytest.skip(f"symlink not permitted here: {exc}")
+    assert pin.is_symlink()
+    assert not (dest / "certs" / "missing.crt").exists()
+
+    tar_path = tmp_path / "tree.tgz"
+    src_cert = tmp_path / "tarball-cert.pem"
+    src_cert.write_text("STARTER_PIN\n", encoding="utf-8")
+    with tarfile.open(tar_path, "w:gz") as tf:
+        tf.add(src_cert, arcname="certs/wazuh-api.crt")
+
+    written = extract_tree(tar_path, dest)
+    assert pin.is_symlink()
+    assert pin.readlink().as_posix() == "missing.crt"
+    assert not (dest / "certs" / "missing.crt").exists()
+    assert "certs/wazuh-api.crt" not in written
+
+
 def test_extract_rejects_path_escape(tmp_path: Path):
     tar_path = tmp_path / "evil.tgz"
     dest = tmp_path / "dest"
