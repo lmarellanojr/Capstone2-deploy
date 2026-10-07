@@ -225,15 +225,36 @@ Also stop `cyberrange-pull-release.timer` while testing a branch bake so ampere-
 
 ### Official `pull_release` / ampere-live
 
-`release_sync.extract_tree` **preserves** an existing `certs/wazuh-api.crt` (exact relpath). Routine pulls need **no new cert step** for that reason.
+`release_sync.extract_tree` **preserves** an existing `certs/wazuh-api.crt` (exact relpath) so the tarball starter does not clobber a good host pin (#152 / #153).
+
+**Auto-sync (#154):** after extract (and on SHA-unchanged skip), `pull_release.sh` runs `deploy/host/sync_wazuh_api_cert.py`. That helper copies `/var/ossec/api/configuration/ssl/server.crt` from the live `wazuh-manager` guest into `~/cyberrange/certs/wazuh-api.crt` only when:
+
+- fingerprints match `localhost:55000`, and
+- SAN includes `DNS:localhost`.
+
+It backups the previous pin under `~/cyberrange-data/`. Failures are **non-fatal** to the pull (manager stopped → skip).
+
+So for **all Ampere domains** with scoring creds already set:
+
+1. Merge + Promote a release that includes #154.
+2. Each host `pull_release` (timer or manual) → TLS pin heals → Admin Wazuh should leave `reachable, but TLS verification failed`.
+3. Hard-refresh `/admin/system`.
+
+One-shot without waiting for a SHA change (after the helper exists on the host):
+
+```bash
+python3 ~/cyberrange/deploy/host/sync_wazuh_api_cert.py --strict
+# or, once the new pull_release.sh is present:
+bash ~/cyberrange/deploy/host/pull_release.sh
+```
 
 After pull, optional hygiene:
 
 1. Re-run the Step 3 auth test.
-2. If `curl_exit=60`, follow path **C** (live re-extract) and restart the API.
-3. To install a newer **git** starter onto a host that already has a pin (path **B**): `pull_release` alone will **not** re-extract when `DEPLOYED_SHA` already matches the release SHA. Follow the forced-apply procedure in `cyberrange/certs/README.md` path B (stop pull timer, backup/remove cert, write a dummy `DEPLOYED_SHA`, run `pull_release`, verify fingerprint, restore backups on failure, restart timer). Do not remove the cert and call bare `pull_release` — that leaves the host cert-less.
+2. If `curl_exit=60` after auto-sync skipped (manager down), start `wazuh-manager` and re-run the helper, or follow path **C**.
+3. To install a newer **git** starter onto a host that already has a pin (path **B**): follow `cyberrange/certs/README.md` path B. Auto-sync will overwrite that starter again from the live manager on the next pull if the manager is up.
 
-Rollback uses the same `--extract` path, so preserve applies there too (host pin is not clobbered by a stale snapshotted pin).
+Rollback uses the same `--extract` path, so preserve applies there too (host pin is not clobbered by a stale snapshotted pin). Auto-sync still runs after a successful apply restore path only when operators re-run pull; `--rollback` does not invoke sync.
 
 ---
 

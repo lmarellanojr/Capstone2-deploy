@@ -19,6 +19,19 @@ restart_units() {
     cyberrange-portal.service cyberrange-ssh-bridge.service
 }
 
+# Refresh certs/wazuh-api.crt from live wazuh-manager when fingerprints match.
+# Best-effort: never fails the pull (manager stopped / proxy down → skip).
+# Fixes Admin Wazuh TLS-Degraded on every Ampere domain after Promote apply
+# (#154); complements #152 preserve-if-exists for tarball extracts.
+sync_wazuh_api_cert() {
+  local helper="${ROOT}/deploy/host/sync_wazuh_api_cert.py"
+  if [ ! -f "$helper" ]; then
+    return 0
+  fi
+  "$PY" "$helper" --root "$ROOT" --data "$DATA" || \
+    echo "pull-release: wazuh-api.crt sync non-fatal failure" >&2
+}
+
 restore_snapshot() {
   # Same destinations as apply: tree -> $ROOT, portal-build -> $ROOT/portal
   if [ -f "${DATA}/rollback/tree.tgz" ]; then
@@ -104,6 +117,8 @@ APPLY_RC=$?
 set -e
 if [ "$APPLY_RC" -eq 2 ]; then
   echo "pull-release skip: $APPLY_OUT"
+  # Still heal a mismatched host pin when the release SHA is unchanged.
+  sync_wazuh_api_cert
   exit 0
 fi
 if [ "$APPLY_RC" -ne 0 ]; then
@@ -170,6 +185,9 @@ fi
 
 "$PY" "$SYNC" --extract "${WORK}/tree.tgz" "$ROOT"
 "$PY" "$SYNC" --extract "${WORK}/portal-build.tgz" "${ROOT}/portal"
+
+# After extract (preserve keeps a wrong pin too): align pin to live manager.
+sync_wazuh_api_cert
 
 GOT="$("$PY" "$SYNC" --lock-hash "${ROOT}/portal/package-lock.json")"
 WANT="$("$PY" - "${WORK}/manifest.json" <<'PY'
