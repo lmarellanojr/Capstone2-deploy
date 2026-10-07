@@ -250,6 +250,45 @@ describe('ExercisePanel', () => {
     ).toBeTruthy()
   })
 
+  it('reframes typing guidance for DVWA scenario', () => {
+    const scen2: Scenario = {
+      ...mockScenario,
+      id: '06',
+      labSurface: 'dvwa',
+      milestones: [
+        {
+          id: 1,
+          name: 'Injection Point',
+          goal: 'Make the query misbehave and return all user rows',
+          description: 'Identify the SQL injection vulnerability',
+          points: 50,
+        },
+      ],
+    }
+
+    render(
+      <ExercisePanel
+        pod={mockPod}
+        scenario={scen2}
+        currentTask={scen2.milestones[0]}
+        taskIndex={0}
+        totalTasks={1}
+        completed={false}
+        isFlag={false}
+        lockedReview={false}
+        verifying={false}
+        milestonesLoading={false}
+        onVerify={jest.fn()}
+        onFlagPass={jest.fn()}
+        onRequestReview={jest.fn()}
+      />
+    )
+
+    expect(
+      screen.getByText('Type the payloads into DVWA; exact payloads are in the Guide below.')
+    ).toBeTruthy()
+  })
+
   it('disables scoring actions and shows expired message when expired is true', () => {
     const onVerify = jest.fn()
     render(

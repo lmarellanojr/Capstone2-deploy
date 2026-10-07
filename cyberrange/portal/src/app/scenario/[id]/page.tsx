@@ -15,12 +15,13 @@ import {
   SessionExpiredOverlay,
   BigPictureModal,
   LabCountdown,
+  DvwaView,
 } from '@/components/scenario'
 import { ExercisePanel } from '@/components/scenario/ExercisePanel'
 import { ScenarioOutline } from '@/components/scenario/ScenarioOutline'
-import { type GuideExtra } from '@/components/scenario/GuideExtraModal'
+import { GuideExtraModal, type GuideExtra } from '@/components/scenario/GuideExtraModal'
 import { VerificationRequestModal } from '@/components/reviews/VerificationRequestModal'
-import { useScenarios, scenarioDisplayTitle, isFlagMilestone } from '@/hooks/useScenarios'
+import { useScenarios, scenarioDisplayTitle, isFlagMilestone, getLabSurface } from '@/hooks/useScenarios'
 import { useScenarioPod } from '@/hooks/useScenarioPod'
 import { useScenarioMilestones } from '@/hooks/useScenarioMilestones'
 import { useMyReviews } from '@/hooks/useMyReviews'
@@ -292,22 +293,31 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                   </div>
                 )}
 
-                {/* Right Pane: TerminalView */}
+                {/* Right Pane: Pluggable by scenario surface (TerminalView / DvwaView) */}
                 <div className="min-w-0 min-h-0 h-full flex flex-col">
-                  <TerminalView
-                    pod={pod}
-                    scenario={scenario}
-                    onEnd={endSession}
-                    ttlGrace={pod.ttl_expired}
-                    fetchedAtMs={fetchedAtMs}
-                    expired={phase === 'expired'}
-                    canRestart={false}
-                    currentTaskId={currentTaskId}
-                    currentTaskCue={currentMilestone?.cue}
-                    externalGuideExtra={guideExtra}
-                    onCloseGuideExtra={() => setGuideExtra(null)}
-                    onOpenTools={() => setGuideExtra('tools')}
-                  />
+                  {getLabSurface(scenario) === 'dvwa' ? (
+                    <DvwaView
+                      pod={pod}
+                      scenario={scenario}
+                      currentTaskId={currentTaskId}
+                      currentTaskCue={currentMilestone?.cue}
+                    />
+                  ) : (
+                    <TerminalView
+                      pod={pod}
+                      scenario={scenario}
+                      onEnd={endSession}
+                      ttlGrace={pod.ttl_expired}
+                      fetchedAtMs={fetchedAtMs}
+                      expired={phase === 'expired'}
+                      canRestart={false}
+                      currentTaskId={currentTaskId}
+                      currentTaskCue={currentMilestone?.cue}
+                      externalGuideExtra={guideExtra}
+                      onCloseGuideExtra={() => setGuideExtra(null)}
+                      onOpenTools={() => setGuideExtra('tools')}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -434,6 +444,15 @@ export default function ScenarioDetailPage({ params }: PageProps) {
         onStart={phase === 'idle' ? handleLetsGo : undefined}
         podId={phase === 'active' && pod ? pod.pod_id : undefined}
       />
+
+      {pod && getLabSurface(scenario) === 'dvwa' && (
+        <GuideExtraModal
+          scenario={scenario}
+          podId={pod.pod_id}
+          which={guideExtra}
+          onClose={() => setGuideExtra(null)}
+        />
+      )}
 
       {/* Verification request modal */}
       {requestFor && requestMilestone && (

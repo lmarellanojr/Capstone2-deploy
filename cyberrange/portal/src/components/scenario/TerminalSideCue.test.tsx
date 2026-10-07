@@ -35,4 +35,17 @@ describe('TerminalSideCue', () => {
     const { container } = render(<TerminalSideCue taskId={1} cueText={undefined} />)
     expect(container.firstChild).toBeNull()
   })
+
+  it('renders warning styling when cueText starts with ⚠ or variant is warning', () => {
+    const { container } = render(
+      <TerminalSideCue
+        taskId={1}
+        cueText="⚠ Set DVWA Security to Low first — higher levels block these payloads and nothing will score."
+      />
+    )
+    expect(
+      screen.getByText(/Set DVWA Security to Low first/i)
+    ).toBeTruthy()
+    expect(container.querySelector('.bg-amber-50\\/95')).toBeTruthy()
+  })
 })

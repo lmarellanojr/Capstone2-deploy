@@ -150,6 +150,7 @@ export function ExercisePanel({
             completed={completed}
             isFlag={isFlag}
             scenarioId={scenario.id}
+            surface={scenario.labSurface}
             onFlagPass={() => onFlagPass(currentTask.id)}
             disabled={expired}
           />
@@ -216,7 +217,11 @@ export function ExercisePanel({
         {!isFlag && (
           <div className="flex items-center gap-2 p-2.5 rounded-lg bg-chip/60 border border-border text-xs text-text-muted">
             <Keyboard size={15} className="text-text-faint shrink-0" aria-hidden="true" />
-            <span>Type the commands yourself; Copy is in the Guide below if you get stuck.</span>
+            <span>
+              {scenario.labSurface === 'dvwa' || scenario.id === '06'
+                ? 'Type the payloads into DVWA; exact payloads are in the Guide below.'
+                : 'Type the commands yourself; Copy is in the Guide below if you get stuck.'}
+            </span>
           </div>
         )}
 
