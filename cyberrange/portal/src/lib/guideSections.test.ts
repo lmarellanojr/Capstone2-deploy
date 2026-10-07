@@ -1,6 +1,6 @@
 import fs from "fs"
 import path from "path"
-import { extractBigPicture, splitGuide } from "./guideSections"
+import { extractBigPicture, splitGuide, extractTaskSection } from "./guideSections"
 import { SCENARIOS } from "@/hooks/useScenarios"
 
 describe("extractBigPicture", () => {
@@ -151,6 +151,59 @@ describe("every scenario guide splits cleanly for the lab panel", () => {
     expect(tasks).toBeGreaterThan(0)
     expect((guide.match(/^### Task \d/gm) || []).length).toBe(tasks)
     expect(scoring).not.toMatch(/^### Task \d/m)
+  })
+})
+
+describe("extractTaskSection", () => {
+  const md = [
+    "## 2. How scoring works",
+    "explainer",
+    "---",
+    "### Task 1: alpha",
+    "do alpha",
+    "```bash",
+    "## not a heading inside a fence",
+    "### Task 9: not a real task (fenced)",
+    "```",
+    "more alpha",
+    "### Task 2: beta",
+    "do beta",
+    "## 3. Playground",
+    "playground",
+  ].join("\n")
+
+  it("returns only the requested task, fences and all, up to the next heading", () => {
+    const t1 = extractTaskSection(md, 1)
+    expect(t1).toMatch(/^### Task 1: alpha/)
+    expect(t1).toContain("do alpha")
+    expect(t1).toContain("## not a heading inside a fence") // kept: inside fence
+    expect(t1).toContain("more alpha")
+    expect(t1).not.toContain("### Task 2")
+    expect(t1).not.toContain("playground")
+  })
+
+  it("stops the last task at the next `## ` section", () => {
+    const t2 = extractTaskSection(md, 2)
+    expect(t2).toContain("do beta")
+    expect(t2).not.toContain("playground")
+  })
+
+  it("returns null when there is no such task", () => {
+    expect(extractTaskSection(md, 5)).toBeNull()
+    expect(extractTaskSection("## 1. Intro\nno tasks here", 1)).toBeNull()
+  })
+
+  it("extracts each real task from the Scenario 1 guide", () => {
+    const dir = path.join(__dirname, "..", "..", "public", "scenarios")
+    const s1 = fs.readFileSync(
+      path.join(dir, "scenario_01_network_reconnaissance.md"),
+      "utf8"
+    )
+    for (let n = 1; n <= 5; n++) {
+      const section = extractTaskSection(s1, n)
+      expect(section).not.toBeNull()
+      expect(section).toMatch(new RegExp(`^### Task ${n}\\b`))
+    }
   })
 })
 

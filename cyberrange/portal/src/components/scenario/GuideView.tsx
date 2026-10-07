@@ -5,12 +5,16 @@ import { createPortal } from "react-dom";
 import { Pod } from "@/lib/api";
 import { injectPodIpsIntoGuide } from "@/lib/podIps";
 import { Scenario, scenarioDisplayTitle } from "@/hooks/useScenarios";
-import { loadGuideMarkdown, splitGuide } from "@/lib/guideSections";
+import { loadGuideMarkdown, splitGuide, extractTaskSection } from "@/lib/guideSections";
 import { MarkdownView, GUIDE_PROSE_CLASSES } from "@/components/scenario/MarkdownView";
 
 interface GuideViewProps {
   pod: Pod;
   scenario: Scenario;
+  /** 1-based number of the task to show. When set and a matching `### Task N`
+   *  section exists, the on-screen guide shows only that task's walkthrough;
+   *  the PDF export always keeps the full guide. */
+  taskNumber?: number;
 }
 
 type State =
@@ -20,7 +24,7 @@ type State =
 
 // The step-by-step walkthrough. The Big Picture, tools and scoring sections
 // are split out (splitGuide) into the welcome modal and the lab's pop-ups.
-function GuideViewComponent({ pod, scenario }: GuideViewProps) {
+function GuideViewComponent({ pod, scenario, taskNumber }: GuideViewProps) {
   const [state, setState] = useState<State>({ status: "loading" });
   // Printable copy lives in a portal attached directly to <body> - a sibling
   // of the whole app, not nested inside any of its fixed-height/overflow-auto
@@ -76,7 +80,12 @@ function GuideViewComponent({ pod, scenario }: GuideViewProps) {
   } else if (state.status === "error") {
     body = <p className="p-2 text-sm text-text-secondary">{state.message}</p>;
   } else {
-    body = <MarkdownView content={state.guide} />;
+    // Per-task walkthrough: show only the current task's section when one
+    // exists, so the student reads just the step they're on. Falls back to the
+    // full guide for scenarios without `### Task N` headings.
+    const section =
+      taskNumber != null ? extractTaskSection(state.full, taskNumber) : null;
+    body = <MarkdownView content={section ?? state.guide} />;
   }
 
   return (

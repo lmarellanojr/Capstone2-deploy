@@ -131,7 +131,8 @@ describe("TerminalView (LAB-LAYOUT-02)", () => {
     const cardHeader = screen.getByTestId("lab-terminal-card-header")
     expect(within(cardHeader).getByRole("heading", { name: "Kali Linux (CLI)" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /Open SIEM/i })).toBeInTheDocument()
-    expect(screen.getByText(/Target:\s*10\.0\.51\.10/)).toBeInTheDocument()
+    // The Kali tab is the student's own attack box, labelled "Host:" not "Target:".
+    expect(screen.getByText(/Host:\s*10\.0\.51\.10/)).toBeInTheDocument()
     unmount()
   })
 

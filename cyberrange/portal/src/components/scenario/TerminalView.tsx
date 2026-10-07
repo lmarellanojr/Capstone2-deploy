@@ -171,6 +171,9 @@ export function TerminalView({
         : ips?.dvwa
   const activeTargetLabel =
     activeTab === 'kali-cli' ? 'Kali' : activeTab === 'meta' ? 'Meta' : 'DVWA'
+  // The Kali box is the student's own attack host, not a target — reserve
+  // "Target:" for Meta/DVWA so the orientation ("Kali (you)") stays consistent.
+  const activeIpPrefix = activeTab === 'kali-cli' ? 'Host' : 'Target'
 
   const termTabClass = (tab: TermTab) =>
     `${TERM_TAB_BASE} ${activeTab === tab ? 'bg-muted text-text-main border-brand' : 'border-transparent text-text-muted hover:text-text-main hover:bg-muted/60'}`
@@ -228,7 +231,7 @@ export function TerminalView({
                 className="mt-0.5 text-xs sm:text-sm text-text-secondary hover:text-brand font-mono rounded focus-ring"
                 onClick={() => copyText(activeTargetIp, `${activeTargetLabel} IP`)}
               >
-                Target: {activeTargetIp}
+                {activeIpPrefix}: {activeTargetIp}
               </button>
             )}
           </div>

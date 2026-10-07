@@ -84,6 +84,33 @@ describe('ExercisePanel', () => {
     ).toBeTruthy()
   })
 
+  it('hides the commands hint on a flag task (Status already covers it)', () => {
+    render(
+      <ExercisePanel
+        pod={mockPod}
+        scenario={mockScenario}
+        currentTask={mockTask}
+        taskIndex={4}
+        totalTasks={5}
+        completed={false}
+        isFlag
+        lockedReview={false}
+        verifying={false}
+        milestonesLoading={false}
+        onVerify={jest.fn()}
+        onFlagPass={jest.fn()}
+        onRequestReview={jest.fn()}
+      />
+    )
+
+    // The flag Status area already says it's the one step you submit yourself.
+    expect(screen.getByText(/This is the one step you submit yourself\./i)).toBeTruthy()
+    // The copy-the-commands hint is suppressed for the flag task.
+    expect(
+      screen.queryByText(/Type the commands yourself; Copy is in the Guide below/i)
+    ).toBeNull()
+  })
+
   it('keeps GuideView mounted in DOM for PDF export portal even when guide is collapsed', () => {
     render(
       <ExercisePanel
@@ -107,7 +134,7 @@ describe('ExercisePanel', () => {
     expect(screen.getByTestId('guide-view-content')).toBeTruthy()
 
     // Toggle guide open
-    const toggleBtn = screen.getByRole('button', { name: /Walkthrough Guide/i })
+    const toggleBtn = screen.getByRole('button', { name: /Walkthrough for this task/i })
     expect(toggleBtn).toHaveAttribute('aria-expanded', 'false')
 
     fireEvent.click(toggleBtn)

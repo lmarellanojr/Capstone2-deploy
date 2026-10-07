@@ -119,6 +119,39 @@ export function splitGuide(markdown: string): SplitGuide {
   return { guide: kept.join("\n").trim(), tools, scoring }
 }
 
+/** The walkthrough for a single task: the `### Task N …` section (heading
+ *  included), up to the next `###` or `## ` heading outside a code fence.
+ *  Returns null when the guide has no such task section, so callers can fall
+ *  back to the full guide (scenarios that don't use `### Task N` headings). */
+export function extractTaskSection(markdown: string, taskNumber: number): string | null {
+  const heading = new RegExp(`^###\\s+Task\\s+${taskNumber}\\b`, "i")
+  const lines = markdown.split(/\r?\n/)
+
+  let start = -1
+  let inFence = false
+  for (let i = 0; i < lines.length; i++) {
+    if (FENCE.test(lines[i])) inFence = !inFence
+    if (!inFence && heading.test(lines[i])) {
+      start = i
+      break
+    }
+  }
+  if (start === -1) return null
+
+  let end = lines.length
+  inFence = false
+  for (let i = start + 1; i < lines.length; i++) {
+    if (FENCE.test(lines[i])) inFence = !inFence
+    if (!inFence && (H2.test(lines[i]) || H3.test(lines[i]))) {
+      end = i
+      break
+    }
+  }
+
+  const body = lines.slice(start, end).join("\n").trim()
+  return body.length > 0 ? body : null
+}
+
 // Guides are static files; one fetch per guide per page load is enough.
 const cache = new Map<string, Promise<string>>()
 

@@ -12,7 +12,7 @@ describe('ScenarioOutline', () => {
     { id: 3, name: 'Task Three', description: 'Desc 3', points: 100 },
   ]
 
-  it('disables Prev button on the first task and Next on the last task', () => {
+  it('disables Prev on the first task and Next when the next task is still locked', () => {
     const onSelect = jest.fn()
     const { rerender } = render(
       <ScenarioOutline
@@ -26,23 +26,57 @@ describe('ScenarioOutline', () => {
     const prevBtn = screen.getByRole('button', { name: /Previous task/i })
     const nextBtn = screen.getByRole('button', { name: /Next task/i })
 
+    // Task 1 not done yet → Task 2 is locked, so Next is disabled.
     expect(prevBtn).toBeDisabled()
-    expect(nextBtn).not.toBeDisabled()
-
+    expect(nextBtn).toBeDisabled()
     fireEvent.click(nextBtn)
+    expect(onSelect).not.toHaveBeenCalled()
+
+    // Completing Task 1 unlocks Task 2.
+    rerender(
+      <ScenarioOutline
+        tasks={mockTasks}
+        currentTaskId={1}
+        completedTaskIds={new Set([1])}
+        onSelectTask={onSelect}
+      />
+    )
+    const unlockedNext = screen.getByRole('button', { name: /Next task/i })
+    expect(unlockedNext).not.toBeDisabled()
+    fireEvent.click(unlockedNext)
     expect(onSelect).toHaveBeenCalledWith(2)
 
+    // On the last task, Next is disabled regardless.
     rerender(
       <ScenarioOutline
         tasks={mockTasks}
         currentTaskId={3}
+        completedTaskIds={new Set([1, 2])}
+        onSelectTask={onSelect}
+      />
+    )
+    expect(screen.getByRole('button', { name: /Previous task/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /Next task/i })).toBeDisabled()
+  })
+
+  it('locks tasks whose predecessor is not complete and blocks selecting them', () => {
+    const onSelect = jest.fn()
+    render(
+      <ScenarioOutline
+        tasks={mockTasks}
+        currentTaskId={1}
         completedTaskIds={new Set()}
         onSelectTask={onSelect}
       />
     )
 
-    expect(screen.getByRole('button', { name: /Previous task/i })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: /Next task/i })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: /Task 1/i }))
+
+    // Task 3 is locked (Tasks 1 and 2 not done) → clicking it does nothing.
+    const lockedOption = screen.getByRole('option', { name: /Task Three/i })
+    expect(lockedOption).toBeDisabled()
+    fireEvent.click(lockedOption)
+    expect(onSelect).not.toHaveBeenCalled()
   })
 
   it('opens dropdown, displays tasks with points, and closes on selection', () => {
