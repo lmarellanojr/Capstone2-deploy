@@ -58,6 +58,7 @@ interface TerminalViewProps {
   currentTaskCue?: string
   externalGuideExtra?: GuideExtra | null
   onCloseGuideExtra?: () => void
+  onOpenTools?: () => void
 }
 
 const TERM_TAB_BASE =
@@ -81,6 +82,7 @@ export function TerminalView({
   currentTaskCue,
   externalGuideExtra,
   onCloseGuideExtra,
+  onOpenTools,
 }: TerminalViewProps) {
   const router = useRouter()
   const { data: session } = useSession()
@@ -96,8 +98,11 @@ export function TerminalView({
   const [labUrls, setLabUrls] = useState<Awaited<ReturnType<typeof provisioning.getLabUrls>> | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
-  const activeGuideExtra = externalGuideExtra !== undefined ? externalGuideExtra : localGuideExtra
-  const handleCloseGuideExtra = onCloseGuideExtra || (() => setLocalGuideExtra(null))
+  const activeGuideExtra = externalGuideExtra ?? localGuideExtra
+  const handleCloseGuideExtra = () => {
+    setLocalGuideExtra(null)
+    onCloseGuideExtra?.()
+  }
 
   const ips = useMemo(() => {
     try {
@@ -231,7 +236,13 @@ export function TerminalView({
             {/* The tools this lab uses, as a pop-up instead of a panel tab. */}
             <button
               type="button"
-              onClick={() => setLocalGuideExtra('tools')}
+              onClick={() => {
+                if (onOpenTools) {
+                  onOpenTools()
+                } else {
+                  setLocalGuideExtra('tools')
+                }
+              }}
               aria-label="Tools for this lab"
               title="Tools for this lab"
               className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-sm font-semibold text-text-main hover:border-brand/40 hover:text-brand transition focus-ring"

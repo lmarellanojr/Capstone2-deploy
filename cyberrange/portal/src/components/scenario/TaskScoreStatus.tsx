@@ -11,6 +11,7 @@ interface TaskScoreStatusProps {
   isFlag: boolean
   scenarioId: string
   onFlagPass?: () => void
+  disabled?: boolean
 }
 
 export function TaskScoreStatus({
@@ -19,6 +20,7 @@ export function TaskScoreStatus({
   isFlag,
   scenarioId,
   onFlagPass = () => {},
+  disabled = false,
 }: TaskScoreStatusProps) {
   if (completed) {
     return (
@@ -28,6 +30,18 @@ export function TaskScoreStatus({
       >
         <CheckCircle2 size={16} className="text-emerald-600 shrink-0" aria-hidden="true" />
         <span>✓ Milestone scored · +{milestone.points} pts</span>
+      </div>
+    )
+  }
+
+  if (disabled) {
+    return (
+      <div
+        role="status"
+        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/60 text-text-muted text-xs"
+      >
+        <Info size={16} className="text-text-muted shrink-0" aria-hidden="true" />
+        <span>Lab session expired. Scoring is unavailable.</span>
       </div>
     )
   }

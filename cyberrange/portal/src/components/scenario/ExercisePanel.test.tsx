@@ -165,4 +165,35 @@ describe('ExercisePanel', () => {
       screen.getByRole('button', { name: /Ask an instructor to check this task/i })
     ).toBeTruthy()
   })
+
+  it('disables scoring actions and shows expired message when expired is true', () => {
+    const onVerify = jest.fn()
+    render(
+      <ExercisePanel
+        pod={mockPod}
+        scenario={mockScenario}
+        currentTask={mockTask}
+        taskIndex={0}
+        totalTasks={1}
+        completed={false}
+        isFlag={false}
+        lockedReview={false}
+        verifying={false}
+        milestonesLoading={false}
+        expired={true}
+        onVerify={onVerify}
+        onFlagPass={jest.fn()}
+        onRequestReview={jest.fn()}
+      />
+    )
+
+    const checkBtn = screen.getByRole('button', { name: /Manual Check/i })
+    expect(checkBtn).toBeDisabled()
+    fireEvent.click(checkBtn)
+    expect(onVerify).not.toHaveBeenCalled()
+
+    expect(screen.getByText(/Lab session expired\. Start a new session to verify your work\./i)).toBeTruthy()
+    expect(screen.getByText(/Lab session expired — instructor review unavailable\./i)).toBeTruthy()
+    expect(screen.getByText(/Lab session expired\. Scoring is unavailable\./i)).toBeTruthy()
+  })
 })

@@ -84,6 +84,19 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   const [bigPictureOpen, setBigPictureOpen] = useState(false)
   const autoOpened = useRef(false)
 
+  // Auto-advance active task when the selected task completes
+  const prevCompletedRef = useRef<Set<number>>(new Set())
+  useEffect(() => {
+    if (
+      selectedTaskId !== null &&
+      completed.has(selectedTaskId) &&
+      !prevCompletedRef.current.has(selectedTaskId)
+    ) {
+      setSelectedTaskId(null)
+    }
+    prevCompletedRef.current = new Set(completed)
+  }, [completed, selectedTaskId])
+
   // Current active task
   const currentTaskId = selectedTaskId ?? nextMilestoneId ?? scenario?.milestones[0]?.id ?? 1
   const currentTaskIndex = scenario
@@ -268,6 +281,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                       lockedReview={lockedReview.has(currentMilestone.id)}
                       verifying={verifying.has(currentMilestone.id)}
                       milestonesLoading={milestonesLoading}
+                      expired={phase === 'expired'}
                       onVerify={handleVerify}
                       onFlagPass={onFlagPassed}
                       onRequestReview={(milestoneId, mode) => setRequestFor({ milestoneId, mode })}
@@ -292,6 +306,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                     currentTaskCue={currentMilestone?.cue}
                     externalGuideExtra={guideExtra}
                     onCloseGuideExtra={() => setGuideExtra(null)}
+                    onOpenTools={() => setGuideExtra('tools')}
                   />
                 </div>
               </div>

@@ -83,4 +83,45 @@ describe('TaskScoreStatus', () => {
     expect(screen.getByText('✓ Milestone scored · +50 pts')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Submit/i })).toBeNull()
   })
+
+  it('renders expired status when disabled is true and task is incomplete', () => {
+    render(
+      <TaskScoreStatus
+        milestone={mockMilestone}
+        completed={false}
+        isFlag={false}
+        scenarioId="01"
+        disabled={true}
+      />
+    )
+    expect(screen.getByText('Lab session expired. Scoring is unavailable.')).toBeTruthy()
+    expect(screen.queryByText(/The range is watching your session/i)).toBeNull()
+  })
+
+  it('renders expired status when disabled is true and flag task is incomplete', () => {
+    render(
+      <TaskScoreStatus
+        milestone={mockFlagMilestone}
+        completed={false}
+        isFlag={true}
+        scenarioId="01"
+        disabled={true}
+      />
+    )
+    expect(screen.getByText('Lab session expired. Scoring is unavailable.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Submit/i })).toBeNull()
+  })
+
+  it('retains scored badge when disabled is true and task is completed', () => {
+    render(
+      <TaskScoreStatus
+        milestone={mockMilestone}
+        completed={true}
+        isFlag={false}
+        scenarioId="01"
+        disabled={true}
+      />
+    )
+    expect(screen.getByText('✓ Milestone scored · +50 pts')).toBeTruthy()
+  })
 })

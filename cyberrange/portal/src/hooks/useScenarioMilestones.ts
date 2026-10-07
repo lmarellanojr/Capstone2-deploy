@@ -105,7 +105,11 @@ export function useScenarioMilestones(
         })
 
         if (freshPassed.length > 0) {
-          setCompleted(new Set(newPassed))
+          setCompleted((prev) => {
+            const next = new Set(prev)
+            newPassed.forEach((id) => next.add(id))
+            return next
+          })
           freshPassed.forEach((mid) => {
             const pts = milestonesRef.current.find((m) => m.id === mid)?.points ?? 0
             successRef.current(`Task auto-detected! +${pts} pts`)

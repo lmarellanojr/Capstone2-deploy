@@ -134,4 +134,40 @@ describe('useScenarioMilestones', () => {
 
     expect(jest.getTimerCount()).toBe(0)
   })
+
+  it('preserves optimistic completion during polling tick when backend response lacks it', async () => {
+    ;(provisioning.getMilestones as jest.Mock).mockResolvedValueOnce({
+      milestones: [{ scenario_id: 1, milestone_id: 1, status: 'PASS' }],
+      manual_check_locked: [],
+    })
+
+    const { result } = renderHook(() => useScenarioMilestones(42, '01', scen1.milestones))
+    await act(async () => {})
+
+    expect(result.current.completed.has(1)).toBe(true)
+
+    // Optimistically mark milestone 5 as passed (e.g. flag submission)
+    act(() => {
+      result.current.onFlagPassed(5)
+    })
+    expect(result.current.completed.has(5)).toBe(true)
+
+    // Polling tick brings milestone 2 from backend, but backend does not yet include milestone 5
+    ;(provisioning.getMilestones as jest.Mock).mockResolvedValueOnce({
+      milestones: [
+        { scenario_id: 1, milestone_id: 1, status: 'PASS' },
+        { scenario_id: 1, milestone_id: 2, status: 'PASS' },
+      ],
+      manual_check_locked: [],
+    })
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000)
+    })
+
+    // Both newPassed (1, 2) and optimistic milestone 5 must remain in completed
+    expect(result.current.completed.has(1)).toBe(true)
+    expect(result.current.completed.has(2)).toBe(true)
+    expect(result.current.completed.has(5)).toBe(true)
+  })
 })

@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
 import React from 'react'
+import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { TerminalView } from './TerminalView'
 import { SCENARIOS } from '@/hooks/useScenarios'
@@ -25,7 +26,14 @@ jest.mock('@/components/terminal/terminalSessionManager', () => ({
   sessionKey: jest.fn(),
   focusSession: jest.fn(),
 }))
-jest.mock('@/components/scenario/GuideExtraModal', () => ({ GuideExtraModal: () => null }))
+jest.mock('@/components/scenario/GuideExtraModal', () => ({
+  GuideExtraModal: ({ which, onClose }: any) =>
+    which ? (
+      <div data-testid="guide-extra-modal" data-which={which}>
+        <button onClick={onClose}>Close Extra</button>
+      </div>
+    ) : null,
+}))
 jest.mock('@/components/scenario/SiemAlertViewer', () => ({ SiemAlertViewer: () => <div /> }))
 jest.mock('@/components/ui', () => ({
   Button: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => <button {...props}>{children}</button>,
@@ -85,5 +93,26 @@ describe('TerminalView presentation component', () => {
     // Click Kali connection tab to trigger explainer modal
     fireEvent.click(screen.getByRole('button', { name: 'Kali Linux (CLI)' }))
     expect(screen.getAllByRole('heading', { name: 'Kali Linux (CLI)' }).length).toBe(2)
+  })
+
+  it('invokes onOpenTools callback when Tools button is clicked', () => {
+    const onOpenTools = jest.fn()
+    render(<TerminalView pod={pod(1)} scenario={scen1} onEnd={jest.fn()} onOpenTools={onOpenTools} />)
+    fireEvent.click(screen.getByRole('button', { name: /Tools/i }))
+    expect(onOpenTools).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens Tools modal locally when externalGuideExtra is null', () => {
+    render(
+      <TerminalView
+        pod={pod(1)}
+        scenario={scen1}
+        onEnd={jest.fn()}
+        externalGuideExtra={null}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Tools/i }))
+    const modal = screen.getByTestId('guide-extra-modal')
+    expect(modal).toHaveAttribute('data-which', 'tools')
   })
 })

@@ -19,6 +19,7 @@ interface ExercisePanelProps {
   lockedReview: boolean
   verifying: boolean
   milestonesLoading: boolean
+  expired?: boolean
   onVerify: (milestoneId: number) => Promise<void>
   onFlagPass: (milestoneId: number) => void
   onRequestReview: (milestoneId: number, mode: 'new' | 'retry') => void
@@ -38,6 +39,7 @@ export function ExercisePanel({
   lockedReview,
   verifying,
   milestonesLoading,
+  expired = false,
   onVerify,
   onFlagPass,
   onRequestReview,
@@ -51,6 +53,13 @@ export function ExercisePanel({
   const goalText = currentTask.goal || currentTask.description
 
   const renderInstructorReview = () => {
+    if (expired) {
+      return (
+        <p className="text-xs text-text-muted">
+          Lab session expired — instructor review unavailable.
+        </p>
+      )
+    }
     if (hasLatestReview && (latestReviewStatus === 'PENDING' || !latestReviewStatus)) {
       return (
         <p className="text-xs text-text-muted">
@@ -142,6 +151,7 @@ export function ExercisePanel({
             isFlag={isFlag}
             scenarioId={scenario.id}
             onFlagPass={() => onFlagPass(currentTask.id)}
+            disabled={expired}
           />
         </div>
 
@@ -176,15 +186,23 @@ export function ExercisePanel({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => onVerify(currentTask.id)}
-                    disabled={verifying || milestonesLoading}
+                    onClick={() => {
+                      if (!expired) onVerify(currentTask.id)
+                    }}
+                    disabled={expired || verifying || milestonesLoading}
                     className="w-full text-xs"
                   >
                     {verifying ? 'Checking…' : 'Manual Check'}
                   </Button>
-                  <p className="text-[11px] text-text-muted leading-relaxed">
-                    You get one Manual Check. If it can&apos;t verify your work, the task moves to instructor review.
-                  </p>
+                  {expired ? (
+                    <p className="text-[11px] text-danger leading-relaxed">
+                      Lab session expired. Start a new session to verify your work.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-text-muted leading-relaxed">
+                      You get one Manual Check. If it can&apos;t verify your work, the task moves to instructor review.
+                    </p>
+                  )}
                   <div>{renderInstructorReview()}</div>
                 </div>
               </details>
