@@ -7,6 +7,8 @@ export interface Milestone {
   name: string
   description: string
   points: number
+  goal?: string
+  cue?: string
 }
 
 export interface Scenario {
@@ -46,11 +48,42 @@ export const SCENARIOS: Scenario[] = [
     difficulty: 1,
     guideFile: 'scenario_01_network_reconnaissance.md',
     milestones: [
-      { id: 1, name: 'Host Discovery', description: 'Run an Nmap sweep of the target subnet to identify live hosts.', points: 50 },
-      { id: 2, name: 'Port Enumeration', description: 'Identify open TCP ports on the meta target (expect 21, 22, 80, 8180).', points: 50 },
-      { id: 3, name: 'Service Version Detection', description: 'Use Nmap service detection (-sV) to enumerate version info on all discovered hosts.', points: 50 },
-      { id: 4, name: 'Tomcat Manager Exploitation', description: 'Use Metasploit to exploit the Apache Tomcat Manager on port 8180 and obtain a shell on the meta target as the tomcat user.', points: 75 },
-      { id: 5, name: 'Capture the Flag (whoami)', description: 'In the Kali terminal, run whoami and submit the username it prints as the flag.', points: 50 },
+      {
+        id: 1,
+        name: 'Host Discovery',
+        goal: 'Run a host-discovery sweep across the subnet',
+        description: 'Run an Nmap sweep of the target subnet to identify live hosts.',
+        points: 50,
+      },
+      {
+        id: 2,
+        name: 'Port Enumeration',
+        goal: 'Enumerate open TCP ports on the meta target',
+        description: 'Identify open TCP ports on the meta target (expect 21, 22, 80, 8180).',
+        points: 50,
+      },
+      {
+        id: 3,
+        name: 'Service Version Detection',
+        goal: 'Detect service versions on open ports',
+        description: 'Use Nmap service detection (-sV) to enumerate version info on all discovered hosts.',
+        points: 50,
+      },
+      {
+        id: 4,
+        name: 'Tomcat Manager Exploitation',
+        goal: 'Exploit Tomcat Manager and land a shell on meta',
+        cue: "After `shell`, the `meterpreter >` prompt is replaced by a plain `$` — that's expected.",
+        description: 'Use Metasploit to exploit the Apache Tomcat Manager on port 8180 and obtain a shell on the meta target as the tomcat user.',
+        points: 75,
+      },
+      {
+        id: 5,
+        name: 'Capture the Flag (whoami)',
+        goal: 'Run whoami in Kali and submit your username as the flag',
+        description: 'In the Kali terminal, run whoami and submit the username it prints as the flag.',
+        points: 50,
+      },
     ],
   },
   {

@@ -24,7 +24,7 @@ Host | IP | What it is / how you reach it
 **Meta** | `$TARGET_META` | The main target (a deliberately vulnerable Linux server). Runs ports 21, 22, 80, and 8180 (Tomcat).  
 **DVWA** | `$TARGET_DVWA` | A second target, only used for the optional stretch scans here.  
   
-Shortcut Your Kali shell already has the target IPs saved as environment variables: `$TARGET_META` and `$TARGET_DVWA`. You can type `echo $TARGET_META` to confirm, and use the variable in place of the IP in any command. 
+> **Shortcut:** Your Kali shell already has the target IPs saved as environment variables: `$TARGET_META` and `$TARGET_DVWA`. You can type `echo $TARGET_META` to confirm, and use the variable in place of the IP in any command. 
 
 ## 1. The two tools you'll use
 
@@ -68,9 +68,9 @@ Part | What it means
 
 **Then:** scoring runs automatically - _Host Discovery_ ticks within a few seconds.
 
-What you can do with this You now have a live-host map of your subnet, that's your **scope**. From here you stop scanning the whole `/24` and focus on the box worth attacking: **Meta ($TARGET_META)**. Everything downstream targets that host. 
+> **What you can do with this:** You now have a live-host map of your subnet, that's your **scope**. From here you stop scanning the whole `/24` and focus on the box worth attacking: **Meta ($TARGET_META)**. Everything downstream targets that host. 
 
-If something's off Subnet variable empty? Run `echo $TARGET_SUBNET` or read the IP strip in the lab header. No replies at all? Make sure you are typing in the **Kali Linux (CLI)** tab. 
+> **If something's off:** Subnet variable empty? Run `echo $TARGET_SUBNET` or read the IP strip in the lab header. No replies at all? Make sure you are typing in the **Kali Linux (CLI)** tab. 
 
 
 ### Task 2: find the open doors on Meta
@@ -94,13 +94,13 @@ Part | What it means
 `-p 21,22,80,8180` | scan **these specific ports**, includes Tomcat on **8180**, which this task's Done-when requires  
 `-F` | **"fast scan"**, only the 100 most common ports; convenient, but **8180 is not in that set**  
   
-Please don't run `-p-` first A full `-p-` scan checks all 65,535 ports and is slow on a shared lab host. Prefer `-p 21,22,80,8180`; only do a full scan if you genuinely need it. 
+> **Note:** A full `-p-` scan checks all 65,535 ports and is slow on a shared host; prefer `-p 21,22,80,8180`.
 
 **Done when:** you can see Meta's open ports, **including 8180**.
 
 **Then:** scoring runs automatically - _Port Enumeration_ ticks within a few seconds.
 
-What you can do with this Each open port is a running service you might attack. Port **8180 (Tomcat)** is the promising door here. Next you'll fingerprint its exact version to find a matching exploit, and you can ignore the closed ports entirely. 
+> **What you can do with this:** Each open port is a running service you might attack. Port **8180 (Tomcat)** is the promising door here. Next you'll fingerprint its exact version to find a matching exploit, and you can ignore the closed ports entirely. 
 
 
 ### Task 3: identify the software & versions
@@ -117,13 +117,13 @@ Part | What it means
 `-sV` | **"service/version detection"**, probe each open port and report the software name and version.  
 `-p 21,22,80,8180` | limit the probe to the ports you already found (faster than re-scanning everything).  
   
-Scoring detail The checker specifically looks for an `nmap` command containing `-sV` in your history, so make sure `-sV` is in the line you actually run. 
+> **Scoring detail:** The checker specifically looks for an `nmap` command containing `-sV` in your history, so make sure `-sV` is in the line you actually run. 
 
 **Done when:** the output shows versions, e.g. OpenSSH on 22, Apache on 80, and **Tomcat on 8180**.
 
 **Then:** scoring runs automatically - _Service Version Detection_ ticks within a few seconds.
 
-What you can do with this Version strings are gold. Search them in **Exploit-DB** or Metasploit (`search tomcat_mgr`) to find a known exploit for that exact software, this is how recon turns into the working attack you run in Task 4. 
+> **What you can do with this:** Version strings are gold. Search them in **Exploit-DB** or Metasploit (`search tomcat_mgr`) to find a known exploit for that exact software, this is how recon turns into the working attack you run in Task 4. 
 
 
 ### Task 4: break into Tomcat and get a shell
