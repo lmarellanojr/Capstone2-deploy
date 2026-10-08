@@ -132,7 +132,7 @@ def _scoring_deps() -> dict:
 
 def serialize_pod(row) -> dict:
     body = dict(row)
-    body.update(ttl_payload(body.get("created_at")))
+    body.update(ttl_payload(body.get("created_at"), body.get("scenario_id")))
     return body
 
 

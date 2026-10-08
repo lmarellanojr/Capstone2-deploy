@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, Check } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Check, Lock } from 'lucide-react'
 import { Milestone } from '@/hooks/useScenarios'
 
 interface ScenarioOutlineProps {
@@ -28,6 +28,18 @@ export function ScenarioOutline({
   const currentTask = tasks[currentIndex] ?? tasks[0]
   const isFirst = currentIndex <= 0
   const isLast = currentIndex >= tasks.length - 1
+  // A scored task unlocks only once every earlier scored task is complete.
+  // Unscored prep tasks are always reachable and never participate in gating.
+  // The first incomplete scored task is the furthest reachable; completed
+  // tasks stay open for review.
+  const firstIncompleteIndex = tasks.findIndex((t) => !t.unscored && !completedTaskIds.has(t.id))
+  const maxUnlockedIndex = firstIncompleteIndex === -1 ? tasks.length - 1 : firstIncompleteIndex
+  const isUnlocked = useCallback(
+    (idx: number) =>
+      tasks[idx]?.unscored === true || idx <= maxUnlockedIndex || completedTaskIds.has(tasks[idx]?.id),
+    [maxUnlockedIndex, completedTaskIds, tasks]
+  )
+  const nextLocked = currentIndex < tasks.length - 1 && !isUnlocked(currentIndex + 1)
   const handlePrev = useCallback(() => {
     if (!isFirst && currentIndex > 0) {
       onSelectTask(tasks[currentIndex - 1].id)
@@ -35,10 +47,10 @@ export function ScenarioOutline({
   }, [isFirst, currentIndex, tasks, onSelectTask])
 
   const handleNext = useCallback(() => {
-    if (!isLast && currentIndex < tasks.length - 1) {
+    if (!isLast && currentIndex < tasks.length - 1 && isUnlocked(currentIndex + 1)) {
       onSelectTask(tasks[currentIndex + 1].id)
     }
-  }, [isLast, currentIndex, tasks, onSelectTask])
+  }, [isLast, currentIndex, tasks, onSelectTask, isUnlocked])
 
   useEffect(() => {
     if (!isOpen) return
@@ -103,9 +115,9 @@ export function ScenarioOutline({
       <button
         type="button"
         onClick={handleNext}
-        disabled={isLast}
+        disabled={isLast || nextLocked}
         aria-label="Next task"
-        title="Next task"
+        title={nextLocked ? 'Finish this task to unlock the next one' : 'Next task'}
         className="p-1.5 rounded-lg border border-border text-text-muted hover:text-text-main hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition focus-ring"
       >
         <ChevronRight size={16} aria-hidden="true" />
@@ -120,22 +132,29 @@ export function ScenarioOutline({
           {tasks.map((task, idx) => {
             const isScored = !task.unscored && completedTaskIds.has(task.id)
             const isSelected = task.id === currentTaskId
+            const locked = !isUnlocked(idx)
 
             return (
               <button
                 key={task.id}
                 role="option"
                 aria-selected={isSelected}
+                aria-disabled={locked}
+                disabled={locked}
                 type="button"
+                title={locked ? 'Finish the previous task to unlock this one' : undefined}
                 onClick={() => {
+                  if (locked) return
                   onSelectTask(task.id)
                   setIsOpen(false)
                   triggerRef.current?.focus()
                 }}
                 className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-left text-xs transition ${
-                  isSelected
-                    ? 'bg-muted text-text-main font-semibold'
-                    : 'text-text-secondary hover:bg-muted/60 hover:text-text-main'
+                  locked
+                    ? 'text-text-faint cursor-not-allowed'
+                    : isSelected
+                      ? 'bg-muted text-text-main font-semibold'
+                      : 'text-text-secondary hover:bg-muted/60 hover:text-text-main'
                 }`}
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -143,12 +162,20 @@ export function ScenarioOutline({
                     className={`flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-bold ${
                       isScored
                         ? 'bg-emerald-100 text-emerald-800'
-                        : isSelected
-                          ? 'bg-brand text-white'
-                          : 'bg-muted text-text-muted'
+                        : locked
+                          ? 'bg-muted text-text-faint'
+                          : isSelected
+                            ? 'bg-brand text-white'
+                            : 'bg-muted text-text-muted'
                     }`}
                   >
-                    {isScored ? <Check size={12} aria-hidden="true" /> : idx + startNumber}
+                    {isScored ? (
+                      <Check size={12} aria-hidden="true" />
+                    ) : locked ? (
+                      <Lock size={11} aria-hidden="true" />
+                    ) : (
+                      idx + startNumber
+                    )}
                   </span>
                   <span className="truncate">{task.name}</span>
                 </div>

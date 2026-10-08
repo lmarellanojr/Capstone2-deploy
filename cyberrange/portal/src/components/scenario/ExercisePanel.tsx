@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { ChevronDown, ChevronUp, FileDown, Info, Keyboard, ShieldAlert } from 'lucide-react'
 import { Pod } from '@/lib/api'
-import { Milestone, Scenario, scenarioLabSurface } from '@/hooks/useScenarios'
+import { Milestone, Scenario, getLabSurface } from '@/hooks/useScenarios'
 import { GuideView } from '@/components/scenario/GuideView'
 import { TaskScoreStatus } from '@/components/scenario/TaskScoreStatus'
 import { Button } from '@/components/ui/Button'
@@ -48,7 +48,7 @@ export function ExercisePanel({
   onOpenScoringInfo,
 }: ExercisePanelProps) {
   const [guideOpen, setGuideOpen] = useState(false)
-  const isSiem = scenarioLabSurface(scenario) === 'siem'
+  const isSiem = getLabSurface(scenario) === 'siem'
   const taskNumber = currentTask.guideTaskNumber ?? taskIndex + 1
 
   // Fallback to description if concise goal string is not defined
@@ -174,6 +174,7 @@ export function ExercisePanel({
             isFlag={!isSiem && isFlag}
             metaFileScoring={isSiem}
             scenarioId={scenario.id}
+            surface={getLabSurface(scenario)}
             onFlagPass={() => onFlagPass(currentTask.id)}
             disabled={expired}
           />
@@ -238,7 +239,11 @@ export function ExercisePanel({
         {(!isFlag || isSiem) && (
           <div className="flex items-center gap-2 p-2.5 rounded-lg bg-chip/60 border border-border text-xs text-text-muted">
             <Keyboard size={15} className="text-text-faint shrink-0" aria-hidden="true" />
-            <span>Type the commands yourself; Copy is in the Guide below if you get stuck.</span>
+            <span>
+              {getLabSurface(scenario) === 'dvwa'
+                ? 'Type the payloads into DVWA; exact payloads are in the Guide below.'
+                : 'Type the commands yourself; Copy is in the Guide below if you get stuck.'}
+            </span>
           </div>
         )}
 
@@ -251,7 +256,7 @@ export function ExercisePanel({
               aria-expanded={guideOpen}
               className="flex items-center gap-2 text-xs font-bold text-text-main hover:text-brand transition focus-ring"
             >
-              <span>{isSiem ? 'Guide for this task' : 'Walkthrough Guide'}</span>
+              <span>{isSiem ? 'Guide for this task' : 'Walkthrough for this task'}</span>
               {guideOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
             </button>
             <button
@@ -268,7 +273,12 @@ export function ExercisePanel({
 
           {/* CRITICAL: Keep GuideView mounted so #guide-print-root portal stays active! */}
           <div className={guideOpen ? 'p-3 block max-h-96 overflow-y-auto' : 'hidden'}>
-            <GuideView pod={pod} scenario={scenario} />
+            <GuideView
+              pod={pod}
+              scenario={scenario}
+              taskNumber={currentTask.guideTaskNumber ?? taskIndex + 1}
+              taskNumberPinned={currentTask.guideTaskNumber != null}
+            />
           </div>
         </div>
       </div>

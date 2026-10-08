@@ -1,6 +1,7 @@
 """Cyber Range Pod Provisioning API — thin entrypoint."""
 import asyncio
 import logging
+import os
 import sys
 
 import urllib3
@@ -16,7 +17,7 @@ from capacity import (
     count_active_pods,
     validate_capacity_config,
 )
-from config import API_BIND_HOST, API_BIND_PORT, MAX_PODS, POD_TTL_HOURS, REAP_INTERVAL_SECONDS, SCORE_POLL_INTERVAL_SECONDS, PROFILE_NAME
+from config import API_BIND_HOST, API_BIND_PORT, MAX_PODS, REAP_INTERVAL_SECONDS, SCENARIO_TTL_MINUTES, SCORE_POLL_INTERVAL_SECONDS, TTL_CHECK_INTERVAL_SECONDS, PROFILE_NAME
 from db import get_db_connection, init_db
 from logging_config import configure_logging
 from pods_router import internal_router as browser_score_router
@@ -96,9 +97,14 @@ async def start_reaper():
         "Pod TTL reaper started",
         extra={
             "event": "api_startup",
-            "detail": f"TTL={POD_TTL_HOURS}h interval={REAP_INTERVAL_SECONDS}s",
+            "detail": f"TTL={SCENARIO_TTL_MINUTES}min check={TTL_CHECK_INTERVAL_SECONDS}s sweep={REAP_INTERVAL_SECONDS}s",
         },
     )
+    if os.getenv("POD_TTL_HOURS"):
+        logger.warning(
+            "POD_TTL_HOURS is no longer read; lab limits are per scenario in "
+            "config.SCENARIO_TTL_MINUTES (DEFAULT_TTL_MINUTES only covers off-catalog scenarios)"
+        )
     if scoring_state.SCORING_ENABLED:
         logger.info("Phase 7: Agentless scoring enabled")
     else:

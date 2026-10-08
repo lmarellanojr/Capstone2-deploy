@@ -38,13 +38,13 @@ SELECT first_name, last_name FROM users WHERE user_id = 'YOUR INPUT';
   * Type `1'` → it becomes `… = '1'';` → one extra quote nothing closes → **syntax error**. That error proves your text reached the query.
   * Type `1' OR '1'='1` → it becomes `… = '1' OR '1'='1';` → always true → returns **every user**.
 
-The whole trick is the single quote Only a single quote can break this query, because the query is wrapped in single quotes. A double quote `"` does nothing here. 
+> **Note:** Only a single quote can break this query, because the query is wrapped in single quotes. A double quote `"` does nothing here. 
 
 ## 2. How scoring works (read this)
 
 The portal sits between you and DVWA. Every time you submit an attack, your request and DVWA's reply pass through the portal, and the portal looks at that reply for proof the attack worked. If it sees the proof, it records the milestone automatically.
 
-So the result has to actually appear The portal scores what it _sees in DVWA's reply_. Make sure your payload really returns the rows / error / reflection described below, if nothing came back, nothing scores. If a milestone doesn't tick, re-check that **Security = Low** and submit again. 
+> **Important:** The portal scores what it sees in DVWA's reply — make sure your payload really returns the rows / error / reflection described below, if nothing came back, nothing scores. If a milestone doesn't tick, re-check that **Security = Low** and submit again. 
 
 ## 3. Set up your lab
 
@@ -80,7 +80,7 @@ This flips the query's logic to always-true, so every user row comes back - proo
 
 **Done when:** several user rows appear in DVWA and **Injection Point** ticks in the portal's Tasks panel.
 
-What you can do with this You've proven the field trusts your input, that's the foothold everything else builds on. The same hole now lets you read the _whole_ database, not just user 1. The names you see (admin, Gordon Brown, …) are the app's user records; in the next tasks you'll pull the sensitive columns hiding behind them. 
+> **What you can do with this:** You've proven the field trusts your input, that's the foothold everything else builds on. The same hole now lets you read the _whole_ database, not just user 1. The names you see (admin, Gordon Brown, …) are the app's user records; in the next tasks you'll pull the sensitive columns hiding behind them. 
 
 
 ### Task 2: read the database itself
@@ -94,13 +94,13 @@ _**`1' UNION SELECT null, database() -- -`** - closes the original quote, then U
 1' UNION SELECT null, database() -- -
 ```
 
-About `-- -` That's dash‑dash‑**space** ‑dash. It comments out DVWA's leftover `'` so the query stays valid. This module shows **two** columns, so every `UNION SELECT` must return exactly two values. Using `null, database()` puts the name **`dvwa` alone in the Surname cell**, which matches what beginners should look for (and what browser scoring checks).
+> **Note:** About `-- -`: That's dash‑dash‑**space** ‑dash. It comments out DVWA's leftover `'` so the query stays valid. This module shows **two** columns, so every `UNION SELECT` must return exactly two values. Using `null, database()` puts the name **`dvwa` alone in the Surname cell**, which matches what beginners should look for (and what browser scoring checks).
 
 Optional (playground): try `1' UNION SELECT user(), database() -- -` to also print the DB user in the First name cell, useful for learning, not required for this milestone.
 
 **Done when:** a row shows the database name `dvwa` (Surname) and **Database Extraction** ticks.
 
-What you can do with this Knowing the database name (`dvwa`) lets you aim at the right tables next. Use `information_schema` (see the playground) to list every table and column, the map you need before stealing the good stuff in Task 3. 
+> **What you can do with this:** Knowing the database name (`dvwa`) lets you aim at the right tables next. Use `information_schema` (see the playground) to list every table and column, the map you need before stealing the good stuff in Task 3. 
 
 
 ### Task 3: steal the password hashes
@@ -114,11 +114,11 @@ _**`1' UNION SELECT user, password FROM users -- -`** - UNION-reads the `users` 
 1' UNION SELECT user, password FROM users -- -
 ```
 
-What you'll see Rows like `admin` → `5f4dcc3b5aa765d61d8327deb882cf99` (that hash is the word “password”). Drop a hash into a cracker like CrackStation to confirm. 
+> **Note:** Rows like `admin` → `5f4dcc3b5aa765d61d8327deb882cf99` (that hash is the word “password”). Drop a hash into a cracker like CrackStation to confirm. 
 
 **Done when:** the results show user + 32‑character hash rows and **Admin Hash** ticks.
 
-What you can do with this Those are MD5 password hashes, **crack them offline** with a wordlist tool (hashcat, John the Ripper) or a lookup site like CrackStation. The admin hash is just `MD5('password')`, so it falls instantly. Once cracked you could log in as `admin`; in the real world you'd also try that password on the target's other services (credential reuse). 
+> **What you can do with this:** Those are MD5 password hashes, **crack them offline** with a wordlist tool (hashcat, John the Ripper) or a lookup site like CrackStation. The admin hash is just `MD5('password')`, so it falls instantly. Once cracked you could log in as `admin`; in the real world you'd also try that password on the target's other services (credential reuse). 
 
 
 ### Task 4: make the site run your script
@@ -134,7 +134,7 @@ What you can do with this Those are MD5 password hashes, **crack them offline** 
 
 **Done when:** an `alert` pop-up appears (your script ran) and **Reflected XSS** ticks.
 
-What you can do with this You can run _any_ JavaScript in whoever opens the page. In the real world an attacker wraps this in a link and sends it to a victim, opening it could steal their session cookie, log keystrokes, redirect them to a fake login, or act as them on the site. (Here the sandbox blocks cookie theft, try `<script>alert(document.cookie)</script>` in the playground and watch it come up empty.) 
+> **What you can do with this:** You can run _any_ JavaScript in whoever opens the page. In the real world an attacker wraps this in a link and sends it to a victim, opening it could steal their session cookie, log keystrokes, redirect them to a fake login, or act as them on the site. (Here the sandbox blocks cookie theft, try `<script>alert(document.cookie)</script>` in the playground and watch it come up empty.) 
 
 ### Task 5: capture the flag
 
@@ -201,7 +201,7 @@ Payload | What it teaches / what you'll see
 `<b>bold</b>` or `<marquee>hi</marquee>` | Harmless HTML injection, proves your markup is rendered, not escaped, before you reach for scripts.  
 `<script>alert(document.cookie)</script>` | **Try it, and notice it fails / is empty.** The sandbox gives this page no real origin, so it _can't read the portal's cookies_. That's the isolation working: even a real XSS here can't hijack your session.  
   
-Reflected vs stored XSS This is **reflected** XSS: the script only runs for whoever opens your crafted link, and isn't saved. **Stored** XSS (a different module) saves the payload on the server so it fires for every visitor, more dangerous. Both are fixed the same way: escape/encode output and validate input. 
+> **Note:** This is **reflected** XSS: the script only runs for whoever opens your crafted link, and isn't saved. **Stored** XSS (a different module) saves the payload on the server so it fires for every visitor, more dangerous. Both are fixed the same way: escape/encode output and validate input. 
 
 ---
 ## 6. Common problems & fixes

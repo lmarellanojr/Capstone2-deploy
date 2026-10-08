@@ -23,14 +23,16 @@ export function TerminalSideCue({ taskId, cueText, variant = 'info' }: TerminalS
     setDismissedTaskIds((prev) => new Set(prev).add(taskId))
   }
 
+  const isWarning = variant === 'warning' || cueText.startsWith('⚠')
+
   return (
     <div
       className="absolute bottom-4 right-3 left-3 sm:left-auto z-[5] sm:max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
       role="complementary"
-      aria-label="Terminal tip"
+      aria-label="Lab tip"
     >
-      <div className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-overlay text-xs ${variant === 'warning' ? 'alert-warning' : 'bg-secondary border-border text-text-main'}`}>
-        {variant === 'warning' ? <AlertTriangle size={16} className="text-warning shrink-0 mt-0.5" aria-hidden="true" /> : <Info size={16} className="text-brand shrink-0 mt-0.5" aria-hidden="true" />}
+      <div className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-overlay text-xs ${isWarning ? 'alert-warning' : 'bg-secondary border-border text-text-main'}`}>
+        {isWarning ? <AlertTriangle size={16} className="text-warning shrink-0 mt-0.5" aria-hidden="true" /> : <Info size={16} className="text-brand shrink-0 mt-0.5" aria-hidden="true" />}
         <p className="flex-1 leading-relaxed text-text-main select-text">
           {cueText}
         </p>

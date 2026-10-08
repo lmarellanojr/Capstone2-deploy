@@ -21,7 +21,6 @@ M4 pods_router.py hook (include router; do not wholesale-replace pods_router):
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any, Optional
 
@@ -30,11 +29,10 @@ from fastapi.responses import JSONResponse
 
 from alerts_reader import ManagerUnavailable, list_siem_alerts
 import lab_history
-from ttl import created_at_utc
+from ttl import created_at_utc, siem_window_minutes
 
 alerts_router = APIRouter()
 
-POD_TTL_HOURS = int(os.getenv("POD_TTL_HOURS", "8"))
 # Newest-window flood after a full LXD pool. Still returned if rule_id=1007.
 DISK_FULL_RULE_ID = "1007"
 
@@ -62,13 +60,17 @@ def require_owner(pod_row: Any, claims: dict) -> None:
         raise HTTPException(status_code=404, detail="Pod not found")
 
 
-def _pod_created_at(pod: Any):
-    """pods.created_at as UTC datetime; None if the row lacks it (older stubs)."""
+def _pod_field(pod: Any, key: str):
+    """Row or dict field; None if the row lacks it (older stubs)."""
     try:
-        raw = pod["created_at"]
+        return pod[key]
     except (KeyError, IndexError):
         return None
-    return created_at_utc(raw)
+
+
+def _pod_created_at(pod: Any):
+    """pods.created_at as UTC datetime; None if the row lacks it (older stubs)."""
+    return created_at_utc(_pod_field(pod, "created_at"))
 
 
 def get_db_connection():
@@ -105,7 +107,7 @@ def _alerts_for_pod(pod: Any, pod_id: int, limit, since_minutes, rule_id):
         )
 
     limit = max(1, min(int(limit), 200))
-    max_win = max(1, POD_TTL_HOURS * 60)
+    max_win = siem_window_minutes(_pod_field(pod, "scenario_id"))
     since_minutes = max(1, min(int(since_minutes), max_win))
     if rule_id and not re.fullmatch(r"[A-Za-z0-9]+", rule_id):
         raise HTTPException(status_code=422, detail="invalid rule_id")

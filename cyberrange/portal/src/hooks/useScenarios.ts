@@ -11,6 +11,8 @@ export interface Milestone {
   cue?: string
   cueVariant?: 'info' | 'warning'
   instructions?: string[]
+  // Pins a milestone to a specific guide section when guide numbering differs
+  // from its position among the scored milestones.
   guideTaskNumber?: number
   unscored?: boolean
 }
@@ -38,9 +40,13 @@ export interface Scenario {
   brief?: [string, string]
 }
 
-/** Legacy callers can omit metadata; the catalog declares every surface. */
-export function scenarioLabSurface(scenario: Pick<Scenario, 'id' | 'labSurface'>) {
-  return scenario.labSurface ?? (scenario.id === '06' ? 'dvwa' : scenario.id === '09' ? 'siem' : 'terminal')
+// Single helper to resolve the lab surface. Legacy callers may omit metadata.
+export function getLabSurface(scenario?: Pick<Scenario, 'id' | 'labSurface'> | null): 'terminal' | 'dvwa' | 'siem' {
+  if (!scenario) return 'terminal'
+  if (scenario.labSurface) return scenario.labSurface
+  if (scenario.id === '06') return 'dvwa'
+  if (scenario.id === '09') return 'siem'
+  return 'terminal'
 }
 
 // GUIDE-UX-TRIAL / SCEN-UX #116: "Scenario N -- Name" for any screen that
@@ -112,11 +118,44 @@ export const SCENARIOS: Scenario[] = [
     difficulty: 2,
     guideFile: 'scenario_02_web_application_attack_sql_injection.md',
     milestones: [
-      { id: 1, name: 'Injection Point', description: 'Identify the SQL injection vulnerability in the DVWA application (set security to Low).', points: 50 },
-      { id: 2, name: 'Database Extraction', description: 'Extract the users table from the backend database using the injection vulnerability.', points: 75 },
-      { id: 3, name: 'Admin Hash', description: 'Retrieve the admin account password hash from the database.', points: 100 },
-      { id: 4, name: 'Reflected XSS', description: 'Exploit the Reflected Cross-Site Scripting (XSS) vulnerability in DVWA (set security to Low).', points: 75 },
-      { id: 5, name: 'Capture the Flag', description: 'Submit the Reflected XSS payload in the "What\'s your name?" box (Task 4); a short code (e.g. brave-otter-7421) appears on that result page. Paste it below.', points: 50 },
+      {
+        id: 1,
+        name: 'Injection Point',
+        goal: 'Make the query misbehave and return all user rows',
+        cue: '⚠ Set DVWA Security to Low first — higher levels block these payloads and nothing will score.',
+        description: 'Identify the SQL injection vulnerability in the DVWA application (set security to Low).',
+        points: 50,
+      },
+      {
+        id: 2,
+        name: 'Database Extraction',
+        goal: 'Use a UNION SELECT to make DVWA print the database\'s own name',
+        description: 'Extract the users table from the backend database using the injection vulnerability.',
+        points: 75,
+      },
+      {
+        id: 3,
+        name: 'Admin Hash',
+        goal: 'Dump the users table so the admin\'s password hash appears',
+        description: 'Retrieve the admin account password hash from the database.',
+        points: 100,
+      },
+      {
+        id: 4,
+        name: 'Reflected XSS',
+        goal: 'Get DVWA to reflect and run a <script>',
+        cue: 'The alert pop-up is your proof the script ran — that\'s exactly what the range scores.',
+        description: 'Exploit the Reflected Cross-Site Scripting (XSS) vulnerability in DVWA (set security to Low).',
+        points: 75,
+      },
+      {
+        id: 5,
+        name: 'Capture the Flag',
+        goal: 'Read the secret flag revealed by your Reflected XSS and submit it',
+        cue: 'After Submit, scroll down the XSS page — your capture-the-flag code is on its own line.',
+        description: 'Submit the Reflected XSS payload in the "What\'s your name?" box (Task 4); a short code (e.g. brave-otter-7421) appears on that result page. Paste it below.',
+        points: 50,
+      },
     ],
   },
   {

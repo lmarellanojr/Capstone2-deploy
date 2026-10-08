@@ -1,14 +1,14 @@
-import { SCENARIOS, scenarioLabSurface } from './useScenarios'
+import { SCENARIOS, getLabSurface } from './useScenarios'
 
-describe('scenarioLabSurface + Scenario 3 prep metadata', () => {
+describe('getLabSurface + Scenario 3 prep metadata', () => {
   it('maps known catalog ids and explicit metadata', () => {
-    expect(scenarioLabSurface({ id: '01', labSurface: 'terminal' })).toBe('terminal')
-    expect(scenarioLabSurface({ id: '06', labSurface: 'dvwa' })).toBe('dvwa')
-    expect(scenarioLabSurface({ id: '09', labSurface: 'siem' })).toBe('siem')
+    expect(getLabSurface({ id: '01', labSurface: 'terminal' })).toBe('terminal')
+    expect(getLabSurface({ id: '06', labSurface: 'dvwa' })).toBe('dvwa')
+    expect(getLabSurface({ id: '09', labSurface: 'siem' })).toBe('siem')
     // Legacy callers without metadata still resolve by id.
-    expect(scenarioLabSurface({ id: '09' })).toBe('siem')
-    expect(scenarioLabSurface({ id: '06' })).toBe('dvwa')
-    expect(scenarioLabSurface({ id: '99' })).toBe('terminal')
+    expect(getLabSurface({ id: '09' })).toBe('siem')
+    expect(getLabSurface({ id: '06' })).toBe('dvwa')
+    expect(getLabSurface({ id: '99' })).toBe('terminal')
   })
 
   it('keeps Scenario 3 prep outside scored milestones', () => {

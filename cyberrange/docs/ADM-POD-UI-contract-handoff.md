@@ -85,7 +85,7 @@ From `PodResponse` / `serialize_pod` (TTL via `ttl_payload`):
 | `wazuh_agent_id` | `string \| null` | |
 | `created_at` | `string \| null` | |
 | `last_heartbeat` | `string \| null` | |
-| `ttl_hours`, `remaining_seconds`, `expires_at`, `ttl_expired` | TTL helper fields | |
+| `ttl_minutes`, `remaining_seconds`, `expires_at`, `ttl_expired` | TTL helper fields | |
 
 ### 4.3 Status enum (backend)
 

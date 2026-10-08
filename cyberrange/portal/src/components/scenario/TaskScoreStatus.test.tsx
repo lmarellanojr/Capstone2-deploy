@@ -84,6 +84,64 @@ describe('TaskScoreStatus', () => {
     expect(screen.queryByRole('button', { name: /Submit/i })).toBeNull()
   })
 
+  it('keeps Scenario 3 meta-file milestones automatic even when the flag prop is set', () => {
+    render(
+      <TaskScoreStatus
+        milestone={mockFlagMilestone}
+        completed={false}
+        isFlag={true}
+        scenarioId="09"
+        surface="siem"
+        metaFileScoring
+      />
+    )
+    expect(screen.getByText(/checker reads your file on/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Submit/i })).toBeNull()
+  })
+
+  it('labels the SIEM prep step as unscored and shows no flag input', () => {
+    render(
+      <TaskScoreStatus
+        milestone={{ id: 0, name: 'Preparation', description: 'Prep', points: 0, unscored: true }}
+        completed={false}
+        isFlag={false}
+        scenarioId="09"
+        surface="siem"
+      />
+    )
+    expect(screen.getByText(/Prep — not scored/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Submit/i })).toBeNull()
+  })
+
+  it('renders DVWA-specific watching message for scenario 06 when pending', () => {
+    render(
+      <TaskScoreStatus
+        milestone={mockMilestone}
+        completed={false}
+        isFlag={false}
+        scenarioId="06"
+        surface="dvwa"
+      />
+    )
+    expect(
+      screen.getByText("The portal is watching DVWA's reply — this step scores automatically once it sees the result")
+    ).toBeTruthy()
+  })
+
+  it('renders FlagSubmission with brave-otter placeholder for scenario 06 flag task', () => {
+    render(
+      <TaskScoreStatus
+        milestone={mockFlagMilestone}
+        completed={false}
+        isFlag={true}
+        scenarioId="06"
+      />
+    )
+    expect(
+      screen.getByPlaceholderText('e.g. brave-otter-7421')
+    ).toBeTruthy()
+  })
+
   it('renders expired status when disabled is true and task is incomplete', () => {
     render(
       <TaskScoreStatus
