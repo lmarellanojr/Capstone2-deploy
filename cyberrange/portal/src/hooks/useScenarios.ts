@@ -11,7 +11,7 @@ export interface Milestone {
   cue?: string
   // `warning` for the trap a student is most likely to misread (e.g. a
   // command whose success signal is empty output); default is `info`.
-  cueTone?: 'info' | 'warning'
+  cueVariant?: 'info' | 'warning'
 }
 
 export interface Scenario {
@@ -147,7 +147,7 @@ export const SCENARIOS: Scenario[] = [
         goal: 'Replace the default password and restart Tomcat',
         description: 'Then check the config for the old password. Success is empty output: the check prints nothing once the default is gone.',
         cue: '⚠ **Empty output = success.** If the `grep` prints a line, the default password is still there — re-run the `sed`, then check again.',
-        cueTone: 'warning',
+        cueVariant: 'warning',
         points: 75,
       },
       {

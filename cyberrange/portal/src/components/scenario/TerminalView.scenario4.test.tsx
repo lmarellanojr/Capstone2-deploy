@@ -121,7 +121,7 @@ describe("TerminalView — Scenario 4 (Vulnerability Hardening)", () => {
 
   it("renders the Task 2 cue as a warning", async () => {
     const task2 = scenario.milestones[1]
-    await renderLab({ currentTaskId: task2.id, currentTaskCue: task2.cue, currentTaskCueTone: task2.cueTone })
+    await renderLab({ currentTaskId: task2.id, currentTaskCue: task2.cue, currentTaskCueVariant: task2.cueVariant })
 
     const cue = screen.getByRole("complementary", { name: "Terminal warning" })
     expect(cue).toHaveTextContent(/Empty output = success/)

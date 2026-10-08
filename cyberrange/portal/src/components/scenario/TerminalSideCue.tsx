@@ -6,10 +6,10 @@ import { AlertTriangle, Info, X } from 'lucide-react'
 interface TerminalSideCueProps {
   taskId: number
   cueText?: string
-  tone?: 'info' | 'warning'
+  variant?: 'info' | 'warning'
 }
 
-const TONE_STYLES = {
+const VARIANT_STYLES = {
   info: {
     card: 'bg-secondary/95 border-border text-text-main',
     icon: 'text-brand',
@@ -42,7 +42,7 @@ function renderInline(text: string): React.ReactNode[] {
   })
 }
 
-export function TerminalSideCue({ taskId, cueText, tone = 'info' }: TerminalSideCueProps) {
+export function TerminalSideCue({ taskId, cueText, variant = 'info' }: TerminalSideCueProps) {
   const [dismissedTaskIds, setDismissedTaskIds] = useState<Set<number>>(new Set())
 
   // Reset or check dismissal state per task
@@ -56,7 +56,7 @@ export function TerminalSideCue({ taskId, cueText, tone = 'info' }: TerminalSide
     setDismissedTaskIds((prev) => new Set(prev).add(taskId))
   }
 
-  const style = TONE_STYLES[tone]
+  const style = VARIANT_STYLES[variant]
   const { Icon } = style
 
   return (
@@ -64,7 +64,7 @@ export function TerminalSideCue({ taskId, cueText, tone = 'info' }: TerminalSide
       className="absolute top-12 right-4 z-20 max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
       role="complementary"
       aria-label={style.label}
-      data-tone={tone}
+      data-variant={variant}
     >
       <div
         className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl backdrop-blur-sm border shadow-overlay text-xs ${style.card}`}

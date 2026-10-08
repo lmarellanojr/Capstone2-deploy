@@ -44,14 +44,14 @@ describe('TerminalSideCue', () => {
     expect(screen.queryByText(/`|\*\*/)).toBeNull()
   })
 
-  it('uses the warning style when tone is warning', () => {
-    render(<TerminalSideCue taskId={2} cueText="Empty output = success" tone="warning" />)
+  it('uses the warning style when variant is warning', () => {
+    render(<TerminalSideCue taskId={2} cueText="Empty output = success" variant="warning" />)
     const cue = screen.getByRole('complementary', { name: 'Terminal warning' })
-    expect(cue).toHaveAttribute('data-tone', 'warning')
+    expect(cue).toHaveAttribute('data-variant', 'warning')
   })
 
   it('defaults to the info style', () => {
     render(<TerminalSideCue taskId={1} cueText="All work is on meta" />)
-    expect(screen.getByRole('complementary', { name: 'Terminal tip' })).toHaveAttribute('data-tone', 'info')
+    expect(screen.getByRole('complementary', { name: 'Terminal tip' })).toHaveAttribute('data-variant', 'info')
   })
 })

@@ -304,7 +304,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                     canRestart={false}
                     currentTaskId={currentTaskId}
                     currentTaskCue={currentMilestone?.cue}
-                    currentTaskCueTone={currentMilestone?.cueTone}
+                    currentTaskCueVariant={currentMilestone?.cueVariant}
                     externalGuideExtra={guideExtra}
                     onCloseGuideExtra={() => setGuideExtra(null)}
                     onOpenTools={() => setGuideExtra('tools')}

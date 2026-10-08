@@ -56,7 +56,7 @@ interface TerminalViewProps {
   fetchedAtMs?: number
   currentTaskId?: number
   currentTaskCue?: string
-  currentTaskCueTone?: 'info' | 'warning'
+  currentTaskCueVariant?: 'info' | 'warning'
   externalGuideExtra?: GuideExtra | null
   onCloseGuideExtra?: () => void
   onOpenTools?: () => void
@@ -81,7 +81,7 @@ export function TerminalView({
   canRestart = false,
   currentTaskId,
   currentTaskCue,
-  currentTaskCueTone,
+  currentTaskCueVariant,
   externalGuideExtra,
   onCloseGuideExtra,
   onOpenTools,
@@ -355,7 +355,7 @@ export function TerminalView({
 
         {/* Floating Side Cue for current task */}
         {currentTaskId && currentTaskCue && (
-          <TerminalSideCue taskId={currentTaskId} cueText={currentTaskCue} tone={currentTaskCueTone} />
+          <TerminalSideCue taskId={currentTaskId} cueText={currentTaskCue} variant={currentTaskCueVariant} />
         )}
 
         {isBrowserLab ? (
