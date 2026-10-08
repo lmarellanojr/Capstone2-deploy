@@ -10,6 +10,7 @@ interface TaskScoreStatusProps {
   completed: boolean
   isFlag: boolean
   scenarioId: string
+  surface?: 'terminal' | 'dvwa' | 'siem'
   onFlagPass?: () => void
   disabled?: boolean
 }
@@ -19,6 +20,7 @@ export function TaskScoreStatus({
   completed,
   isFlag,
   scenarioId,
+  surface,
   onFlagPass = () => {},
   disabled = false,
 }: TaskScoreStatusProps) {
@@ -62,13 +64,18 @@ export function TaskScoreStatus({
     )
   }
 
+  const isDvwa = surface === 'dvwa'
+  const pendingText = isDvwa
+    ? "The portal is watching DVWA's reply — this step scores automatically once it sees the result"
+    : "The range is watching your session — this step scores automatically."
+
   return (
     <div
       role="status"
       className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/60 text-text-muted text-xs"
     >
       <Info size={16} className="text-text-muted shrink-0" aria-hidden="true" />
-      <span>The range is watching your session — this step scores automatically.</span>
+      <span>{pendingText}</span>
     </div>
   )
 }
