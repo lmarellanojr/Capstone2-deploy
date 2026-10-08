@@ -6,7 +6,7 @@ import inspect
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -253,3 +253,97 @@ def test_pod_response_keeps_ttl():
     dumped = m.model_dump() if hasattr(m, "model_dump") else m.dict()
     assert dumped["remaining_seconds"] == 100
     assert dumped["ttl_expired"] is False
+
+
+# ── Backend limits must match what the portal catalog shows ─────────────────
+
+_PORTAL_SRC = Path(__file__).resolve().parents[2] / "portal" / "src"
+
+
+def _portal_catalog_minutes() -> dict[int, int]:
+    """{scenario id: minutes shown} from useScenarios.ts + DifficultyBadge.tsx."""
+    import re
+
+    catalog = (_PORTAL_SRC / "hooks" / "useScenarios.ts").read_text(encoding="utf-8")
+    badge = (_PORTAL_SRC / "components" / "scenarios" / "DifficultyBadge.tsx").read_text(
+        encoding="utf-8"
+    )
+    fn = badge[badge.index("export function scenarioDuration"):]
+    fn = fn[: fn.index("\n}") + 2]
+    explicit = {
+        int(d): int(m)
+        for d, m in re.findall(r'difficulty === (\d+)\) return "(\d+) min"', fn)
+    }
+    fallthrough = int(re.findall(r'^\s+return "(\d+) min";', fn, re.M)[-1])
+    pairs = re.findall(
+        r"^    id: '(\d+)',.*?^    difficulty: (\d+),", catalog, re.M | re.S
+    )
+    assert pairs, "no scenarios parsed from useScenarios.ts"
+    return {int(sid): explicit.get(int(d), fallthrough) for sid, d in pairs}
+
+
+def test_limits_match_portal_catalog_durations():
+    from config import SCENARIO_TTL_MINUTES
+
+    shown = _portal_catalog_minutes()
+    assert set(shown) == set(SCENARIO_TTL_MINUTES), (
+        "catalog scenarios and SCENARIO_TTL_MINUTES differ; add/remove the scenario in config.py"
+    )
+    for sid, minutes in shown.items():
+        assert ttl_minutes_for(sid) == minutes, f"scenario {sid:02d}: portal shows {minutes} min"
+
+
+def test_siem_window_is_limit_plus_slack():
+    from config import SIEM_WINDOW_SLACK_MINUTES
+    from ttl import siem_window_minutes
+
+    assert siem_window_minutes("01") == 30 + SIEM_WINDOW_SLACK_MINUTES
+    assert siem_window_minutes("11") == 60 + SIEM_WINDOW_SLACK_MINUTES
+
+
+# ── Reaper cadence: expiry every tick, sweep every REAP_INTERVAL_SECONDS ────
+
+def test_sweep_due():
+    from reaper import _sweep_due
+
+    assert _sweep_due(None, 0.0) is True
+    assert _sweep_due(0.0, 599.0) is False
+    assert _sweep_due(0.0, 600.0) is True
+
+
+class _StopLoop(BaseException):
+    pass
+
+
+def test_reaper_loop_checks_ttl_every_tick_and_sweeps_every_600s(
+    ttl_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(reaper, "REAP_INTERVAL_SECONDS", 600)
+    monkeypatch.setattr(reaper, "TTL_CHECK_INTERVAL_SECONDS", 60)
+    clock = iter(range(0, 10_000, 60))
+    monkeypatch.setattr(reaper, "time", SimpleNamespace(monotonic=lambda: float(next(clock))))
+    counts = {"ttl": 0, "sweep": 0, "net": 0, "sleep": 0}
+
+    async def fake_reap():
+        counts["ttl"] += 1
+
+    async def fake_sleep(seconds):
+        assert seconds == 60
+        counts["sleep"] += 1
+        if counts["sleep"] == 11:
+            raise _StopLoop
+
+    monkeypatch.setattr(reaper, "reap_ttl_once", fake_reap)
+    monkeypatch.setattr(reaper, "purge_storage_drift", lambda: counts.__setitem__("sweep", counts["sweep"] + 1))
+    monkeypatch.setattr(reaper, "reconcile_pod_networks", lambda: counts.__setitem__("net", counts["net"] + 1))
+    monkeypatch.setattr(
+        reaper, "asyncio", SimpleNamespace(sleep=fake_sleep, to_thread=asyncio.to_thread)
+    )
+
+    with pytest.raises(_StopLoop):
+        asyncio.run(reaper.pod_ttl_reaper())
+
+    # 11 ticks at t = 0, 60, ..., 600: sweep at t = 0 and t = 600 only.
+    assert counts["ttl"] == 11
+    assert counts["sweep"] == 2
+    assert counts["net"] == 2

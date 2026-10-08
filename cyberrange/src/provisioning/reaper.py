@@ -69,6 +69,11 @@ async def reap_ttl_once() -> None:
             logger.error(f"[reaper] destruction failed for pod {pid}: {e}")
 
 
+def _sweep_due(last_sweep: Optional[float], now: float) -> bool:
+    """True on the first tick, then once every REAP_INTERVAL_SECONDS."""
+    return last_sweep is None or now - last_sweep >= REAP_INTERVAL_SECONDS
+
+
 async def pod_ttl_reaper():
     last_sweep: Optional[float] = None
     while True:
@@ -80,7 +85,7 @@ async def pod_ttl_reaper():
             # REAP_INTERVAL_SECONDS. Same loop, so a sweep never races a TTL
             # destroy that is still in flight.
             now = time.monotonic()
-            if last_sweep is None or now - last_sweep >= REAP_INTERVAL_SECONDS:
+            if _sweep_due(last_sweep, now):
                 last_sweep = now
 
                 # Stuck-state sweep (branch-review Issue 4). The TTL query above

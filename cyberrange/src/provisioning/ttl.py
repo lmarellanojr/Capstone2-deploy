@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from config import DEFAULT_TTL_MINUTES, SCENARIO_TTL_MINUTES
+from config import DEFAULT_TTL_MINUTES, SCENARIO_TTL_MINUTES, SIEM_WINDOW_SLACK_MINUTES
 
 logger = logging.getLogger("provision_api")
 _SQLITE_NAIVE = "%Y-%m-%d %H:%M:%S"
@@ -70,6 +70,11 @@ def ttl_minutes_for(scenario_id: object) -> int:
     except (TypeError, ValueError):
         return DEFAULT_TTL_MINUTES
     return SCENARIO_TTL_MINUTES.get(key, DEFAULT_TTL_MINUTES)
+
+
+def siem_window_minutes(scenario_id: object) -> int:
+    """Max SIEM look-back for a pod: its lab limit plus slack (see config)."""
+    return ttl_minutes_for(scenario_id) + SIEM_WINDOW_SLACK_MINUTES
 
 
 def ttl_seconds_remaining(

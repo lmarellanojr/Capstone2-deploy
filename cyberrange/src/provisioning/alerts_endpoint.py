@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 
 from alerts_reader import ManagerUnavailable, list_siem_alerts
 import lab_history
-from ttl import created_at_utc, ttl_minutes_for
+from ttl import created_at_utc, siem_window_minutes
 
 alerts_router = APIRouter()
 
@@ -107,7 +107,7 @@ def _alerts_for_pod(pod: Any, pod_id: int, limit, since_minutes, rule_id):
         )
 
     limit = max(1, min(int(limit), 200))
-    max_win = ttl_minutes_for(_pod_field(pod, "scenario_id"))
+    max_win = siem_window_minutes(_pod_field(pod, "scenario_id"))
     since_minutes = max(1, min(int(since_minutes), max_win))
     if rule_id and not re.fullmatch(r"[A-Za-z0-9]+", rule_id):
         raise HTTPException(status_code=422, detail="invalid rule_id")
