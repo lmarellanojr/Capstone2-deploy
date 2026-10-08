@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { ChevronDown, ChevronUp, FileDown, Info, Keyboard, ShieldAlert } from 'lucide-react'
 import { Pod } from '@/lib/api'
-import { Milestone, Scenario } from '@/hooks/useScenarios'
+import { Milestone, Scenario, getLabSurface } from '@/hooks/useScenarios'
 import { GuideView } from '@/components/scenario/GuideView'
 import { TaskScoreStatus } from '@/components/scenario/TaskScoreStatus'
 import { Button } from '@/components/ui/Button'
@@ -150,7 +150,7 @@ export function ExercisePanel({
             completed={completed}
             isFlag={isFlag}
             scenarioId={scenario.id}
-            surface={scenario.labSurface}
+            surface={getLabSurface(scenario)}
             onFlagPass={() => onFlagPass(currentTask.id)}
             disabled={expired}
           />
@@ -218,7 +218,7 @@ export function ExercisePanel({
           <div className="flex items-center gap-2 p-2.5 rounded-lg bg-chip/60 border border-border text-xs text-text-muted">
             <Keyboard size={15} className="text-text-faint shrink-0" aria-hidden="true" />
             <span>
-              {scenario.labSurface === 'dvwa' || scenario.id === '06'
+              {getLabSurface(scenario) === 'dvwa'
                 ? 'Type the payloads into DVWA; exact payloads are in the Guide below.'
                 : 'Type the commands yourself; Copy is in the Guide below if you get stuck.'}
             </span>

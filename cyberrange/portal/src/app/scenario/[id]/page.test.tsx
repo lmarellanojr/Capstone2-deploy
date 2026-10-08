@@ -45,7 +45,7 @@ jest.mock('@/hooks/useScenarioPod', () => ({
       scenario_id: id,
       created_at: null,
       last_heartbeat: null,
-      ttl_hours: 1,
+      ttl_minutes: 60,
       remaining_seconds: 300,
       expires_at: null,
       ttl_expired: false,

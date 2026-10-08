@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef } from 'react'
 import { Clock, ExternalLink, ShieldCheck } from 'lucide-react'
 import { Pod } from '@/lib/api'
 import { Scenario } from '@/hooks/useScenarios'
@@ -11,10 +11,16 @@ import { podIps } from '@/lib/podIps'
 
 export const DVWA_LOGIN_URL = `${DVWA_PREFIX}/login.php`
 
-export const DVWA_MODULE_NAV = [
+export interface DvwaModuleItem {
+  label: string
+  path: string
+  isVulnerable?: boolean
+}
+
+export const DVWA_MODULE_NAV: readonly DvwaModuleItem[] = [
   { label: 'Home', path: `${DVWA_PREFIX}/index.php` },
-  { label: 'SQL Injection', path: `${DVWA_PREFIX}/vulnerabilities/sqli/` },
-  { label: 'XSS (Reflected)', path: `${DVWA_PREFIX}/vulnerabilities/xss_r/` },
+  { label: 'SQL Injection', path: `${DVWA_PREFIX}/vulnerabilities/sqli/`, isVulnerable: true },
+  { label: 'XSS (Reflected)', path: `${DVWA_PREFIX}/vulnerabilities/xss_r/`, isVulnerable: true },
   { label: 'DVWA Security', path: `${DVWA_PREFIX}/security.php` },
   { label: 'Login', path: DVWA_LOGIN_URL },
 ] as const
@@ -40,8 +46,17 @@ export function DvwaView({
   canRestart = false,
   onRestart,
 }: DvwaViewProps) {
-  const [navState, setNavState] = useState<{ path: string; nonce: number }>({
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [currentFramePath, setCurrentFramePath] = useState<string | null>(null)
+  const [navState, setNavState] = useState<{
+    path: string
+    isVulnerable: boolean
+    label: string
+    nonce: number
+  }>({
     path: `${DVWA_PREFIX}/index.php`,
+    isVulnerable: false,
+    label: 'Home',
     nonce: 0,
   })
 
@@ -57,8 +72,35 @@ export function DvwaView({
   const isPodActive = pod.status === 'ACTIVE'
 
   const handleNavigate = (path: string) => {
-    setNavState((prev) => ({ path, nonce: prev.nonce + 1 }))
+    const targetModule = DVWA_MODULE_NAV.find((m) => m.path === path)
+    const isVulnerable = !!targetModule?.isVulnerable
+    const label = targetModule?.label ?? 'DVWA'
+
+    setCurrentFramePath(path)
+    setNavState((prev) => ({
+      path,
+      isVulnerable,
+      label,
+      nonce: prev.nonce + 1,
+    }))
+
+    if (isVulnerable && typeof window !== 'undefined') {
+      window.open(path, '_blank', 'noopener,noreferrer')
+    }
   }
+
+  const handleIframeLoad = () => {
+    try {
+      const loc = iframeRef.current?.contentWindow?.location
+      if (loc && loc.pathname) {
+        setCurrentFramePath(`${loc.pathname}${loc.search || ''}`)
+      }
+    } catch {
+      // Cross-origin access blocked by browser when sandboxed, ignore
+    }
+  }
+
+  const openPath = currentFramePath || navState.path
 
   return (
     <div
@@ -121,14 +163,13 @@ export function DvwaView({
                 </span>
               )}
             </div>
-            {/* Security: Low Indicator */}
+            {/* Required Security Level Indicator */}
             <div
-              role="status"
-              aria-label="DVWA Security Level"
+              aria-label="Required DVWA Security Level"
               className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200"
             >
               <ShieldCheck size={13} className="text-emerald-600 shrink-0" aria-hidden="true" />
-              <span>Security: Low</span>
+              <span>Required: Security Low</span>
             </div>
             {!isPodActive && (
               <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
@@ -142,7 +183,8 @@ export function DvwaView({
               variant="secondary"
               size="sm"
               disabled={!isPodActive}
-              onClick={() => window.open(navState.path, '_blank', 'noopener,noreferrer')}
+              title="Open current module in new tab"
+              onClick={() => window.open(openPath, '_blank', 'noopener,noreferrer')}
             >
               <span>Open in new tab</span>
               <ExternalLink size={14} className="ml-1.5" aria-hidden="true" />
@@ -167,13 +209,16 @@ export function DvwaView({
                   disabled={!isPodActive}
                   onClick={() => handleNavigate(item.path)}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition focus-ring ${
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition focus-ring inline-flex items-center gap-1 ${
                     isActive
                       ? 'bg-secondary text-brand font-semibold shadow-sm border border-border'
                       : 'border border-border bg-secondary/60 text-text-main hover:bg-secondary hover:border-brand/40 hover:text-brand'
                   }`}
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  {item.isVulnerable && (
+                    <ExternalLink size={11} className="opacity-70 shrink-0" aria-hidden="true" />
+                  )}
                 </button>
               )
             })}
@@ -184,12 +229,46 @@ export function DvwaView({
             <TerminalSideCue taskId={currentTaskId} cueText={currentTaskCue} />
           )}
 
-          {/* Sandboxed DVWA Frame */}
+          {/* Sandboxed DVWA Frame or External Module Card */}
           <div className="flex-1 min-h-0 bg-white relative overflow-hidden">
-            {isPodActive && !expired ? (
+            {navState.isVulnerable ? (
+              <div
+                data-testid="dvwa-external-module-card"
+                className="flex flex-col items-center justify-center h-full p-6 text-center max-w-md mx-auto"
+              >
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-chip text-brand mb-3">
+                  <ExternalLink size={24} aria-hidden="true" />
+                </div>
+                <h3 className="text-base font-bold text-text-main mb-1.5">
+                  {navState.label} (New Tab)
+                </h3>
+                <p className="text-xs text-text-secondary leading-relaxed mb-5">
+                  Vulnerable modules run in a full browser tab so payload form submissions authenticate properly while keeping attack scripts isolated. The range scores your attacks automatically in the background.
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2.5">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => window.open(navState.path, '_blank', 'noopener,noreferrer')}
+                  >
+                    <span>Reopen {navState.label}</span>
+                    <ExternalLink size={14} className="ml-1.5" aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleNavigate(`${DVWA_PREFIX}/index.php`)}
+                  >
+                    Return to Home
+                  </Button>
+                </div>
+              </div>
+            ) : isPodActive && !expired ? (
               <iframe
+                ref={iframeRef}
                 key={navState.nonce}
                 src={navState.path}
+                onLoad={handleIframeLoad}
                 title="DVWA - Damn Vulnerable Web Application"
                 className="w-full h-full border-0 bg-white"
               />
@@ -208,3 +287,4 @@ export function DvwaView({
     </div>
   )
 }
+

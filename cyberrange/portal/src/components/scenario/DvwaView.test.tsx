@@ -12,13 +12,13 @@ const mockPod: Pod = {
   status: 'ACTIVE',
   vmid_kali: null,
   vmid_meta: null,
-  vmid_dvwa: 101,
+  vmid_dvwa: 'pod-student-dvwa',
   connection_id: null,
   wazuh_agent_id: null,
   scenario_id: '06',
   created_at: null,
   last_heartbeat: null,
-  ttl_hours: 1,
+  ttl_minutes: 60,
   remaining_seconds: 300,
   expires_at: null,
   ttl_expired: false,
@@ -39,11 +39,11 @@ describe('DvwaView presentation component', () => {
     expect(container).toHaveClass('h-full')
   })
 
-  it('renders the card header with Security: Low indicator and Open in new tab button', () => {
+  it('renders the card header with Required: Security Low indicator and Open in new tab button', () => {
     render(<DvwaView pod={mockPod} scenario={scen2} />)
     const header = screen.getByTestId('lab-dvwa-card-header')
     expect(header).toHaveTextContent(/SQL Injection \(DVWA\)/i)
-    expect(header).toHaveTextContent(/Security:\s*Low/i)
+    expect(header).toHaveTextContent(/Required:\s*Security Low/i)
     expect(screen.getByRole('button', { name: /Open in new tab/i })).toBeInTheDocument()
   })
 
@@ -55,24 +55,45 @@ describe('DvwaView presentation component', () => {
 
     const expectedLabels = ['Home', 'SQL Injection', 'XSS (Reflected)', 'DVWA Security', 'Login']
     expectedLabels.forEach((label) => {
-      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: (content) => content.includes(label) })).toBeInTheDocument()
     })
   })
 
-  it('updates the iframe src when a module nav button is clicked', () => {
+  it('opens vulnerable modules in new tab and renders external module card', () => {
+    const originalOpen = window.open
+    window.open = jest.fn()
+
+    render(<DvwaView pod={mockPod} scenario={scen2} />)
+    const sqliBtn = screen.getByRole('button', { name: /SQL Injection/i })
+    fireEvent.click(sqliBtn)
+
+    expect(window.open).toHaveBeenCalledWith(
+      '/lab/dvwa/vulnerabilities/sqli/',
+      '_blank',
+      'noopener,noreferrer'
+    )
+    expect(screen.getByTestId('dvwa-external-module-card')).toBeInTheDocument()
+    expect(screen.getByText(/SQL Injection \(New Tab\)/i)).toBeInTheDocument()
+
+    // Returning to Home remounts the embedded iframe
+    const returnHomeBtn = screen.getByRole('button', { name: /Return to Home/i })
+    fireEvent.click(returnHomeBtn)
+    expect(screen.queryByTestId('dvwa-external-module-card')).not.toBeInTheDocument()
+    const iframe = screen.getByTitle('DVWA - Damn Vulnerable Web Application') as HTMLIFrameElement
+    expect(iframe.src).toContain('/lab/dvwa/index.php')
+
+    window.open = originalOpen
+  })
+
+  it('updates the iframe src when an embedded module nav button is clicked', () => {
     render(<DvwaView pod={mockPod} scenario={scen2} />)
     let iframe = screen.getByTitle('DVWA - Damn Vulnerable Web Application') as HTMLIFrameElement
     expect(iframe.src).toContain('/lab/dvwa/index.php')
 
-    const sqliBtn = screen.getByRole('button', { name: 'SQL Injection' })
-    fireEvent.click(sqliBtn)
+    const secBtn = screen.getByRole('button', { name: 'DVWA Security' })
+    fireEvent.click(secBtn)
     iframe = screen.getByTitle('DVWA - Damn Vulnerable Web Application') as HTMLIFrameElement
-    expect(iframe.src).toContain('/lab/dvwa/vulnerabilities/sqli/')
-
-    const xssBtn = screen.getByRole('button', { name: 'XSS (Reflected)' })
-    fireEvent.click(xssBtn)
-    iframe = screen.getByTitle('DVWA - Damn Vulnerable Web Application') as HTMLIFrameElement
-    expect(iframe.src).toContain('/lab/dvwa/vulnerabilities/xss_r/')
+    expect(iframe.src).toContain('/lab/dvwa/security.php')
   })
 
   it('calls window.open with noopener and noreferrer when Open in new tab is clicked', () => {

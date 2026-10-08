@@ -64,7 +64,7 @@ export function TaskScoreStatus({
     )
   }
 
-  const isDvwa = surface === 'dvwa' || scenarioId === '06'
+  const isDvwa = surface === 'dvwa'
   const pendingText = isDvwa
     ? "The portal is watching DVWA's reply — this step scores automatically once it sees the result"
     : "The range is watching your session — this step scores automatically."
