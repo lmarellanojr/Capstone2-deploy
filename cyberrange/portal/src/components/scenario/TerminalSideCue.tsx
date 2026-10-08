@@ -12,14 +12,14 @@ interface TerminalSideCueProps {
 // Labels say "Lab", not "Terminal": the cue also floats over the DVWA pane.
 const VARIANT_STYLES = {
   info: {
-    card: 'bg-secondary/95 border-border text-text-main',
+    card: 'bg-secondary border-border text-text-main',
     icon: 'text-brand',
     Icon: Info,
     label: 'Lab tip',
   },
   warning: {
-    card: 'bg-amber-50/95 border-amber-300 text-amber-950',
-    icon: 'text-amber-600',
+    card: 'alert-warning',
+    icon: 'text-warning',
     Icon: AlertTriangle,
     label: 'Lab warning',
   },
@@ -43,7 +43,7 @@ function renderInline(text: string): React.ReactNode[] {
   })
 }
 
-export function TerminalSideCue({ taskId, cueText, variant }: TerminalSideCueProps) {
+export function TerminalSideCue({ taskId, cueText, variant = 'info' }: TerminalSideCueProps) {
   const [dismissedTaskIds, setDismissedTaskIds] = useState<Set<number>>(new Set())
 
   // Reset or check dismissal state per task
@@ -57,24 +57,22 @@ export function TerminalSideCue({ taskId, cueText, variant }: TerminalSideCuePro
     setDismissedTaskIds((prev) => new Set(prev).add(taskId))
   }
 
-  // A leading ⚠ also marks a warning, so cues that don't set `variant`
-  // (e.g. the DVWA pane's) still get the warning style.
+  // A leading ⚠ also marks a warning, so cues that don't set `variant` still
+  // get the warning style.
   const resolvedVariant = variant === 'warning' || cueText.startsWith('⚠') ? 'warning' : 'info'
   const style = VARIANT_STYLES[resolvedVariant]
   const { Icon } = style
 
   return (
     <div
-      className="absolute top-12 right-4 z-20 max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
+      className="absolute bottom-4 right-3 left-3 sm:left-auto z-[5] sm:max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
       role="complementary"
       aria-label={style.label}
       data-variant={resolvedVariant}
     >
-      <div
-        className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl backdrop-blur-sm border shadow-overlay text-xs ${style.card}`}
-      >
+      <div className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-overlay text-xs ${style.card}`}>
         <Icon size={16} className={`${style.icon} shrink-0 mt-0.5`} aria-hidden="true" />
-        <p className="flex-1 leading-relaxed select-text font-normal">
+        <p className="flex-1 leading-relaxed text-text-main select-text">
           {renderInline(cueText)}
         </p>
         <button

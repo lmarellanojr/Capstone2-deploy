@@ -12,6 +12,8 @@ describe("classifyCallout", () => {
     ["Network: your pod uses $TARGET_SUBNET", "info"],
     ["Path: browser-only via Open DVWA", "info"],
     ["Scoring detail: the checker looks for -sV", "info"],
+    ["Templates: unedited examples do not pass", "tip"],
+    ["Make it real: use the event from this run", "tip"],
     ["Something friendly and unlabelled", "tip"],
   ])("classifies %j as %s", (lead, expected) => {
     expect(classifyCallout(lead)).toBe(expected)

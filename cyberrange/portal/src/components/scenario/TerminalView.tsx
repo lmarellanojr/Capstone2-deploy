@@ -1,11 +1,11 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { Clock, ExternalLink, HelpCircle, Wrench } from 'lucide-react'
+import { AlertTriangle, Clock, ExternalLink, HelpCircle, Wrench } from 'lucide-react'
 import { GuideExtraModal, type GuideExtra } from '@/components/scenario/GuideExtraModal'
 import { useRouter } from 'next/navigation'
 import { Pod, provisioning } from '@/lib/api'
-import { Scenario } from '@/hooks/useScenarios'
+import { Scenario, getLabSurface } from '@/hooks/useScenarios'
 import { Button, Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui'
 import { useToastContext } from '@/context/ToastContext'
 import { useSession } from 'next-auth/react'
@@ -45,7 +45,7 @@ const DVWA_NAV: { label: string; path: string }[] = [
   { label: 'Login', path: DVWA_LOGIN_URL },
 ]
 
-interface TerminalViewProps {
+export interface TerminalViewProps {
   pod: Pod
   scenario: Scenario
   onEnd?: () => void
@@ -57,6 +57,7 @@ interface TerminalViewProps {
   currentTaskId?: number
   currentTaskCue?: string
   currentTaskCueVariant?: 'info' | 'warning'
+  surface?: 'terminal' | 'dvwa' | 'siem'
   externalGuideExtra?: GuideExtra | null
   onCloseGuideExtra?: () => void
   onOpenTools?: () => void
@@ -82,6 +83,7 @@ export function TerminalView({
   currentTaskId,
   currentTaskCue,
   currentTaskCueVariant,
+  surface = getLabSurface(scenario),
   externalGuideExtra,
   onCloseGuideExtra,
   onOpenTools,
@@ -114,10 +116,10 @@ export function TerminalView({
     }
   }, [pod.pod_id])
 
-  const termTabs = useMemo(() => tabsForScenario(scenario.id), [scenario.id])
-  const isBrowserLab = scenario.id === '06'
-  const showOpenDvwa = scenario.id === '06'
-  const showOpenSiem = scenario.id === '09'
+  const termTabs = useMemo<TermTab[]>(() => surface === 'siem' ? ['kali-cli', 'meta'] : tabsForScenario(scenario.id), [scenario.id, surface])
+  const isBrowserLab = surface === 'dvwa'
+  const showOpenDvwa = surface === 'dvwa'
+  const showOpenSiem = surface === 'siem'
   // Scenario 4 (Vulnerability Hardening): every scored step runs on meta, and
   // the common mistake is editing on Kali — so meta is marked as the work tab.
   const isMetaWorkLab = scenario.id === '11'
@@ -153,9 +155,9 @@ export function TerminalView({
 
   const selectTab = (tab: TermTab) => {
     setActiveTab(tab)
-    // The explainers describe Kali as the attack box; in the hardening lab the
-    // status line already says Kali is unscored, so skip the attacker framing.
-    if (isMetaWorkLab) return
+    // SIEM explains the hosts beside the terminal; the hardening lab's status
+    // line says Kali is unscored, so skip the attacker-framed explainers.
+    if (showOpenSiem || isMetaWorkLab) return
     const explainer = tab === 'kali-cli' ? 'kali' : tab === 'meta' ? 'meta' : null
     if (explainer && !explainedTabs.current.has(explainer)) {
       explainedTabs.current.add(explainer)
@@ -357,8 +359,8 @@ export function TerminalView({
         )}
 
         {/* Floating Side Cue for current task */}
-        {currentTaskId && currentTaskCue && (
-          <TerminalSideCue taskId={currentTaskId} cueText={currentTaskCue} variant={currentTaskCueVariant} />
+        {currentTaskId != null && currentTaskCue && !expired && (
+          <TerminalSideCue key={pod.pod_id} taskId={currentTaskId} cueText={currentTaskCue} variant={currentTaskCueVariant} />
         )}
 
         {isBrowserLab ? (
@@ -385,15 +387,16 @@ export function TerminalView({
         ) : (
           <div className="flex-1 min-h-0 flex flex-col rounded-xl overflow-hidden border border-border">
             {/* Connection Tabs */}
-            <div className="flex bg-secondary border-b border-border overflow-hidden shrink-0">
+            <div className="flex flex-wrap bg-secondary border-b border-border shrink-0">
               {termTabs.map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   onClick={() => selectTab(tab)}
                   aria-pressed={activeTab === tab}
-                  className={termTabClass(tab)}
+                  className={`${termTabClass(tab)} ${showOpenSiem && tab === 'meta' ? 'inline-flex items-center gap-1.5 text-warning' : ''}`}
                 >
+                  {showOpenSiem && tab === 'meta' && <AlertTriangle size={14} aria-hidden="true" />}
                   {TAB_LABEL[tab]}
                   {isMetaWorkLab && tab === 'meta' && (
                     <span className="ml-2 inline-flex items-center rounded-full bg-brand/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-brand">
@@ -410,19 +413,21 @@ export function TerminalView({
                 className={`flex items-center gap-2 px-3 py-1 text-[11px] font-mono shrink-0 border-b ${
                   activeTab === 'meta'
                     ? 'bg-brand/10 border-brand/30 text-brand'
-                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                    : 'alert-warning rounded-none'
                 }`}
               >
-                <span
-                  className={`h-1.5 w-1.5 rounded-full shrink-0 ${activeTab === 'meta' ? 'bg-brand' : 'bg-amber-500'}`}
-                  aria-hidden="true"
-                />
+                <span className="h-1.5 w-1.5 rounded-full shrink-0 bg-current" aria-hidden="true" />
                 <span className="truncate">
                   {activeTab === 'meta'
                     ? 'meta · all scored work happens here (msfadmin, sudo)'
                     : 'Kali · optional playground — not scored. Switch to meta for the tasks.'}
                 </span>
               </div>
+            )}
+            {showOpenSiem && (
+              <p role="status" className={`px-3 py-2 text-xs border-b shrink-0 ${activeTab === 'meta' ? 'alert-warning rounded-none' : 'bg-muted border-border text-text-muted'}`}>
+                {activeTab === 'meta' ? 'You are on meta — save your scored artifact files here.' : 'You are on Kali — generate activity here; write the scored files on meta.'}
+              </p>
             )}
 
             <div className="flex-1 min-h-0 bg-terminal-bg overflow-hidden relative">

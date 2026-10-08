@@ -9,6 +9,8 @@ interface ScenarioOutlineProps {
   currentTaskId: number
   completedTaskIds: Set<number>
   onSelectTask: (taskId: number) => void
+  /** Display offset for the task badge (SIEM prep uses 0). */
+  startNumber?: number
 }
 
 export function ScenarioOutline({
@@ -16,6 +18,7 @@ export function ScenarioOutline({
   currentTaskId,
   completedTaskIds,
   onSelectTask,
+  startNumber = 1,
 }: ScenarioOutlineProps) {
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -25,18 +28,18 @@ export function ScenarioOutline({
   const currentTask = tasks[currentIndex] ?? tasks[0]
   const isFirst = currentIndex <= 0
   const isLast = currentIndex >= tasks.length - 1
-
-  // A task unlocks only once every task before it is complete — so a student
-  // can't jump ahead to Task 2 before Task 1 is done. The first incomplete
-  // task is the furthest reachable; completed tasks stay open for review.
-  const firstIncompleteIndex = tasks.findIndex((t) => !completedTaskIds.has(t.id))
+  // A scored task unlocks only once every earlier scored task is complete.
+  // Unscored prep tasks are always reachable and never participate in gating.
+  // The first incomplete scored task is the furthest reachable; completed
+  // tasks stay open for review.
+  const firstIncompleteIndex = tasks.findIndex((t) => !t.unscored && !completedTaskIds.has(t.id))
   const maxUnlockedIndex = firstIncompleteIndex === -1 ? tasks.length - 1 : firstIncompleteIndex
   const isUnlocked = useCallback(
-    (idx: number) => idx <= maxUnlockedIndex || completedTaskIds.has(tasks[idx]?.id),
+    (idx: number) =>
+      tasks[idx]?.unscored === true || idx <= maxUnlockedIndex || completedTaskIds.has(tasks[idx]?.id),
     [maxUnlockedIndex, completedTaskIds, tasks]
   )
   const nextLocked = currentIndex < tasks.length - 1 && !isUnlocked(currentIndex + 1)
-
   const handlePrev = useCallback(() => {
     if (!isFirst && currentIndex > 0) {
       onSelectTask(tasks[currentIndex - 1].id)
@@ -49,7 +52,6 @@ export function ScenarioOutline({
     }
   }, [isLast, currentIndex, tasks, onSelectTask, isUnlocked])
 
-  // Close on outside click and Escape
   useEffect(() => {
     if (!isOpen) return
 
@@ -98,7 +100,8 @@ export function ScenarioOutline({
         aria-haspopup="listbox"
         className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-secondary text-text-main font-medium hover:border-brand/40 transition focus-ring"
       >
-        <span className="font-semibold text-brand">Task {currentIndex + 1}</span>
+        <span className="sr-only">Scenario Outline: </span>
+        <span className="font-semibold text-brand">Task {currentIndex + startNumber}</span>
         <span className="text-text-muted hidden sm:inline truncate max-w-[160px]">
           {currentTask?.name}
         </span>
@@ -127,7 +130,7 @@ export function ScenarioOutline({
           className="absolute top-full mt-1.5 left-0 z-30 w-72 rounded-xl bg-secondary border border-border shadow-overlay p-1.5 space-y-1"
         >
           {tasks.map((task, idx) => {
-            const isScored = completedTaskIds.has(task.id)
+            const isScored = !task.unscored && completedTaskIds.has(task.id)
             const isSelected = task.id === currentTaskId
             const locked = !isUnlocked(idx)
 
@@ -171,13 +174,13 @@ export function ScenarioOutline({
                     ) : locked ? (
                       <Lock size={11} aria-hidden="true" />
                     ) : (
-                      idx + 1
+                      idx + startNumber
                     )}
                   </span>
                   <span className="truncate">{task.name}</span>
                 </div>
                 <span className="text-text-faint text-[11px] shrink-0 font-mono">
-                  {task.points} pts
+                  {task.unscored ? 'Prep · not scored' : `${task.points} pts`}
                 </span>
               </button>
             )
