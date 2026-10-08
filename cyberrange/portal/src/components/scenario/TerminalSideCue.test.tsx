@@ -46,6 +46,6 @@ describe('TerminalSideCue', () => {
     expect(
       screen.getByText(/Set DVWA Security to Low first/i)
     ).toBeTruthy()
-    expect(container.querySelector('.bg-amber-50\\/95')).toBeTruthy()
+    expect(container.querySelector('.alert-warning')).toBeTruthy()
   })
 })

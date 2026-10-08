@@ -84,6 +84,35 @@ describe('TaskScoreStatus', () => {
     expect(screen.queryByRole('button', { name: /Submit/i })).toBeNull()
   })
 
+  it('keeps Scenario 3 meta-file milestones automatic even when the flag prop is set', () => {
+    render(
+      <TaskScoreStatus
+        milestone={mockFlagMilestone}
+        completed={false}
+        isFlag={true}
+        scenarioId="09"
+        surface="siem"
+        metaFileScoring
+      />
+    )
+    expect(screen.getByText(/checker reads your file on/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Submit/i })).toBeNull()
+  })
+
+  it('labels the SIEM prep step as unscored and shows no flag input', () => {
+    render(
+      <TaskScoreStatus
+        milestone={{ id: 0, name: 'Preparation', description: 'Prep', points: 0, unscored: true }}
+        completed={false}
+        isFlag={false}
+        scenarioId="09"
+        surface="siem"
+      />
+    )
+    expect(screen.getByText(/Prep — not scored/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Submit/i })).toBeNull()
+  })
+
   it('renders DVWA-specific watching message for scenario 06 when pending', () => {
     render(
       <TaskScoreStatus

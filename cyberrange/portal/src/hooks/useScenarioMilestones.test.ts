@@ -27,6 +27,7 @@ jest.mock('@/lib/api', () => ({
 
 describe('useScenarioMilestones', () => {
   const scen1 = SCENARIOS.find((s) => s.id === '01')!
+  const scen3 = SCENARIOS.find((s) => s.id === '09')!
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -169,5 +170,24 @@ describe('useScenarioMilestones', () => {
     expect(result.current.completed.has(1)).toBe(true)
     expect(result.current.completed.has(2)).toBe(true)
     expect(result.current.completed.has(5)).toBe(true)
+  })
+
+  it('calculates Scenario 3 score progress from its scored milestones only', async () => {
+    ;(provisioning.getMilestones as jest.Mock).mockResolvedValueOnce({
+      milestones: [{ scenario_id: 9, milestone_id: 1, status: 'PASS' }],
+      manual_check_locked: [],
+    })
+
+    const { result } = renderHook(() => useScenarioMilestones(42, '09', scen3.milestones))
+    await act(async () => {})
+
+    expect(result.current.completed).toEqual(new Set([1]))
+    expect(result.current.totalPoints).toBe(225)
+    expect(result.current.earnedPoints).toBe(50)
+    expect(result.current.doneCount).toBe(1)
+    expect(result.current.progressPct).toBe(22)
+    expect(result.current.nextMilestoneId).toBe(2)
+    expect(scen3.prepTask?.id).toBe(0)
+    expect(scen3.milestones.map((milestone) => milestone.id)).toEqual([1, 2, 3])
   })
 })

@@ -9,7 +9,7 @@ interface TerminalSideCueProps {
   variant?: 'info' | 'warning'
 }
 
-export function TerminalSideCue({ taskId, cueText, variant }: TerminalSideCueProps) {
+export function TerminalSideCue({ taskId, cueText, variant = 'info' }: TerminalSideCueProps) {
   const [dismissedTaskIds, setDismissedTaskIds] = useState<Set<number>>(new Set())
 
   // Reset or check dismissal state per task
@@ -27,23 +27,13 @@ export function TerminalSideCue({ taskId, cueText, variant }: TerminalSideCuePro
 
   return (
     <div
-      className="absolute top-12 right-4 z-20 max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
+      className="absolute bottom-4 right-3 left-3 sm:left-auto z-[5] sm:max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
       role="complementary"
       aria-label="Lab tip"
     >
-      <div
-        className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl backdrop-blur-sm border shadow-overlay text-xs ${
-          isWarning
-            ? 'bg-amber-50/95 border-amber-300 text-amber-950'
-            : 'bg-secondary/95 border-border text-text-main'
-        }`}
-      >
-        {isWarning ? (
-          <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" aria-hidden="true" />
-        ) : (
-          <Info size={16} className="text-brand shrink-0 mt-0.5" aria-hidden="true" />
-        )}
-        <p className="flex-1 leading-relaxed select-text font-normal">
+      <div className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-overlay text-xs ${isWarning ? 'alert-warning' : 'bg-secondary border-border text-text-main'}`}>
+        {isWarning ? <AlertTriangle size={16} className="text-warning shrink-0 mt-0.5" aria-hidden="true" /> : <Info size={16} className="text-brand shrink-0 mt-0.5" aria-hidden="true" />}
+        <p className="flex-1 leading-relaxed text-text-main select-text">
           {cueText}
         </p>
         <button

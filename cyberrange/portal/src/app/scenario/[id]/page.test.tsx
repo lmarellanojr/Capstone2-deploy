@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import React from 'react'
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import ScenarioDetailPage from './page'
 import { SCENARIOS, getLabSurface } from '@/hooks/useScenarios'
 
@@ -60,7 +60,7 @@ jest.mock('@/hooks/useScenarioPod', () => ({
 }))
 
 jest.mock('@/hooks/useScenarioMilestones', () => ({
-  useScenarioMilestones: () => ({
+  useScenarioMilestones: jest.fn(() => ({
     completed: new Set(),
     lockedReview: new Set(),
     verifying: new Set(),
@@ -74,7 +74,11 @@ jest.mock('@/hooks/useScenarioMilestones', () => ({
     nextMilestoneId: 1,
     handleVerify: jest.fn(),
     onFlagPassed: jest.fn(),
-  }),
+  })),
+}))
+
+jest.mock('@/lib/scenarioCompletion', () => ({
+  isScenarioComplete: jest.fn(() => false),
 }))
 
 jest.mock('@/hooks/useMyReviews', () => ({
@@ -90,12 +94,31 @@ jest.mock('@/components/scenario/TerminalView', () => ({
   TerminalView: () => <div data-testid="mock-terminal-view">Terminal View</div>,
 }))
 
+jest.mock('@/components/scenario/LabSurface', () => ({
+  LabSurface: ({ scenario }: { scenario: { id: string } }) => (
+    <div data-testid={`mock-${scenario.id === '06' ? 'dvwa' : scenario.id === '09' ? 'siem' : 'terminal'}-view`} />
+  ),
+}))
+
 jest.mock('@/components/scenario/DvwaView', () => ({
   DvwaView: () => <div data-testid="mock-dvwa-view">DVWA View</div>,
 }))
 
 jest.mock('@/components/scenario/ExercisePanel', () => ({
-  ExercisePanel: () => <div data-testid="mock-exercise-panel">Exercise Panel</div>,
+  ExercisePanel: ({ currentTask }: { currentTask: { id: number } }) => (
+    <div data-testid="mock-exercise-panel" data-task-id={currentTask.id}>Exercise Panel</div>
+  ),
+}))
+
+jest.mock('@/components/scenario/ScenarioOutline', () => ({
+  ScenarioOutline: ({ tasks, currentTaskId, startNumber }: { tasks: { id: number }[]; currentTaskId: number; startNumber: number }) => (
+    <div
+      data-testid="mock-scenario-outline"
+      data-task-ids={tasks.map((task) => task.id).join(',')}
+      data-current-task-id={currentTaskId}
+      data-start-number={startNumber}
+    />
+  ),
 }))
 
 jest.mock('@/components/scenario/BigPictureModal', () => ({
@@ -131,5 +154,30 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
     expect(screen.getByTestId('mock-dvwa-view')).toBeInTheDocument()
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument()
     expect(screen.getByTestId('mock-exercise-panel')).toBeInTheDocument()
+  })
+
+  it('keeps Scenario 3 prep in presentation while scoring and completion use only scored milestones', async () => {
+    const useMilestonesMock = jest.requireMock('@/hooks/useScenarioMilestones').useScenarioMilestones as jest.Mock
+    const isScenarioCompleteMock = jest.requireMock('@/lib/scenarioCompletion').isScenarioComplete as jest.Mock
+    useMilestonesMock.mockClear()
+    isScenarioCompleteMock.mockClear()
+
+    render(<ScenarioDetailPage params={{ id: '09' }} />)
+
+    const scenario3 = SCENARIOS.find((scenario) => scenario.id === '09')!
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-task-id', '0')
+      expect(screen.getByTestId('mock-scenario-outline')).toHaveAttribute('data-current-task-id', '0')
+    })
+
+    expect(screen.getByTestId('mock-scenario-outline')).toHaveAttribute('data-task-ids', '0,1,2,3')
+    expect(screen.getByTestId('mock-scenario-outline')).toHaveAttribute('data-start-number', '0')
+    expect(useMilestonesMock).toHaveBeenCalledWith(1, '09', scenario3.milestones)
+    expect(scenario3.milestones.map((milestone) => milestone.id)).toEqual([1, 2, 3])
+    expect(isScenarioCompleteMock).toHaveBeenCalledWith(expect.objectContaining({
+      scenarioId: '09',
+      requiredMilestoneIds: [1, 2, 3],
+    }))
+    expect(screen.getByTestId('mock-siem-view')).toBeInTheDocument()
   })
 })
