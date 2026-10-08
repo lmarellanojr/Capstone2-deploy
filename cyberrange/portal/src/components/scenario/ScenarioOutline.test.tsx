@@ -109,4 +109,25 @@ describe('ScenarioOutline', () => {
     fireEvent.mouseDown(screen.getByTestId('outside'))
     expect(screen.queryByRole('listbox')).toBeNull()
   })
+
+  it('numbers a prep step as Task 0 and labels it unscored', () => {
+    const prepAndTasks: Milestone[] = [
+      { id: 0, name: 'Generate the alerts', description: 'Prep', points: 0, unscored: true },
+      ...mockTasks,
+    ]
+    render(
+      <ScenarioOutline
+        tasks={prepAndTasks}
+        currentTaskId={0}
+        completedTaskIds={new Set([0])}
+        onSelectTask={jest.fn()}
+        startNumber={0}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: /Task 0 Generate the alerts/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Task 0 Generate the alerts/i }))
+    expect(screen.getByRole('option', { name: /Generate the alerts/ })).toHaveTextContent('Prep · not scored')
+    expect(screen.getByRole('option', { name: /Generate the alerts/ })).not.toHaveTextContent('✓')
+  })
 })

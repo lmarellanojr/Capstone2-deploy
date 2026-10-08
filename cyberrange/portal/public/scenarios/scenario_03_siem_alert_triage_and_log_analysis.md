@@ -41,7 +41,7 @@ Unlike the attack scenarios, there's nothing to “exploit.” You demonstrate a
 
 > **Scoring:** Scoring is automatic — each artifact file is checked within a few seconds of you saving it. Make sure your files are correct (especially a real rule-5710 time on Milestone 2) before expecting a task to tick.
 
-Templates are a starting point only If the SIEM table is empty or the manager is busy, you can still finish, but **copying a template without editing it does not pass**. Replace placeholders with times and rule IDs from **your** run (SIEM table or meta `auth.log`). Getting real Wazuh values is both better practice and what the Milestone 2 check looks for. 
+> **Templates:** Templates are a starting point only. If the SIEM table is empty or the manager is busy, you can still finish, but **copying a template without editing it does not pass**. Replace placeholders with times and rule IDs from **your** run (SIEM table or meta `auth.log`). Getting real Wazuh values is both better practice and what the Milestone 2 check looks for.
 
 ## 3. Set up your lab
 
@@ -105,7 +105,7 @@ cat > /home/msfadmin/alert_triage.json << 'EOF'
 EOF
 ```
 
-Make it real In the SIEM table, click a row to copy its timestamp and rule ID (a toast pops up), then edit the file (`nano` / `vi`) to match what you actually saw. 
+> **Make it real:** In the SIEM table, click a row to copy its timestamp and rule ID (a toast pops up), then edit the file (`nano` / `vi`) to match what you actually saw.
 
 **Done when:** `alert_triage.json` exists on meta with sensible values.
 

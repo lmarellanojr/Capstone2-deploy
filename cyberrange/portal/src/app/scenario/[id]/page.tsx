@@ -248,7 +248,6 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                   currentTaskId={currentTaskId}
                   completedTaskIds={completed}
                   onSelectTask={handleSelectTask}
-                  freeNavigation={isSiem}
                   startNumber={isSiem ? 0 : 1}
                 />
               </div>
@@ -395,26 +394,6 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {isSiem && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={currentTaskIndex <= 0}
-                        onClick={() => handleSelectTask(presentationTasks[currentTaskIndex - 1].id)}
-                      >
-                        Prev
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={currentTaskIndex >= presentationTasks.length - 1}
-                        onClick={() => handleSelectTask(presentationTasks[currentTaskIndex + 1].id)}
-                      >
-                        Next
-                      </Button>
-                    </>
-                  )}
                   <Button
                     variant="danger-outline"
                     size="sm"

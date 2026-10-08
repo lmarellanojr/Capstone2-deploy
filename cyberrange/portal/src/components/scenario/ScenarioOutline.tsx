@@ -11,8 +11,6 @@ interface ScenarioOutlineProps {
   onSelectTask: (taskId: number) => void
   /** Display offset for the task badge (SIEM prep uses 0). */
   startNumber?: number
-  /** Reserved for gated outlines; default matches main (all tasks selectable). */
-  freeNavigation?: boolean
 }
 
 export function ScenarioOutline({
@@ -21,7 +19,6 @@ export function ScenarioOutline({
   completedTaskIds,
   onSelectTask,
   startNumber = 1,
-  freeNavigation = true,
 }: ScenarioOutlineProps) {
   const [isOpen, setIsOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -31,8 +28,6 @@ export function ScenarioOutline({
   const currentTask = tasks[currentIndex] ?? tasks[0]
   const isFirst = currentIndex <= 0
   const isLast = currentIndex >= tasks.length - 1
-  void freeNavigation
-
   const handlePrev = useCallback(() => {
     if (!isFirst && currentIndex > 0) {
       onSelectTask(tasks[currentIndex - 1].id)
