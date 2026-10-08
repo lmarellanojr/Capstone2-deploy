@@ -11,10 +11,16 @@ import { MarkdownView, GUIDE_PROSE_CLASSES } from "@/components/scenario/Markdow
 interface GuideViewProps {
   pod: Pod;
   scenario: Scenario;
-  /** 1-based number of the task to show. When set and a matching `### Task N`
-   *  section exists, the on-screen guide shows only that task's walkthrough;
-   *  the PDF export always keeps the full guide. */
+  /** Number of the `### Task N` section to show on screen (the PDF export
+   *  always keeps the full guide). Resolved by the caller as
+   *  `currentTask.guideTaskNumber ?? taskIndex + 1`. */
   taskNumber?: number;
+  /** True when `taskNumber` came from an explicit `guideTaskNumber` on the
+   *  milestone (as opposed to the positional index + 1). A pinned number is
+   *  trusted directly; an unpinned one is used only when the guide's tasks map
+   *  1:1 onto the milestones, so a guide with offset numbering (e.g. Scenario
+   *  3's `### Task 0`) falls back to the full guide instead of dropping a task. */
+  taskNumberPinned?: boolean;
 }
 
 type State =
@@ -24,7 +30,7 @@ type State =
 
 // The step-by-step walkthrough. The Big Picture, tools and scoring sections
 // are split out (splitGuide) into the welcome modal and the lab's pop-ups.
-function GuideViewComponent({ pod, scenario, taskNumber }: GuideViewProps) {
+function GuideViewComponent({ pod, scenario, taskNumber, taskNumberPinned }: GuideViewProps) {
   const [state, setState] = useState<State>({ status: "loading" });
   // Printable copy lives in a portal attached directly to <body> - a sibling
   // of the whole app, not nested inside any of its fixed-height/overflow-auto
@@ -80,16 +86,17 @@ function GuideViewComponent({ pod, scenario, taskNumber }: GuideViewProps) {
   } else if (state.status === "error") {
     body = <p className="p-2 text-sm text-text-secondary">{state.message}</p>;
   } else {
-    // Per-task walkthrough: show only the current task's section when one
-    // exists, so the student reads just the step they're on. Only applied when
-    // the guide's `### Task N` headings map 1:1 onto this scenario's milestones
-    // (milestone index i ↔ `### Task i+1`); otherwise — e.g. Scenario 3, whose
-    // guide starts at `### Task 0` — fall back to the full guide so no task's
-    // content is dropped.
-    const aligned =
+    // Per-task walkthrough: show only the current task's section so the student
+    // reads just the step they're on. A pinned taskNumber (from the milestone's
+    // guideTaskNumber) is trusted directly; a positional one is used only when
+    // the guide's `### Task N` headings map 1:1 onto this scenario's milestones.
+    // Otherwise — e.g. Scenario 3, whose guide starts at `### Task 0` and has no
+    // guideTaskNumber yet — fall back to the full guide so no task is dropped.
+    const usePerTask =
       taskNumber != null &&
-      tasksAlignWithMilestones(state.full, scenario.milestones.length);
-    const section = aligned ? extractTaskSection(state.full, taskNumber!) : null;
+      (taskNumberPinned ||
+        tasksAlignWithMilestones(state.full, scenario.milestones.length));
+    const section = usePerTask ? extractTaskSection(state.full, taskNumber!) : null;
     body = <MarkdownView content={section ?? state.guide} />;
   }
 

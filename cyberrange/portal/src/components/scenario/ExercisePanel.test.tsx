@@ -11,7 +11,15 @@ jest.mock('@/context/ToastContext', () => ({
 }))
 
 jest.mock('@/components/scenario/GuideView', () => ({
-  GuideView: () => <div data-testid="guide-view-content">Guide Content</div>,
+  GuideView: ({ taskNumber, taskNumberPinned }: { taskNumber?: number; taskNumberPinned?: boolean }) => (
+    <div
+      data-testid="guide-view-content"
+      data-task-number={taskNumber}
+      data-task-number-pinned={String(!!taskNumberPinned)}
+    >
+      Guide Content
+    </div>
+  ),
 }))
 
 describe('ExercisePanel', () => {
@@ -139,6 +147,55 @@ describe('ExercisePanel', () => {
 
     fireEvent.click(toggleBtn)
     expect(toggleBtn).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('passes the positional task number to GuideView when the milestone has no guideTaskNumber', () => {
+    render(
+      <ExercisePanel
+        pod={mockPod}
+        scenario={mockScenario}
+        currentTask={mockTask}
+        taskIndex={2}
+        totalTasks={5}
+        completed={false}
+        isFlag={false}
+        lockedReview={false}
+        verifying={false}
+        milestonesLoading={false}
+        onVerify={jest.fn()}
+        onFlagPass={jest.fn()}
+        onRequestReview={jest.fn()}
+      />
+    )
+
+    const guide = screen.getByTestId('guide-view-content')
+    expect(guide).toHaveAttribute('data-task-number', '3') // taskIndex + 1
+    expect(guide).toHaveAttribute('data-task-number-pinned', 'false')
+  })
+
+  it('passes a pinned guideTaskNumber to GuideView when the milestone sets one', () => {
+    const pinnedTask: Milestone = { ...mockTask, guideTaskNumber: 0 }
+    render(
+      <ExercisePanel
+        pod={mockPod}
+        scenario={{ ...mockScenario, milestones: [pinnedTask] }}
+        currentTask={pinnedTask}
+        taskIndex={1}
+        totalTasks={3}
+        completed={false}
+        isFlag={false}
+        lockedReview={false}
+        verifying={false}
+        milestonesLoading={false}
+        onVerify={jest.fn()}
+        onFlagPass={jest.fn()}
+        onRequestReview={jest.fn()}
+      />
+    )
+
+    const guide = screen.getByTestId('guide-view-content')
+    expect(guide).toHaveAttribute('data-task-number', '0') // guideTaskNumber wins over index + 1
+    expect(guide).toHaveAttribute('data-task-number-pinned', 'true')
   })
 
   it('triggers manual verification on check button click', () => {

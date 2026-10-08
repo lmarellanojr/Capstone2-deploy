@@ -246,7 +246,12 @@ export function ExercisePanel({
 
           {/* CRITICAL: Keep GuideView mounted so #guide-print-root portal stays active! */}
           <div className={guideOpen ? 'p-3 block max-h-96 overflow-y-auto' : 'hidden'}>
-            <GuideView pod={pod} scenario={scenario} taskNumber={taskIndex + 1} />
+            <GuideView
+              pod={pod}
+              scenario={scenario}
+              taskNumber={currentTask.guideTaskNumber ?? taskIndex + 1}
+              taskNumberPinned={currentTask.guideTaskNumber != null}
+            />
           </div>
         </div>
       </div>
