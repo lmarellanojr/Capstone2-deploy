@@ -23,3 +23,8 @@ lxc exec guacamole -- chmod 600 "$DST"
 lxc exec guacamole -- sudo -u keycloak test -r "$DST" \
   && echo "realm import file readable by keycloak: OK" \
   || { echo "ERROR: keycloak cannot read $DST"; exit 1; }
+
+# SEC-04: a realm exported after enable_keycloak_password_policy.sh carries
+# passwordBlacklist(...). Keycloak resolves that file while --import-realm
+# parses the policy at startup, so it must be in place before keycloak starts.
+bash "$(dirname "$0")/install_keycloak_blocklist.sh"
