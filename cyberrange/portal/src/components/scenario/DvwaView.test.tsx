@@ -85,6 +85,40 @@ describe('DvwaView presentation component', () => {
     window.open = originalOpen
   })
 
+  it('switches to external module card when iframe loads a sandboxed page throwing cross-origin security error', () => {
+    const originalOpen = window.open
+    window.open = jest.fn()
+
+    render(<DvwaView pod={mockPod} scenario={scen2} currentTaskId={1} />)
+    const iframe = screen.getByTitle('DVWA - Damn Vulnerable Web Application') as HTMLIFrameElement
+
+    // Simulate cross-origin / sandboxed DOMException on location access
+    Object.defineProperty(iframe, 'contentWindow', {
+      configurable: true,
+      get: () => ({
+        get location() {
+          throw new DOMException('Blocked a frame with origin "..." from accessing a cross-origin frame.', 'SecurityError')
+        },
+      }),
+    })
+
+    fireEvent.load(iframe)
+
+    expect(screen.getByTestId('dvwa-external-module-card')).toBeInTheDocument()
+    expect(screen.getByText(/Vulnerable Module \(New Tab\)/i)).toBeInTheDocument()
+    const reopenBtn = screen.getByRole('button', { name: /Reopen Module/i })
+    expect(reopenBtn).toBeInTheDocument()
+
+    fireEvent.click(reopenBtn)
+    expect(window.open).toHaveBeenCalledWith(
+      '/lab/dvwa/vulnerabilities/sqli/',
+      '_blank',
+      'noopener,noreferrer'
+    )
+
+    window.open = originalOpen
+  })
+
   it('updates the iframe src when an embedded module nav button is clicked', () => {
     render(<DvwaView pod={mockPod} scenario={scen2} />)
     let iframe = screen.getByTitle('DVWA - Damn Vulnerable Web Application') as HTMLIFrameElement

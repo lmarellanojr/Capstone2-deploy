@@ -96,7 +96,22 @@ export function DvwaView({
         setCurrentFramePath(`${loc.pathname}${loc.search || ''}`)
       }
     } catch {
-      // Cross-origin access blocked by browser when sandboxed, ignore
+      // Cross-origin access blocked by browser when the frame navigates to
+      // a sandboxed module (e.g. clicking DVWA's internal menu from index.php).
+      // Switch to the external-module card so the user can open it top-level
+      // with full session cookies.
+      const defaultPath =
+        currentTaskId === 4 || currentTaskId === 5
+          ? `${DVWA_PREFIX}/vulnerabilities/xss_r/`
+          : `${DVWA_PREFIX}/vulnerabilities/sqli/`
+
+      setCurrentFramePath(defaultPath)
+      setNavState((prev) => ({
+        ...prev,
+        isVulnerable: true,
+        label: prev.isVulnerable ? prev.label : 'Vulnerable Module',
+        path: prev.isVulnerable ? prev.path : defaultPath,
+      }))
     }
   }
 
@@ -251,7 +266,11 @@ export function DvwaView({
                     size="sm"
                     onClick={() => window.open(navState.path, '_blank', 'noopener,noreferrer')}
                   >
-                    <span>Reopen {navState.label}</span>
+                    <span>
+                      {navState.label === 'Vulnerable Module'
+                        ? 'Reopen Module'
+                        : `Reopen ${navState.label}`}
+                    </span>
                     <ExternalLink size={14} className="ml-1.5" aria-hidden="true" />
                   </Button>
                   <Button
