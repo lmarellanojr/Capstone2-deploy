@@ -45,7 +45,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   const scenario = scenarios.find((s) => s.id === id)
   const studentId = session?.user?.name ?? ''
 
-  const { phase, pod, error, startLab, endSession, clearError, fetchedAtMs, lastTtlHours } = useScenarioPod(
+  const { phase, pod, error, startLab, endSession, clearError, fetchedAtMs, lastTtlMinutes } = useScenarioPod(
     id,
     studentId
   )
@@ -363,7 +363,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
 
           {phase === 'expired' && !pod && (
             <SessionExpiredOverlay
-              ttlHours={lastTtlHours}
+              ttlMinutes={lastTtlMinutes}
               onRestart={handleRetry}
               onDashboard={() => router.push('/dashboard')}
             />

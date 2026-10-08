@@ -31,7 +31,7 @@ class PodResponse(BaseModel):
     last_heartbeat: Optional[str]
     scenario_id: Optional[str] = None
     created_at: Optional[str] = None
-    ttl_hours: int
+    ttl_minutes: int
     remaining_seconds: int
     expires_at: Optional[str] = None
     ttl_expired: bool

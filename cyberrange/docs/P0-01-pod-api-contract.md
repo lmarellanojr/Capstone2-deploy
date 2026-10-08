@@ -141,7 +141,7 @@ Host evidence (Chapter 04 gate, not this PC): `/capacity` profile `oci_12gib`, `
 | `last_heartbeat` | `string \| null` | live |
 | `created_at` | `string \| null` | TTL clock |
 | `scenario_id` | `string \| null` | e.g. `"01"` |
-| `ttl_hours` | `int` | default **8** (`config.py:33`) |
+| `ttl_minutes` | `int` | per scenario: 01=30, 06=45, 09=45, 11=60, else 60 (`config.SCENARIO_TTL_MINUTES`) |
 | `remaining_seconds` | `int` | always present; **0** if `created_at` bad |
 | `expires_at` | `string \| null` | ISO `…Z` |
 | `ttl_expired` | `bool` | |

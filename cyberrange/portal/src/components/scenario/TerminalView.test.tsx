@@ -55,7 +55,7 @@ const pod = (podId: number): Pod => ({
   scenario_id: '01',
   created_at: null,
   last_heartbeat: null,
-  ttl_hours: 1,
+  ttl_minutes: 30,
   remaining_seconds: 300,
   expires_at: null,
   ttl_expired: false,
