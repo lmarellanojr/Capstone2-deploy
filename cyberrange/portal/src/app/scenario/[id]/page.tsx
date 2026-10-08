@@ -301,6 +301,9 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                       scenario={scenario}
                       currentTaskId={currentTaskId}
                       currentTaskCue={currentMilestone?.cue}
+                      expired={phase === 'expired'}
+                      ttlGrace={pod.ttl_expired}
+                      canRestart={false}
                     />
                   ) : (
                     <TerminalView

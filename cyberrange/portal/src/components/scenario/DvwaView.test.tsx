@@ -103,4 +103,56 @@ describe('DvwaView presentation component', () => {
     )
     expect(screen.getByText(/Set DVWA Security to Low first/i)).toBeInTheDocument()
   })
+
+  it('displays the target IP computed from pod_id in the card header', () => {
+    render(<DvwaView pod={mockPod} scenario={scen2} />)
+    expect(screen.getByText(/Target:\s*10\.0\.51\.30/i)).toBeInTheDocument()
+  })
+
+  it('renders the TTL grace warning banner when ttlGrace is true and expired is false', () => {
+    render(<DvwaView pod={mockPod} scenario={scen2} ttlGrace={true} expired={false} />)
+    expect(
+      screen.getByText(/Time limit reached\. This lab will close within about 10 minutes\./i)
+    ).toBeInTheDocument()
+  })
+
+  it('renders session shutting down overlay and does not render iframe when expired is true', () => {
+    render(<DvwaView pod={mockPod} scenario={scen2} expired={true} />)
+    expect(screen.getByText(/Session shutting down/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/This lab session is shutting down\. Your progress is saved\./i)
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Back to dashboard/i })).toBeInTheDocument()
+    expect(screen.queryByTitle('DVWA - Damn Vulnerable Web Application')).not.toBeInTheDocument()
+  })
+
+  it('renders restart button in shutdown overlay when canRestart and onRestart are provided', () => {
+    const handleRestart = jest.fn()
+    render(
+      <DvwaView
+        pod={mockPod}
+        scenario={scen2}
+        expired={true}
+        canRestart={true}
+        onRestart={handleRestart}
+      />
+    )
+    const restartBtn = screen.getByRole('button', { name: /Start new session/i })
+    expect(restartBtn).toBeInTheDocument()
+    fireEvent.click(restartBtn)
+    expect(handleRestart).toHaveBeenCalledTimes(1)
+  })
+
+  it('gates iframe and shows provisioning status when pod is not ACTIVE', () => {
+    const provisioningPod: Pod = {
+      ...mockPod,
+      status: 'PROVISIONING',
+    }
+    render(<DvwaView pod={provisioningPod} scenario={scen2} />)
+    expect(screen.getByTestId('dvwa-inactive-status')).toHaveTextContent(
+      /Lab environment is provisioning\.\.\./i
+    )
+    expect(screen.queryByTitle('DVWA - Damn Vulnerable Web Application')).not.toBeInTheDocument()
+  })
 })
+
