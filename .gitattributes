@@ -1,2 +1,4 @@
 # Shell scripts must stay LF — Kali/glibc bash rejects CRLF (`set: pipefail\r`).
 *.sh text eol=lf
+# Keycloak reads blocklists line by line; a CR would become part of every entry.
+cyberrange/deploy/keycloak/password-blacklists/*.txt text eol=lf
