@@ -120,6 +120,9 @@ export function TerminalView({
   const isBrowserLab = surface === 'dvwa'
   const showOpenDvwa = surface === 'dvwa'
   const showOpenSiem = surface === 'siem'
+  // Scenario 4 (Vulnerability Hardening): every scored step runs on meta, and
+  // the common mistake is editing on Kali — so meta is marked as the work tab.
+  const isMetaWorkLab = scenario.id === '11'
 
   useEffect(() => {
     if (!showOpenDvwa && !showOpenSiem) return
@@ -152,8 +155,9 @@ export function TerminalView({
 
   const selectTab = (tab: TermTab) => {
     setActiveTab(tab)
-    // The SIEM exercise already explains the hosts beside the terminal.
-    if (showOpenSiem) return
+    // SIEM explains the hosts beside the terminal; the hardening lab's status
+    // line says Kali is unscored, so skip the attacker-framed explainers.
+    if (showOpenSiem || isMetaWorkLab) return
     const explainer = tab === 'kali-cli' ? 'kali' : tab === 'meta' ? 'meta' : null
     if (explainer && !explainedTabs.current.has(explainer)) {
       explainedTabs.current.add(explainer)
@@ -394,10 +398,32 @@ export function TerminalView({
                 >
                   {showOpenSiem && tab === 'meta' && <AlertTriangle size={14} aria-hidden="true" />}
                   {TAB_LABEL[tab]}
+                  {isMetaWorkLab && tab === 'meta' && (
+                    <span className="ml-2 inline-flex items-center rounded-full bg-brand/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-brand">
+                      Scored
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
 
+            {isMetaWorkLab && (
+              <div
+                data-testid="lab-terminal-status-line"
+                className={`flex items-center gap-2 px-3 py-1 text-[11px] font-mono shrink-0 border-b ${
+                  activeTab === 'meta'
+                    ? 'bg-brand/10 border-brand/30 text-brand'
+                    : 'alert-warning rounded-none'
+                }`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full shrink-0 bg-current" aria-hidden="true" />
+                <span className="truncate">
+                  {activeTab === 'meta'
+                    ? 'meta · all scored work happens here (msfadmin, sudo)'
+                    : 'Kali · optional playground — not scored. Switch to meta for the tasks.'}
+                </span>
+              </div>
+            )}
             {showOpenSiem && (
               <p role="status" className={`px-3 py-2 text-xs border-b shrink-0 ${activeTab === 'meta' ? 'alert-warning rounded-none' : 'bg-muted border-border text-text-muted'}`}>
                 {activeTab === 'meta' ? 'You are on meta — save your scored artifact files here.' : 'You are on Kali — generate activity here; write the scored files on meta.'}

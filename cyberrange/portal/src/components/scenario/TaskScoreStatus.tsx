@@ -5,6 +5,19 @@ import { CheckCircle2, Info } from 'lucide-react'
 import { Milestone } from '@/hooks/useScenarios'
 import { FlagSubmission } from '@/components/scenario/FlagSubmission'
 
+const DEFAULT_PENDING_COPY = 'The range is watching your session — this step scores automatically.'
+
+// Scenarios whose auto-scoring reads one specific host's state say so, so the
+// student knows where the work has to happen for the tick to appear.
+const PENDING_COPY: Record<string, React.ReactNode> = {
+  '11': (
+    <>
+      Scoring reads the <strong>meta</strong> host state — this ticks automatically a few
+      seconds after the step works.
+    </>
+  ),
+}
+
 interface TaskScoreStatusProps {
   milestone: Milestone
   completed: boolean
@@ -72,7 +85,7 @@ export function TaskScoreStatus({
   const isDvwa = surface === 'dvwa'
   const pendingText = isDvwa
     ? "The portal is watching DVWA's reply — this step scores automatically once it sees the result"
-    : "The range is watching your session — this step scores automatically."
+    : DEFAULT_PENDING_COPY
 
   return (
     <div
@@ -83,7 +96,7 @@ export function TaskScoreStatus({
       <span>
         {metaFileScoring || scenarioId === '09'
           ? <>The checker reads your file on <strong>meta</strong> — this scores automatically once the file is correct.</>
-          : pendingText}
+          : PENDING_COPY[scenarioId] ?? pendingText}
       </span>
     </div>
   )
