@@ -152,6 +152,33 @@ export function extractTaskSection(markdown: string, taskNumber: number): string
   return body.length > 0 ? body : null
 }
 
+/** The task numbers that have a `### Task N` heading in the guide (outside
+ *  code fences), ascending. */
+export function guideTaskNumbers(markdown: string): number[] {
+  const nums: number[] = []
+  let inFence = false
+  for (const line of markdown.split(/\r?\n/)) {
+    if (FENCE.test(line)) inFence = !inFence
+    if (inFence) continue
+    const m = /^###\s+Task\s+(\d+)\b/i.exec(line)
+    if (m) nums.push(Number(m[1]))
+  }
+  return nums.sort((a, b) => a - b)
+}
+
+/** Whether the guide's `### Task N` headings map 1:1 onto `milestoneCount`
+ *  milestones — exactly the numbers 1..milestoneCount, each once. The per-task
+ *  walkthrough relies on the contract "milestone index i ↔ `### Task i+1`", so
+ *  callers show a single task's section only when this holds; otherwise they
+ *  fall back to the full guide. Guards against guides whose task numbering is
+ *  offset (e.g. Scenario 3 starts at `### Task 0`) or whose count differs from
+ *  the milestone list, which would otherwise silently drop a task's content. */
+export function tasksAlignWithMilestones(markdown: string, milestoneCount: number): boolean {
+  if (milestoneCount <= 0) return false
+  const nums = guideTaskNumbers(markdown)
+  return nums.length === milestoneCount && nums.every((n, i) => n === i + 1)
+}
+
 // Guides are static files; one fetch per guide per page load is enough.
 const cache = new Map<string, Promise<string>>()
 

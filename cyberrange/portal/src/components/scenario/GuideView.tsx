@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { Pod } from "@/lib/api";
 import { injectPodIpsIntoGuide } from "@/lib/podIps";
 import { Scenario, scenarioDisplayTitle } from "@/hooks/useScenarios";
-import { loadGuideMarkdown, splitGuide, extractTaskSection } from "@/lib/guideSections";
+import { loadGuideMarkdown, splitGuide, extractTaskSection, tasksAlignWithMilestones } from "@/lib/guideSections";
 import { MarkdownView, GUIDE_PROSE_CLASSES } from "@/components/scenario/MarkdownView";
 
 interface GuideViewProps {
@@ -81,10 +81,15 @@ function GuideViewComponent({ pod, scenario, taskNumber }: GuideViewProps) {
     body = <p className="p-2 text-sm text-text-secondary">{state.message}</p>;
   } else {
     // Per-task walkthrough: show only the current task's section when one
-    // exists, so the student reads just the step they're on. Falls back to the
-    // full guide for scenarios without `### Task N` headings.
-    const section =
-      taskNumber != null ? extractTaskSection(state.full, taskNumber) : null;
+    // exists, so the student reads just the step they're on. Only applied when
+    // the guide's `### Task N` headings map 1:1 onto this scenario's milestones
+    // (milestone index i ↔ `### Task i+1`); otherwise — e.g. Scenario 3, whose
+    // guide starts at `### Task 0` — fall back to the full guide so no task's
+    // content is dropped.
+    const aligned =
+      taskNumber != null &&
+      tasksAlignWithMilestones(state.full, scenario.milestones.length);
+    const section = aligned ? extractTaskSection(state.full, taskNumber!) : null;
     body = <MarkdownView content={section ?? state.guide} />;
   }
 
