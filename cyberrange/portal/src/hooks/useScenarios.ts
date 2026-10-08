@@ -9,6 +9,12 @@ export interface Milestone {
   points: number
   goal?: string
   cue?: string
+  // Pins this milestone to a specific `### Task N` section in the guide for the
+  // per-task walkthrough. Set it only when the guide's task numbering doesn't
+  // line up with milestone order (e.g. Scenario 3's guide starts at `### Task
+  // 0`). When unset, the panel uses the positional number (milestone index + 1)
+  // and only if the guide's tasks map 1:1 onto the milestones.
+  guideTaskNumber?: number
 }
 
 export interface Scenario {

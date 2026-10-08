@@ -119,6 +119,66 @@ export function splitGuide(markdown: string): SplitGuide {
   return { guide: kept.join("\n").trim(), tools, scoring }
 }
 
+/** The walkthrough for a single task: the `### Task N …` section (heading
+ *  included), up to the next `###` or `## ` heading outside a code fence.
+ *  Returns null when the guide has no such task section, so callers can fall
+ *  back to the full guide (scenarios that don't use `### Task N` headings). */
+export function extractTaskSection(markdown: string, taskNumber: number): string | null {
+  const heading = new RegExp(`^###\\s+Task\\s+${taskNumber}\\b`, "i")
+  const lines = markdown.split(/\r?\n/)
+
+  let start = -1
+  let inFence = false
+  for (let i = 0; i < lines.length; i++) {
+    if (FENCE.test(lines[i])) inFence = !inFence
+    if (!inFence && heading.test(lines[i])) {
+      start = i
+      break
+    }
+  }
+  if (start === -1) return null
+
+  let end = lines.length
+  inFence = false
+  for (let i = start + 1; i < lines.length; i++) {
+    if (FENCE.test(lines[i])) inFence = !inFence
+    if (!inFence && (H2.test(lines[i]) || H3.test(lines[i]))) {
+      end = i
+      break
+    }
+  }
+
+  const body = lines.slice(start, end).join("\n").trim()
+  return body.length > 0 ? body : null
+}
+
+/** The task numbers that have a `### Task N` heading in the guide (outside
+ *  code fences), ascending. */
+export function guideTaskNumbers(markdown: string): number[] {
+  const nums: number[] = []
+  let inFence = false
+  for (const line of markdown.split(/\r?\n/)) {
+    if (FENCE.test(line)) inFence = !inFence
+    if (inFence) continue
+    const m = /^###\s+Task\s+(\d+)\b/i.exec(line)
+    if (m) nums.push(Number(m[1]))
+  }
+  return nums.sort((a, b) => a - b)
+}
+
+/** Whether the guide's `### Task N` headings map 1:1 onto `milestoneCount`
+ *  milestones — exactly the numbers 1..milestoneCount, each once. The per-task
+ *  walkthrough relies on the contract "milestone index i ↔ `### Task i+1`", so
+ *  callers show a single task's section only when this holds; otherwise they
+ *  fall back to the full guide. Guards against guides whose task numbering is
+ *  offset (e.g. Scenario 3 starts at `### Task 0`) or whose count differs from
+ *  the milestone list, which would otherwise silently drop a task's content. */
+export function tasksAlignWithMilestones(markdown: string, milestoneCount: number): boolean {
+  if (milestoneCount <= 0) return false
+  const nums = guideTaskNumbers(markdown)
+  return nums.length === milestoneCount && nums.every((n, i) => n === i + 1)
+}
+
 // Guides are static files; one fetch per guide per page load is enough.
 const cache = new Map<string, Promise<string>>()
 

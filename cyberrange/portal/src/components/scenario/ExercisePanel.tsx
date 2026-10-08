@@ -210,11 +210,15 @@ export function ExercisePanel({
           </div>
         )}
 
-        {/* Type it yourself hint */}
-        <div className="flex items-center gap-2 p-2.5 rounded-lg bg-chip/60 border border-border text-xs text-text-muted">
-          <Keyboard size={15} className="text-text-faint shrink-0" aria-hidden="true" />
-          <span>Type the commands yourself; Copy is in the Guide below if you get stuck.</span>
-        </div>
+        {/* Type-it-yourself hint. The flag task has no commands to copy — its
+            Status area already says it's the one step you submit yourself — so
+            the commands hint is shown only for the auto-scored tasks. */}
+        {!isFlag && (
+          <div className="flex items-center gap-2 p-2.5 rounded-lg bg-chip/60 border border-border text-xs text-text-muted">
+            <Keyboard size={15} className="text-text-faint shrink-0" aria-hidden="true" />
+            <span>Type the commands yourself; Copy is in the Guide below if you get stuck.</span>
+          </div>
+        )}
 
         {/* Collapsible Guide View */}
         <div className="border border-border rounded-xl overflow-hidden bg-secondary">
@@ -225,7 +229,7 @@ export function ExercisePanel({
               aria-expanded={guideOpen}
               className="flex items-center gap-2 text-xs font-bold text-text-main hover:text-brand transition focus-ring"
             >
-              <span>Walkthrough Guide</span>
+              <span>Walkthrough for this task</span>
               {guideOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
             </button>
             <button
@@ -242,7 +246,12 @@ export function ExercisePanel({
 
           {/* CRITICAL: Keep GuideView mounted so #guide-print-root portal stays active! */}
           <div className={guideOpen ? 'p-3 block max-h-96 overflow-y-auto' : 'hidden'}>
-            <GuideView pod={pod} scenario={scenario} />
+            <GuideView
+              pod={pod}
+              scenario={scenario}
+              taskNumber={currentTask.guideTaskNumber ?? taskIndex + 1}
+              taskNumberPinned={currentTask.guideTaskNumber != null}
+            />
           </div>
         </div>
       </div>
