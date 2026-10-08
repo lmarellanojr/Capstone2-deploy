@@ -6,7 +6,8 @@ student starts a lab, so alerts must be scoped by the lab's time window.
 
 Windows come from lab_sessions (v8: real start/end, recorded from now on).
 Labs from before v8 are reconstructed from milestone_verification.pod_created_at
-with an *estimated* end: the student's next lab start or start + POD_TTL_HOURS,
+with an *estimated* end: the student's next lab start or start + 8 hours (the
+global limit those labs ran under, before per-scenario limits),
 whichever is earlier. The estimate is flagged so the UI can say so.
 """
 from __future__ import annotations
@@ -17,12 +18,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from alerts_reader import ManagerUnavailable, list_siem_alerts_between
-from config import POD_TTL_HOURS
 from ttl import created_at_utc
 
 logger = logging.getLogger("provision_api")
 
 DISK_FULL_RULE_ID = "1007"  # same newest-window flood the live view hides
+# Estimated labs all predate v8, when every lab was capped at 8 hours.
+_LEGACY_TTL = timedelta(hours=8)
 SNAPSHOT_LIMIT = 200
 HISTORY_LIMIT = 500
 
@@ -68,7 +70,7 @@ def list_labs(conn, student_id: str, now: Optional[datetime] = None) -> list[dic
     """Newest first. Each lab: pod_id, scenario_id ('09'), started_at, ended_at
     (None while running), active, end_estimated."""
     now = now or datetime.now(timezone.utc)
-    ttl = timedelta(hours=POD_TTL_HOURS)
+    ttl = _LEGACY_TTL
     labs: list[dict] = []
     seen: set[tuple[int, str]] = set()
 

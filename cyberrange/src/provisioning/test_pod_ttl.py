@@ -1,4 +1,4 @@
-"""Issue 10: lab TTL remaining + reaper uses the same clock."""
+"""Issue 10 + per-scenario limits: lab TTL remaining, reaper uses the same clock."""
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +19,13 @@ if "pylxd" not in sys.modules:
     sys.modules["pylxd"] = _pylxd
     sys.modules["pylxd.exceptions"] = _exc
 
-from ttl import is_ttl_expired, parse_created_at_utc, ttl_payload, ttl_seconds_remaining
+from ttl import (
+    is_ttl_expired,
+    parse_created_at_utc,
+    ttl_minutes_for,
+    ttl_payload,
+    ttl_seconds_remaining,
+)
 
 
 def test_parse_sqlite_naive_is_utc():
@@ -29,41 +35,62 @@ def test_parse_sqlite_naive_is_utc():
     assert dt.hour == 12
 
 
-def test_remaining_eight_hours_fresh(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ttl.POD_TTL_HOURS", 8)
+@pytest.mark.parametrize(
+    "scenario_id, minutes",
+    [("01", 30), ("1", 30), (1, 30), ("06", 45), ("09", 45), ("11", 60)],
+)
+def test_limit_follows_scenario_difficulty(scenario_id, minutes):
+    assert ttl_minutes_for(scenario_id) == minutes
+
+
+@pytest.mark.parametrize("scenario_id", [None, "", "abc", "99"])
+def test_unknown_scenario_gets_default_limit(scenario_id):
+    assert ttl_minutes_for(scenario_id) == 60
+
+
+def test_remaining_fresh_scenario_01():
     created = "2026-09-07 00:00:00"
     now = datetime(2026, 9, 7, 0, 0, 0, tzinfo=timezone.utc)
-    assert ttl_seconds_remaining(created, now) == 8 * 3600
-    assert is_ttl_expired(created, now) is False
-    payload = ttl_payload(created, now)
-    assert payload["ttl_hours"] == 8
-    assert payload["remaining_seconds"] == 8 * 3600
-    assert payload["expires_at"] == "2026-09-07T08:00:00Z"
+    assert ttl_seconds_remaining(created, 30, now) == 30 * 60
+    assert is_ttl_expired(created, 30, now) is False
+    payload = ttl_payload(created, "01", now)
+    assert payload["ttl_minutes"] == 30
+    assert payload["remaining_seconds"] == 30 * 60
+    assert payload["expires_at"] == "2026-09-07T00:30:00Z"
     assert payload["ttl_expired"] is False
 
 
-def test_remaining_clamps_at_zero(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("ttl.POD_TTL_HOURS", 8)
+def test_payload_uses_scenario_limit():
     created = "2026-09-07 00:00:00"
-    now = datetime(2026, 9, 7, 9, 0, 0, tzinfo=timezone.utc)
-    assert ttl_seconds_remaining(created, now) == 0
-    assert is_ttl_expired(created, now) is True
-    assert ttl_payload(created, now)["ttl_expired"] is True
+    now = datetime(2026, 9, 7, 0, 40, 0, tzinfo=timezone.utc)
+    assert ttl_payload(created, "01", now)["ttl_expired"] is True
+    p11 = ttl_payload(created, "11", now)
+    assert p11["ttl_expired"] is False
+    assert p11["remaining_seconds"] == 20 * 60
+    assert p11["expires_at"] == "2026-09-07T01:00:00Z"
+
+
+def test_remaining_clamps_at_zero():
+    created = "2026-09-07 00:00:00"
+    now = datetime(2026, 9, 7, 1, 0, 0, tzinfo=timezone.utc)
+    assert ttl_seconds_remaining(created, 45, now) == 0
+    assert is_ttl_expired(created, 45, now) is True
+    assert ttl_payload(created, "06", now)["ttl_expired"] is True
 
 
 def test_missing_created_at_is_not_expired():
-    assert ttl_seconds_remaining(None) == 0
-    assert ttl_seconds_remaining("") == 0
-    assert is_ttl_expired(None) is False
-    p = ttl_payload(None)
+    assert ttl_seconds_remaining(None, 30) == 0
+    assert ttl_seconds_remaining("", 30) == 0
+    assert is_ttl_expired(None, 30) is False
+    p = ttl_payload(None, "01")
     assert p["expires_at"] is None
     assert p["ttl_expired"] is False
     assert p["remaining_seconds"] == 0
 
 
 def test_junk_created_at_does_not_raise():
-    assert is_ttl_expired("not-a-date") is False
-    p = ttl_payload("not-a-date")
+    assert is_ttl_expired("not-a-date", 30) is False
+    p = ttl_payload("not-a-date", "01")
     assert p["ttl_expired"] is False
     assert p["expires_at"] is None
 
@@ -84,14 +111,16 @@ def ttl_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return db_path
 
 
-def _insert_active(created_sql: str, student_id: str = "alice", pod_id: int = 1) -> None:
+def _insert_active(
+    created_sql: str, student_id: str = "alice", pod_id: int = 1, scenario_id: str = "01"
+) -> None:
     # created_sql is a test-only SQL literal, never student input.
     conn = get_db_connection()
     with conn:
         conn.execute(
             "INSERT INTO pods (student_id, pod_id, status, scenario_id, created_at) "
-            "VALUES (?,?, 'ACTIVE', '01', " + created_sql + ")",
-            (student_id, pod_id),
+            "VALUES (?,?, 'ACTIVE', ?, " + created_sql + ")",
+            (student_id, pod_id, scenario_id),
         )
         conn.execute(
             "INSERT INTO milestone_verification "
@@ -114,7 +143,7 @@ def test_reap_skips_fresh_pod(ttl_db: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_reap_destroys_expired_pod_and_keeps_score(ttl_db: Path, monkeypatch: pytest.MonkeyPatch):
-    _insert_active("datetime('now', '-9 hours')")
+    _insert_active("datetime('now', '-31 minutes')")
 
     def fake_destroy(pod):
         finalize_destroyed_pod(pod["pod_id"], "DESTROYED")
@@ -132,12 +161,22 @@ def test_reap_destroys_expired_pod_and_keeps_score(ttl_db: Path, monkeypatch: py
 
 
 def test_reap_cas_leaves_destroying_if_destruction_noop(ttl_db: Path, monkeypatch: pytest.MonkeyPatch):
-    _insert_active("datetime('now', '-9 hours')")
+    _insert_active("datetime('now', '-31 minutes')")
     monkeypatch.setattr(reaper, "perform_destruction", lambda pod: None)
     asyncio.run(reap_ttl_once())
     conn = get_db_connection()
     assert conn.execute("SELECT status FROM pods WHERE pod_id=1").fetchone()[0] == "DESTROYING"
     conn.close()
+
+
+def test_reap_uses_each_scenarios_limit(ttl_db: Path, monkeypatch: pytest.MonkeyPatch):
+    # 40 min in: past scenario 01's 30, under scenario 11's 60.
+    _insert_active("datetime('now', '-40 minutes')", "alice", 1, "01")
+    _insert_active("datetime('now', '-40 minutes')", "bob", 2, "11")
+    called = []
+    monkeypatch.setattr(reaper, "perform_destruction", lambda pod: called.append(pod["pod_id"]))
+    asyncio.run(reap_ttl_once())
+    assert called == [1]
 
 
 def test_reap_ttl_once_source_has_no_milestone_sql():
@@ -152,19 +191,18 @@ from pods_router import get_pod_status, list_pods
 
 def test_list_pods_includes_ttl_fields(ttl_db: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(auth, "AUTH_ENABLED", True)
-    monkeypatch.setattr("ttl.POD_TTL_HOURS", 8)
     conn = get_db_connection()
     with conn:
         conn.execute(
             "INSERT INTO pods (student_id, pod_id, status, scenario_id, created_at) "
-            "VALUES ('alice', 1, 'ACTIVE', '01', datetime('now', '-1 hours'))"
+            "VALUES ('alice', 1, 'ACTIVE', '01', datetime('now', '-10 minutes'))"
         )
     conn.close()
     data = list_pods(claims={"preferred_username": "alice"})
     pod = data["pods"][0]
     assert not isinstance(pod, PodResponse)
-    assert pod["ttl_hours"] == 8
-    assert 6 * 3600 <= pod["remaining_seconds"] <= 8 * 3600
+    assert pod["ttl_minutes"] == 30
+    assert 0 < pod["remaining_seconds"] <= 20 * 60
     assert pod["expires_at"].endswith("Z")
     assert pod["ttl_expired"] is False
 
@@ -186,7 +224,6 @@ def test_list_pods_null_created_at_not_expired(ttl_db: Path, monkeypatch: pytest
 
 def test_get_pod_status_returns_pod_response(ttl_db: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(auth, "AUTH_ENABLED", True)
-    monkeypatch.setattr("ttl.POD_TTL_HOURS", 8)
     conn = get_db_connection()
     with conn:
         conn.execute(
@@ -200,7 +237,7 @@ def test_get_pod_status_returns_pod_response(ttl_db: Path, monkeypatch: pytest.M
     assert dumped["created_at"]
     assert dumped["scenario_id"] == "01"
     assert dumped["remaining_seconds"] > 0
-    assert dumped["ttl_hours"] == 8
+    assert dumped["ttl_minutes"] == 30
     assert dumped["ttl_expired"] is False
 
 
@@ -210,8 +247,8 @@ def test_pod_response_keeps_ttl():
         vmid_kali=None, vmid_meta=None, vmid_dvwa=None,
         connection_id=None, wazuh_agent_id=None, last_heartbeat=None,
         scenario_id="01", created_at="2026-09-07 00:00:00",
-        ttl_hours=8, remaining_seconds=100,
-        expires_at="2026-09-07T08:00:00Z", ttl_expired=False,
+        ttl_minutes=30, remaining_seconds=100,
+        expires_at="2026-09-07T00:30:00Z", ttl_expired=False,
     )
     dumped = m.model_dump() if hasattr(m, "model_dump") else m.dict()
     assert dumped["remaining_seconds"] == 100

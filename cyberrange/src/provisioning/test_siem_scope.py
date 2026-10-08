@@ -181,9 +181,8 @@ class TestDetectionWindowPodScope:
 
     @pytest.mark.anyio
     async def test_missing_created_at_keeps_ttl_window(self, monkeypatch):
-        monkeypatch.setattr("scoring.POD_TTL_HOURS", 8)
         pod = {"pod_id": 202, "student_id": "alice", "wazuh_agent_id": json.dumps({"meta": "012"})}
-        assert await self._run(pod) == [480]
+        assert await self._run(pod) == [45]  # scenario 09 limit
 
 
 # ── score_verifier.verify_siem_alert reads the newest bytes ─────────────────

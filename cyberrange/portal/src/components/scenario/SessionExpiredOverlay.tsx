@@ -4,17 +4,17 @@ import { Clock } from 'lucide-react'
 import { Button } from '@/components/ui'
 
 export function SessionExpiredOverlay({
-  ttlHours,
+  ttlMinutes,
   onRestart,
   onDashboard,
 }: {
-  ttlHours: number | null
+  ttlMinutes: number | null
   onRestart: () => void
   onDashboard: () => void
 }) {
   const body =
-    typeof ttlHours === 'number'
-      ? `Your ${ttlHours}-hour lab time limit ended and this session was stopped. Your progress is saved.`
+    typeof ttlMinutes === 'number'
+      ? `Your ${ttlMinutes}-minute lab time limit ended and this session was stopped. Your progress is saved.`
       : 'Your lab time limit ended and this session was stopped. Your progress is saved.'
 
   return (

@@ -1,6 +1,7 @@
-"""Pod lab TTL. Deadline = created_at (SQLite UTC) + POD_TTL_HOURS.
+"""Pod lab TTL. Deadline = created_at (SQLite UTC) + the scenario's time limit
+(config.SCENARIO_TTL_MINUTES, DEFAULT_TTL_MINUTES for anything else).
 
-Changing POD_TTL_HOURS on API restart retimes in-flight labs. No expires_at column.
+Changing the limits on API restart retimes in-flight labs. No expires_at column.
 """
 from __future__ import annotations
 
@@ -8,7 +9,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from config import POD_TTL_HOURS
+from config import DEFAULT_TTL_MINUTES, SCENARIO_TTL_MINUTES
 
 logger = logging.getLogger("provision_api")
 _SQLITE_NAIVE = "%Y-%m-%d %H:%M:%S"
@@ -62,46 +63,53 @@ def minutes_since_created(
     return max(1, min(cap_minutes, -(-int(elapsed) // 60)))
 
 
+def ttl_minutes_for(scenario_id: object) -> int:
+    """Lab time limit for a scenario. Accepts '01', '1', or 1."""
+    try:
+        key = int(str(scenario_id).strip())
+    except (TypeError, ValueError):
+        return DEFAULT_TTL_MINUTES
+    return SCENARIO_TTL_MINUTES.get(key, DEFAULT_TTL_MINUTES)
+
+
 def ttl_seconds_remaining(
     created_at: Optional[str],
+    ttl_minutes: int,
     now: Optional[datetime] = None,
-    ttl_hours: Optional[int] = None,
 ) -> int:
     created = _try_parse(created_at)
     if created is None:
         return 0
-    hours = POD_TTL_HOURS if ttl_hours is None else ttl_hours
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    expires = created + timedelta(hours=hours)
+    expires = created + timedelta(minutes=ttl_minutes)
     return max(0, int((expires - now).total_seconds()))
 
 
 def is_ttl_expired(
     created_at: Optional[str],
+    ttl_minutes: int,
     now: Optional[datetime] = None,
-    ttl_hours: Optional[int] = None,
 ) -> bool:
     if _try_parse(created_at) is None:
         return False
-    return ttl_seconds_remaining(created_at, now, ttl_hours) <= 0
+    return ttl_seconds_remaining(created_at, ttl_minutes, now) <= 0
 
 
 def ttl_payload(
     created_at: Optional[str],
+    scenario_id: object,
     now: Optional[datetime] = None,
-    ttl_hours: Optional[int] = None,
 ) -> dict:
-    hours = POD_TTL_HOURS if ttl_hours is None else ttl_hours
+    minutes = ttl_minutes_for(scenario_id)
     created = _try_parse(created_at)
-    remaining = ttl_seconds_remaining(created_at, now, hours)
     expires_at = None
     if created is not None:
-        expires_at = (created + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        expires_at = (created + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
-        "ttl_hours": hours,
-        "remaining_seconds": remaining,
+        "ttl_minutes": minutes,
+        "remaining_seconds": ttl_seconds_remaining(created_at, minutes, now),
         "expires_at": expires_at,
-        "ttl_expired": is_ttl_expired(created_at, now, hours),
+        "ttl_expired": is_ttl_expired(created_at, minutes, now),
     }

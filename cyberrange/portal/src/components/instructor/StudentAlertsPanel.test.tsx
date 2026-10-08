@@ -33,7 +33,7 @@ function pod(overrides: Partial<InstructorPod> = {}): InstructorPod {
     last_heartbeat: null,
     created_at: null,
     scenario_id: "09",
-    ttl_hours: 8,
+    ttl_minutes: 30,
     remaining_seconds: 3600,
     expires_at: null,
     ttl_expired: false,

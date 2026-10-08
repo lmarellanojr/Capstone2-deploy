@@ -106,7 +106,7 @@ ip -4 route | grep 10.115.77.0
 **Open browser on your PC:** `https://<TUNNEL_HOST>/` (not from the VM).
 
 The catalog is four scenarios: **01, 06, 09, 11**. There is no image picker and
-no timeout field. TTL is server-side (`POD_TTL_HOURS=8`). Pods are not on
+no timeout field. TTL is server-side and per scenario (`SCENARIO_TTL_MINUTES`: 30/45/45/60 min). Pods are not on
 `lxdbr0`; they sit on OVN `10.0.{50+pod_id}.0/24` (pod 1 → `10.0.51.10` Kali).
 
 ### Check 1: Login

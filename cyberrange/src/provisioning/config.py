@@ -30,8 +30,17 @@ API_BIND_PORT = int(os.getenv("API_BIND_PORT", "5000"))
 MAX_PODS = int(os.getenv("MAX_PODS", str(_PROFILE.max_pods)))
 STORAGE_LIMIT_MB = int(os.getenv("STORAGE_LIMIT_MB", str(_PROFILE.storage_limit_mb)))
 POD_STORAGE_MB = int(os.getenv("POD_STORAGE_MB", str(_PROFILE.pod_storage_mb)))
-POD_TTL_HOURS = int(os.getenv("POD_TTL_HOURS", "8"))
+# Lab time limit per catalog scenario, in minutes. Mirrors the difficulty
+# durations the portal shows (scenarioDuration in DifficultyBadge.tsx):
+# difficulty 1 = 30, 2 = 45, 3 = 60. Keep the two in sync.
+SCENARIO_TTL_MINUTES = {1: 30, 6: 45, 9: 45, 11: 60}
+# Any scenario not in the map (off-catalog or unparseable id).
+DEFAULT_TTL_MINUTES = int(os.getenv("DEFAULT_TTL_MINUTES", "60"))
+MAX_TTL_MINUTES = max([DEFAULT_TTL_MINUTES, *SCENARIO_TTL_MINUTES.values()])
 REAP_INTERVAL_SECONDS = int(os.getenv("REAP_INTERVAL_SECONDS", "600"))
+# Labs are 30-60 min, so the expiry check runs far more often than the
+# stuck-pod / network sweep above; otherwise a lab could overrun by 10 min.
+TTL_CHECK_INTERVAL_SECONDS = int(os.getenv("TTL_CHECK_INTERVAL_SECONDS", "60"))
 # A crashed background task, hung LXD call, or API restart mid-flight can
 # leave a row in PROVISIONING or DESTROYING forever -- nothing else ever
 # revisits it, so it permanently occupies a MAX_PODS slot and the v2

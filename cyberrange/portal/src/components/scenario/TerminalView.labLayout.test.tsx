@@ -76,7 +76,7 @@ const pod: Pod = {
   scenario_id: "09",
   created_at: null,
   last_heartbeat: null,
-  ttl_hours: 8,
+  ttl_minutes: 30,
   remaining_seconds: 3600,
   expires_at: new Date(Date.now() + 3600_000).toISOString(),
   ttl_expired: false,

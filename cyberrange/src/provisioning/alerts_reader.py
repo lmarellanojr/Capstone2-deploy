@@ -162,7 +162,7 @@ def _read_manager_tail() -> tuple[bytes, bool]:
 # alerts.json). Month names are English abbreviations regardless of locale.
 
 ARCHIVE_DIR = "/var/ossec/logs/alerts"
-ARCHIVE_MAX_DAYS = 10  # a lab is capped at POD_TTL_HOURS; this is slack
+ARCHIVE_MAX_DAYS = 10  # a lab is capped at 60 min (config.SCENARIO_TTL_MINUTES); this is slack
 ARCHIVE_FILE_MAX_BYTES = 64 * 1024 * 1024
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 

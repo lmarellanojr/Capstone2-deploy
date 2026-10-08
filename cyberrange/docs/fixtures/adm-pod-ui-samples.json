@@ -28,9 +28,9 @@
               "wazuh_agent_id": null,
               "created_at": "2026-09-16 12:00:00",
               "last_heartbeat": null,
-              "ttl_hours": 4,
-              "remaining_seconds": 14000,
-              "expires_at": "2026-09-16T16:00:00+00:00",
+              "ttl_minutes": 30,
+              "remaining_seconds": 1200,
+              "expires_at": "2026-09-16T12:30:00Z",
               "ttl_expired": false
             },
             {
@@ -46,9 +46,9 @@
               "wazuh_agent_id": null,
               "created_at": "2026-09-16 13:00:00",
               "last_heartbeat": null,
-              "ttl_hours": 4,
-              "remaining_seconds": 14400,
-              "expires_at": "2026-09-16T17:00:00+00:00",
+              "ttl_minutes": 45,
+              "remaining_seconds": 2700,
+              "expires_at": "2026-09-16T13:45:00Z",
               "ttl_expired": false
             }
           ]
@@ -101,9 +101,9 @@
           "wazuh_agent_id": null,
           "last_heartbeat": "2026-09-16 12:05:00",
           "created_at": "2026-09-16 12:00:00",
-          "ttl_hours": 4,
-          "remaining_seconds": 14000,
-          "expires_at": "2026-09-16T16:00:00+00:00",
+          "ttl_minutes": 30,
+          "remaining_seconds": 1200,
+          "expires_at": "2026-09-16T12:30:00Z",
           "ttl_expired": false
         }
       },
