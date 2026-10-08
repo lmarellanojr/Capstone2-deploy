@@ -1,6 +1,12 @@
 import fs from "fs"
 import path from "path"
-import { extractBigPicture, splitGuide } from "./guideSections"
+import {
+  extractBigPicture,
+  splitGuide,
+  extractTaskSection,
+  guideTaskNumbers,
+  tasksAlignWithMilestones,
+} from "./guideSections"
 import { SCENARIOS } from "@/hooks/useScenarios"
 
 describe("extractBigPicture", () => {
@@ -151,6 +157,105 @@ describe("every scenario guide splits cleanly for the lab panel", () => {
     expect(tasks).toBeGreaterThan(0)
     expect((guide.match(/^### Task \d/gm) || []).length).toBe(tasks)
     expect(scoring).not.toMatch(/^### Task \d/m)
+  })
+})
+
+describe("extractTaskSection", () => {
+  const md = [
+    "## 2. How scoring works",
+    "explainer",
+    "---",
+    "### Task 1: alpha",
+    "do alpha",
+    "```bash",
+    "## not a heading inside a fence",
+    "### Task 9: not a real task (fenced)",
+    "```",
+    "more alpha",
+    "### Task 2: beta",
+    "do beta",
+    "## 3. Playground",
+    "playground",
+  ].join("\n")
+
+  it("returns only the requested task, fences and all, up to the next heading", () => {
+    const t1 = extractTaskSection(md, 1)
+    expect(t1).toMatch(/^### Task 1: alpha/)
+    expect(t1).toContain("do alpha")
+    expect(t1).toContain("## not a heading inside a fence") // kept: inside fence
+    expect(t1).toContain("more alpha")
+    expect(t1).not.toContain("### Task 2")
+    expect(t1).not.toContain("playground")
+  })
+
+  it("stops the last task at the next `## ` section", () => {
+    const t2 = extractTaskSection(md, 2)
+    expect(t2).toContain("do beta")
+    expect(t2).not.toContain("playground")
+  })
+
+  it("returns null when there is no such task", () => {
+    expect(extractTaskSection(md, 5)).toBeNull()
+    expect(extractTaskSection("## 1. Intro\nno tasks here", 1)).toBeNull()
+  })
+
+  it("extracts each real task from the Scenario 1 guide", () => {
+    const dir = path.join(__dirname, "..", "..", "public", "scenarios")
+    const s1 = fs.readFileSync(
+      path.join(dir, "scenario_01_network_reconnaissance.md"),
+      "utf8"
+    )
+    for (let n = 1; n <= 5; n++) {
+      const section = extractTaskSection(s1, n)
+      expect(section).not.toBeNull()
+      expect(section).toMatch(new RegExp(`^### Task ${n}\\b`))
+    }
+  })
+})
+
+describe("tasksAlignWithMilestones", () => {
+  it("lists task heading numbers, ignoring fenced lines", () => {
+    const md = [
+      "### Task 1: a",
+      "```",
+      "### Task 9: fenced, not a heading",
+      "```",
+      "### Task 2: b",
+    ].join("\n")
+    expect(guideTaskNumbers(md)).toEqual([1, 2])
+  })
+
+  it("is true only when headings are exactly 1..milestoneCount", () => {
+    const aligned = "### Task 1: a\n### Task 2: b\n### Task 3: c"
+    expect(tasksAlignWithMilestones(aligned, 3)).toBe(true)
+    // Count mismatch.
+    expect(tasksAlignWithMilestones(aligned, 4)).toBe(false)
+    expect(tasksAlignWithMilestones(aligned, 2)).toBe(false)
+    // Offset numbering (Scenario 3 style: Task 0..3 with 3 milestones).
+    const offset = "### Task 0: setup\n### Task 1: a\n### Task 2: b\n### Task 3: c"
+    expect(tasksAlignWithMilestones(offset, 3)).toBe(false)
+    expect(tasksAlignWithMilestones(offset, 4)).toBe(false)
+    // No tasks, or non-positive count.
+    expect(tasksAlignWithMilestones("## 1. Intro\ntext", 2)).toBe(false)
+    expect(tasksAlignWithMilestones(aligned, 0)).toBe(false)
+  })
+
+  it("matches the real scenario guides against their own milestone counts", () => {
+    const dir = path.join(__dirname, "..", "..", "public", "scenarios")
+    // Expected per-task enablement by guide file; others fall back to full guide.
+    const expectedAligned: Record<string, boolean> = {
+      "scenario_01_network_reconnaissance.md": true,
+      "scenario_02_web_application_attack_sql_injection.md": true,
+      "scenario_03_siem_alert_triage_and_log_analysis.md": false, // guide is Task 0..3
+      "scenario_04_vulnerability_hardening.md": true,
+    }
+    for (const s of SCENARIOS) {
+      if (!s.guideFile || !(s.guideFile in expectedAligned)) continue
+      const md = fs.readFileSync(path.join(dir, s.guideFile), "utf8")
+      expect(tasksAlignWithMilestones(md, s.milestones.length)).toBe(
+        expectedAligned[s.guideFile]
+      )
+    }
   })
 })
 

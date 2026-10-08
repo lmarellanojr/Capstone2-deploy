@@ -335,7 +335,7 @@ https://<TUNNEL_HOST>/
 You should see:
 1. Keycloak login (if not already signed in)
 2. Dashboard / **My Labs** (`/scenarios`) — catalog is **01, 06, 09, 11**
-3. No image picker and no timeout field (`POD_TTL_HOURS=8` is server-side)
+3. No image picker and no timeout field (lab time limits are per scenario, server-side: `SCENARIO_TTL_MINUTES` in config.py)
 
 ### Quick Test: Start a lab
 

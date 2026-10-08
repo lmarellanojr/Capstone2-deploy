@@ -7,10 +7,9 @@ from typing import Any, Callable, Optional, Tuple, Type
 
 from fastapi import HTTPException
 
-from config import POD_TTL_HOURS
 from db import get_db_connection, log_event
 from models import VerificationResponse
-from ttl import minutes_since_created
+from ttl import minutes_since_created, siem_window_minutes
 
 logger = logging.getLogger("provision_api")
 
@@ -111,7 +110,7 @@ async def verify_milestone(
                 aid = json.loads(pod["wazuh_agent_id"]).get(det["role"])
                 # Window = this pod's lifetime, so an alert from the student's
                 # previous pod can't set detection_score on the new one.
-                window = minutes_since_created(pod.get("created_at"), POD_TTL_HOURS * 60)
+                window = minutes_since_created(pod.get("created_at"), siem_window_minutes(scenario_id))
                 if aid and verify_siem_alert(aid, det["rule_id"], since_minutes=window):
                     detection_score = 1
                     detection_data = f"rule {det['rule_id']} on agent {aid}"

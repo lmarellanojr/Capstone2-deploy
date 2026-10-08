@@ -69,7 +69,7 @@ export interface Pod {
   scenario_id: string | null
   created_at: string | null
   last_heartbeat: string | null
-  ttl_hours: number
+  ttl_minutes: number
   remaining_seconds: number
   expires_at: string | null
   ttl_expired: boolean
@@ -131,7 +131,7 @@ export interface InstructorPod {
   last_heartbeat: string | null
   created_at: string | null
   scenario_id: string | null
-  ttl_hours: number
+  ttl_minutes: number
   remaining_seconds: number
   expires_at: string | null
   ttl_expired: boolean

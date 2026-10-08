@@ -12,6 +12,12 @@ export interface Milestone {
   // `warning` for the trap a student is most likely to misread (e.g. a
   // command whose success signal is empty output); default is `info`.
   cueVariant?: 'info' | 'warning'
+  // Pins this milestone to a specific `### Task N` section in the guide for the
+  // per-task walkthrough. Set it only when the guide's task numbering doesn't
+  // line up with milestone order (e.g. Scenario 3's guide starts at `### Task
+  // 0`). When unset, the panel uses the positional number (milestone index + 1)
+  // and only if the guide's tasks map 1:1 onto the milestones.
+  guideTaskNumber?: number
 }
 
 export interface Scenario {
@@ -32,6 +38,16 @@ export interface Scenario {
   difficulty: 1 | 2 | 3
   guideFile: string
   milestones: Milestone[]
+  labSurface?: 'terminal' | 'dvwa' | 'siem'
+}
+
+// Single helper to resolve lab right-pane surface
+export function getLabSurface(scenario?: Pick<Scenario, 'id' | 'labSurface'> | null): 'terminal' | 'dvwa' | 'siem' {
+  if (!scenario) return 'terminal'
+  if (scenario.labSurface) return scenario.labSurface
+  if (scenario.id === '06') return 'dvwa'
+  if (scenario.id === '09') return 'siem'
+  return 'terminal'
 }
 
 // GUIDE-UX-TRIAL / SCEN-UX #116: "Scenario N -- Name" for any screen that
@@ -50,6 +66,7 @@ export const SCENARIOS: Scenario[] = [
     mitre: 'T1046',
     difficulty: 1,
     guideFile: 'scenario_01_network_reconnaissance.md',
+    labSurface: 'terminal',
     milestones: [
       {
         id: 1,
@@ -100,12 +117,46 @@ export const SCENARIOS: Scenario[] = [
     mitre: 'T1190',
     difficulty: 2,
     guideFile: 'scenario_02_web_application_attack_sql_injection.md',
+    labSurface: 'dvwa',
     milestones: [
-      { id: 1, name: 'Injection Point', description: 'Identify the SQL injection vulnerability in the DVWA application (set security to Low).', points: 50 },
-      { id: 2, name: 'Database Extraction', description: 'Extract the users table from the backend database using the injection vulnerability.', points: 75 },
-      { id: 3, name: 'Admin Hash', description: 'Retrieve the admin account password hash from the database.', points: 100 },
-      { id: 4, name: 'Reflected XSS', description: 'Exploit the Reflected Cross-Site Scripting (XSS) vulnerability in DVWA (set security to Low).', points: 75 },
-      { id: 5, name: 'Capture the Flag', description: 'Submit the Reflected XSS payload in the "What\'s your name?" box (Task 4); a short code (e.g. brave-otter-7421) appears on that result page. Paste it below.', points: 50 },
+      {
+        id: 1,
+        name: 'Injection Point',
+        goal: 'Make the query misbehave and return all user rows',
+        cue: '⚠ Set DVWA Security to Low first — higher levels block these payloads and nothing will score.',
+        description: 'Identify the SQL injection vulnerability in the DVWA application (set security to Low).',
+        points: 50,
+      },
+      {
+        id: 2,
+        name: 'Database Extraction',
+        goal: 'Use a UNION SELECT to make DVWA print the database\'s own name',
+        description: 'Extract the users table from the backend database using the injection vulnerability.',
+        points: 75,
+      },
+      {
+        id: 3,
+        name: 'Admin Hash',
+        goal: 'Dump the users table so the admin\'s password hash appears',
+        description: 'Retrieve the admin account password hash from the database.',
+        points: 100,
+      },
+      {
+        id: 4,
+        name: 'Reflected XSS',
+        goal: 'Get DVWA to reflect and run a <script>',
+        cue: 'The alert pop-up is your proof the script ran — that\'s exactly what the range scores.',
+        description: 'Exploit the Reflected Cross-Site Scripting (XSS) vulnerability in DVWA (set security to Low).',
+        points: 75,
+      },
+      {
+        id: 5,
+        name: 'Capture the Flag',
+        goal: 'Read the secret flag revealed by your Reflected XSS and submit it',
+        cue: 'After Submit, scroll down the XSS page — your capture-the-flag code is on its own line.',
+        description: 'Submit the Reflected XSS payload in the "What\'s your name?" box (Task 4); a short code (e.g. brave-otter-7421) appears on that result page. Paste it below.',
+        points: 50,
+      },
     ],
   },
   {
@@ -117,6 +168,7 @@ export const SCENARIOS: Scenario[] = [
     mitre: 'T1595',
     difficulty: 2,
     guideFile: 'scenario_03_siem_alert_triage_and_log_analysis.md',
+    labSurface: 'siem',
     milestones: [
       { id: 1, name: 'Start Triage', description: 'Generate noise from Kali, open the SIEM (if available), and write alert_triage.json on meta with rule/severity fields.', points: 50 },
       { id: 2, name: 'True Positive Classification', description: 'Classify true positives and write incident_timeline.md (or mark TPs in the triage file) on meta.', points: 100 },
@@ -132,6 +184,7 @@ export const SCENARIOS: Scenario[] = [
     mitre: 'T1548',
     difficulty: 3,
     guideFile: 'scenario_04_vulnerability_hardening.md',
+    labSurface: 'terminal',
     milestones: [
       {
         id: 1,

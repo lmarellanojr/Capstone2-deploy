@@ -46,12 +46,25 @@ describe('TerminalSideCue', () => {
 
   it('uses the warning style when variant is warning', () => {
     render(<TerminalSideCue taskId={2} cueText="Empty output = success" variant="warning" />)
-    const cue = screen.getByRole('complementary', { name: 'Terminal warning' })
+    const cue = screen.getByRole('complementary', { name: 'Lab warning' })
     expect(cue).toHaveAttribute('data-variant', 'warning')
   })
 
   it('defaults to the info style', () => {
     render(<TerminalSideCue taskId={1} cueText="All work is on meta" />)
-    expect(screen.getByRole('complementary', { name: 'Terminal tip' })).toHaveAttribute('data-variant', 'info')
+    expect(screen.getByRole('complementary', { name: 'Lab tip' })).toHaveAttribute('data-variant', 'info')
+  })
+
+  it('renders warning styling when cueText starts with ⚠ or variant is warning', () => {
+    const { container } = render(
+      <TerminalSideCue
+        taskId={1}
+        cueText="⚠ Set DVWA Security to Low first — higher levels block these payloads and nothing will score."
+      />
+    )
+    expect(
+      screen.getByText(/Set DVWA Security to Low first/i)
+    ).toBeTruthy()
+    expect(container.querySelector('.bg-amber-50\\/95')).toBeTruthy()
   })
 })

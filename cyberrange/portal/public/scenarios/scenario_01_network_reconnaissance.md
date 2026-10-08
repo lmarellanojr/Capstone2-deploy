@@ -4,7 +4,7 @@
 
 A guided, beginner walkthrough. Read each step's _“What you're doing & why”_ box as you go, you'll finish knowing not just the commands, but what each one actually does.
 
-Easy 30–45 min · MITRE T1046 · Attacker (Kali) · 4 milestones
+Easy 30–45 min · MITRE T1046 · Attacker (Kali) · 4 auto-detected milestones + 1 flag = 5 tasks
 
 ## 0. Before you start: the big picture
 
@@ -272,9 +272,9 @@ whoami
 ```
 
 #### Step 2 - submit the word it prints
-It prints one word - your Kali username (for example `student`). On the right,
-open the **Tasks** panel, find **Capture the Flag (whoami)**, type that word into
-**Submit the flag you found**, and click **Submit**.
+It prints one word - your Kali username (for example `student`). In the
+**exercise panel on the left**, under **Status**, type that word into **Submit
+the flag you found** and click **Submit**.
 
 - **Correct → the task completes and the points are awarded.**
 - **Wrong → no points, with a message to check it and try again.**
@@ -284,7 +284,7 @@ open the **Tasks** panel, find **Capture the Flag (whoami)**, type that word int
 ---
 ## 3. Recon playground (explore, not scored)
 
-Once your four milestones are green, try these to go deeper and actually understand what recon can reveal. They're safe here, it's your isolated lab. Run them from the **Kali** tab against Meta (`$TARGET_META`) or DVWA (`$TARGET_DVWA`).
+Once your five tasks are green, try these to go deeper and actually understand what recon can reveal. They're safe here, it's your isolated lab. Run them from the **Kali** tab against Meta (`$TARGET_META`) or DVWA (`$TARGET_DVWA`).
 
 Command | What it teaches / what you'll see  
 --- | ---  

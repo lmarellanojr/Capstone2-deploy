@@ -74,7 +74,7 @@ const pod: Pod = {
   scenario_id: "11",
   created_at: null,
   last_heartbeat: null,
-  ttl_hours: 8,
+  ttl_minutes: 30,
   remaining_seconds: 3600,
   expires_at: new Date(Date.now() + 3600_000).toISOString(),
   ttl_expired: false,
@@ -123,7 +123,7 @@ describe("TerminalView — Scenario 4 (Vulnerability Hardening)", () => {
     const task2 = scenario.milestones[1]
     await renderLab({ currentTaskId: task2.id, currentTaskCue: task2.cue, currentTaskCueVariant: task2.cueVariant })
 
-    const cue = screen.getByRole("complementary", { name: "Terminal warning" })
+    const cue = screen.getByRole("complementary", { name: "Lab warning" })
     expect(cue).toHaveTextContent(/Empty output = success/)
   })
 })

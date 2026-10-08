@@ -16,7 +16,7 @@ interface UseScenarioPodResult {
   endSession: () => Promise<void>
   clearError: () => void
   fetchedAtMs: number
-  lastTtlHours: number | null
+  lastTtlMinutes: number | null
 }
 
 function derivePhase(pod: Pod | null, ttlExpiredThisSession: boolean): PodPhase {
@@ -42,7 +42,7 @@ export function useScenarioPod(scenarioId: string, studentId: string): UseScenar
   const [pod, setPod] = useState<Pod | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [fetchedAtMs, setFetchedAtMs] = useState(() => Date.now())
-  const [lastTtlHours, setLastTtlHours] = useState<number | null>(null)
+  const [lastTtlMinutes, setLastTtlMinutes] = useState<number | null>(null)
   const [, setTtlExpiredThisSession] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const ttlExpiredRef = useRef(false)
@@ -87,7 +87,7 @@ export function useScenarioPod(scenarioId: string, studentId: string): UseScenar
         if (match && (match.status === 'PROVISIONING' || match.status === 'ACTIVE')) {
           provisioningWaitRef.current = false
           lastPodIdRef.current = match.pod_id
-          setLastTtlHours(match.ttl_hours)
+          setLastTtlMinutes(match.ttl_minutes)
           setFetchedAtMs(Date.now())
           ttlExpiredRef.current = false
           setTtlExpiredThisSession(false)
@@ -103,7 +103,7 @@ export function useScenarioPod(scenarioId: string, studentId: string): UseScenar
       let flag = ttlExpiredRef.current
       if (match) {
         lastPodIdRef.current = match.pod_id
-        setLastTtlHours(match.ttl_hours)
+        setLastTtlMinutes(match.ttl_minutes)
         setFetchedAtMs(Date.now())
         if (match.status === 'DESTROYING') flag = true
       } else if (lastPodIdRef.current != null) {
@@ -209,5 +209,5 @@ export function useScenarioPod(scenarioId: string, studentId: string): UseScenar
 
   const clearError = useCallback(() => setError(null), [])
 
-  return { phase, pod, error, startLab, endSession, clearError, fetchedAtMs, lastTtlHours }
+  return { phase, pod, error, startLab, endSession, clearError, fetchedAtMs, lastTtlMinutes }
 }
