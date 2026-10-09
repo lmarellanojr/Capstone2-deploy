@@ -9,9 +9,9 @@ const TIPS: Record<string, { title: string; body: ReactNode }> = {
     title: "Run your commands in the Kali tab",
     body: (
       <>
-        The scorer reads your <strong>Kali</strong> command history, so commands typed elsewhere
-        don&apos;t count. If a task isn&apos;t detected, press <strong>Enter</strong> once more and use{" "}
-        <strong>Manual Check</strong>.
+        Run scans from <strong>Kali</strong>. Keep the Task 4 remote session open until credited,
+        then return to Kali for the final username flag. Automatic checks run first;{" "}
+        <strong>Manual Check</strong> is available once per task and can lead to instructor review.
       </>
     ),
   },
@@ -24,8 +24,8 @@ const TIPS: Record<string, { title: string; body: ReactNode }> = {
         <strong>Open in new tab</strong> at the top-right. Log in with{" "}
         <code className="bg-white/70 px-1 rounded">admin</code> /{" "}
         <code className="bg-white/70 px-1 rounded">password</code> and set Security to{" "}
-        <strong>Low</strong>. Everything happens in the browser, and each task is scored
-        automatically.
+        <strong>Low</strong>. Tasks 1–4 score automatically from DVWA responses; submit the
+        Task 5 flag yourself in the portal.
       </>
     ),
   },
@@ -33,8 +33,8 @@ const TIPS: Record<string, { title: string; body: ReactNode }> = {
     title: "Generate activity first, then triage",
     body: (
       <>
-        Create attack noise from <strong>Kali</strong>, then click <strong>Open SIEM</strong> to see
-        the alerts it raised for your lab. Write your scored files on the <strong>meta</strong> tab (
+        Generate a failed SSH login from <strong>Kali</strong>, then click <strong>Open SIEM</strong>
+        and inspect your own meta agent's event. Write your scored files on the <strong>meta</strong> tab (
         <code className="bg-white/70 px-1 rounded">alert_triage.json</code>, timeline, report) as the
         guide describes.
       </>
@@ -44,7 +44,7 @@ const TIPS: Record<string, { title: string; body: ReactNode }> = {
     title: "Work on the meta target",
     body: (
       <>
-        Hardening happens on the <strong>Target: meta</strong> tab as{" "}
+        Hardening happens on the <strong>Target: meta (lab)</strong> tab as{" "}
         <code className="bg-white/70 px-1 rounded">msfadmin</code> (lab sudo). Changes made on Kali
         won&apos;t fix the target and won&apos;t score.
       </>

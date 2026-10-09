@@ -1,214 +1,166 @@
 ## Scenario 2: SQL Injection & Reflected XSS
 
-> **Path:** Browser-only - DVWA is embedded in the lab page. Scoring is automatic from proxied DVWA responses, no Kali/sqlmap required for the primary scored path.
+> **Where to work:** the embedded DVWA browser panel. Tasks 1–4 auto-score from DVWA responses; Task 5 requires flag submission.
 
-A guided, beginner walkthrough, done entirely in your **browser**. The portal watches DVWA and scores each milestone automatically, so there's no Kali, no sqlmap, and no copying cookies. Read each _“What you're doing & why”_ box as you go.
-
-Medium 45–60 min · MITRE T1190 · Attacker (browser) · 5 milestones · 350 pts
+Offensive · 5 tasks · 350 points · no terminal needed.
 
 ## 0. Before you start: the big picture
 
-You are the **attacker**, and your target is **DVWA** (Damn Vulnerable Web Application), a practice website built on purpose to be hackable. You'll prove the two most common web attacks, working entirely in your **browser** (no Kali, no command line):
+**DVWA** (Damn Vulnerable Web Application) is a deliberately vulnerable practice website. Work entirely in the browser: establish a normal result, change a database query through input, read the database name, retrieve the admin hash, demonstrate reflected script execution, and submit the lab flag.
 
-- **SQL injection**, typing database commands into an ordinary input box (like a login or search field) to trick the site into handing back data it should keep private, such as usernames and password hashes.
-- **Reflected XSS (Cross-Site Scripting)**, getting the site to run *your* JavaScript in the browser, the trick real attackers use to hijack another user's session.
+A **payload** is the input you supply to test a behavior. **SQL injection** means input changes the structure or meaning of a database query. **Reflected XSS** (Cross-Site Scripting) means the site includes submitted input in its response and the browser can interpret it as script. A **flag** is a lab value you find and submit to prove completion.
 
-Everything happens inside your own **isolated lab environment**, a private space only you can touch, so it's safe to break things here. DVWA opens right inside the lab page, you log in, and the portal watches your attacks and scores each task automatically.
+Tasks 1–3 use **User ID** on **SQL Injection**. Tasks 4–5 use **What's your name?** on **XSS (Reflected)**. Tasks 1–4 are automatic; the final task is submitted in the portal. Keep all exploration within your assigned lab.
 
-## 1. The pieces you'll use
+## 1. The website and payload syntax
 
-### DVWA, the target website
+Set **DVWA Security** to **Low** for this lab. A normal ID is placed inside a query that asks for two name values. The illustrative query is `SELECT first_name, last_name FROM users WHERE user_id = 'YOUR INPUT';` — explanation only, not a command to run.
 
-**DVWA** ("Damn Vulnerable Web Application") is a website built _on purpose_ to be hackable. It has a security slider, this lab runs at **Low** , where the holes are wide open. You'll attack two of its pages: **SQL Injection** and **XSS (Reflected)**.
+A single quote closes the input's quoted string. `OR '1'='1` adds an always-true condition. A **UNION SELECT** joins additional results to the original query and must supply the same number of values: two here. `null` supplies an empty value.
 
-Task | Milestone | What you prove | Points  
---- | --- | --- | ---  
-**Task 1** |  Injection Point | The ID field can be broken with SQL injection | 50  
-**Task 2** |  Database Extraction | You can read the database name / structure | 75  
-**Task 3** |  Admin Hash | You can dump the users table and its password hashes | 100  
-**Task 4** |  Reflected XSS | You can make the site run your JavaScript | 75  
-  
-### How SQL injection works, in one picture
+| Task | Existing navigation title | Points |
+| --- | --- | --- |
+| 1 | Injection Point | 50 |
+| 2 | Database Extraction | 75 |
+| 3 | Admin Hash | 100 |
+| 4 | Reflected XSS | 75 |
+| 5 | Capture the Flag | 50 |
 
-When you type an ID, DVWA drops it inside a database question, right between two single quotes:
-```bash
-SELECT first_name, last_name FROM users WHERE user_id = 'YOUR INPUT';
-```
+## 2. How scoring works
 
-  * Type `1'` → it becomes `… = '1'';` → one extra quote nothing closes → **syntax error**. That error proves your text reached the query.
-  * Type `1' OR '1'='1` → it becomes `… = '1' OR '1'='1';` → always true → returns **every user**.
+The portal checks your request and DVWA's successful response, rather than grading your screen. Task 1 accepts an always-true payload returning multiple rows, or a quote-triggered SQL syntax error. The required path below uses multiple rows. Task 2 checks metadata input and a returned database-name value. Task 3 checks a users-table UNION response containing a 32-character hexadecimal hash. Identify the admin row yourself; the detector does not verify that interpretation.
 
-> **Note:** Only a single quote can break this query, because the query is wrapped in single quotes. A double quote `"` does nothing here. 
+Task 4 checks a submitted script tag reflected in the response; it does **not** observe the popup itself. The popup is your separate evidence of execution. Task 5 checks the flag you submit and is not automatic.
 
-## 2. How scoring works (read this)
-
-The portal sits between you and DVWA. Every time you submit an attack, your request and DVWA's reply pass through the portal, and the portal looks at that reply for proof the attack worked. If it sees the proof, it records the milestone automatically.
-
-> **Important:** The portal scores what it sees in DVWA's reply — make sure your payload really returns the rows / error / reflection described below, if nothing came back, nothing scores. If a milestone doesn't tick, re-check that **Security = Low** and submit again. 
+If pending, check **Low**, the correct module and field, and the actual result before resubmitting. Avoid using **Manual Check** as a refresh button: where available, you get one per task and an unsuccessful check moves the task to instructor review.
 
 ## 3. Set up your lab
 
-  1. Provision the **SQL Injection** lab from the portal and wait for the lab to go **ACTIVE**.
-  2. DVWA loads **inside the lab page** on the left (no terminal needed). Prefer a full window? Click **Open in new tab**.
-  3. Log in with `admin` / `password`. You should land on the DVWA menu (if you see _setup.php / Create Database_ , tell your instructor).
-  4. Go to **DVWA Security** , set it to **Low** , and Submit.
+1. Start **SQL Injection** and wait for **ACTIVE**. DVWA appears inside the lab page; **Open in new tab** is available if preferred.
+2. Log in to DVWA with lab username `admin` and password `password`. If it shows database setup instead of the menu, ask your instructor to check the lab.
+3. Select **DVWA Security**, choose **Low**, and select **Submit**. Confirm the displayed security level.
+4. Select **SQL Injection** above the DVWA panel. Use **User ID** for Tasks 1–3.
 
-## 4. Do the milestones
+## 4. Do the tasks
 
-**This scenario has no terminal, you work entirely in the embedded DVWA.** Use the **grey buttons above the DVWA panel** (Home, SQL Injection, XSS (Reflected), DVWA Security, Login) to move between modules.
-Here's where each kind of step happens:
+### Task 1: Injection Point
 
-- **In DVWA (browser tab):** open the module, type the payload into the field, click **Submit**, and read the result on the page.
-- **In the portal (this tab):** watch the **Tasks** panel tick as each milestone scores automatically, and - for the final task - paste the flag you found.
+**Goal:** demonstrate that input changes the database query's behavior.
 
-For Tasks 1–4: open the module, paste the payload, submit, and watch the milestone tick. That's it.
+**Where to work:** **SQL Injection**, **User ID** in the DVWA panel.
 
+1. Enter normal ID `1`, select **Submit**, and note the single user's result as your baseline.
+2. In DVWA's **User ID** field, paste this payload and select **Submit**:
 
-### Task 1: prove the field is injectable
-
-**Goal:** make the query misbehave.
-
-> **What you're doing & why:** You slip a single quote into the ID field. Either you get a database error (proof your input reached the SQL) or you flip the logic to always-true and get every row back. The portal scores either outcome. 
-
-**In DVWA:** open **SQL Injection**, and in the **User ID** box type this payload, then click **Submit**:
-
-```bash
+```text
 1' OR '1'='1
 ```
 
-This flips the query's logic to always-true, so every user row comes back - proof your input reached the SQL query.
+3. Compare the returned rows with the baseline. The added condition `'1'='1'` is always true, allowing additional user rows to be returned.
 
-**Done when:** several user rows appear in DVWA and **Injection Point** ticks in the portal's Tasks panel.
+**Expected result:** multiple **First name** / **Surname** pairs appear instead of just user 1. A syntax error is another accepted scoring signal, but not the intended result of this payload.
 
-> **What you can do with this:** You've proven the field trusts your input, that's the foothold everything else builds on. The same hole now lets you read the _whole_ database, not just user 1. The names you see (admin, Gordon Brown, …) are the app's user records; in the next tasks you'll pull the sensitive columns hiding behind them. 
+**Done when:** you can explain the baseline-to-multiple-rows change and **Injection Point** is credited. In this lab you demonstrated access to additional user records, not unrestricted access to all server data.
 
+> **Troubleshooting:** Confirm **Low**, **SQL Injection**, and the single quotes. If only one row appears, replace the whole field with the shown payload and submit again.
 
-### Task 2: read the database itself
+### Task 2: Database Extraction
 
-**Goal:** make the database tell you its own name.
+**Goal:** find the current database name.
 
-> **What you're doing & why:** **UNION** lets you bolt your own `SELECT` onto the query and show its output in the same table. Asking for `database()` makes DVWA print the current database name (`dvwa`) right in the results, proof you can read beyond the intended data. 
+**Where to work:** **SQL Injection**, **User ID** in DVWA.
 
-_**`1' UNION SELECT null, database() -- -`** - closes the original quote, then UNION bolts on your own query; `database()` prints the current database name (`dvwa`) in the Surname cell._
-```bash
+1. In DVWA's **User ID** field, paste and select **Submit**:
+
+```text
 1' UNION SELECT null, database() -- -
 ```
 
-> **Note:** About `-- -`: That's dash‑dash‑**space** ‑dash. It comments out DVWA's leftover `'` so the query stays valid. This module shows **two** columns, so every `UNION SELECT` must return exactly two values. Using `null, database()` puts the name **`dvwa` alone in the Surname cell**, which matches what beginners should look for (and what browser scoring checks).
+2. Find the added result's **Surname** value. `database()` returns the current database name. The two supplied values, `null` and `database()`, match the original query's two columns.
+3. Check the delimiter: `-- -` is **dash, dash, space, dash**. The space matters; the comment prevents DVWA's remaining quote from breaking the injected query.
 
-Optional (playground): try `1' UNION SELECT user(), database() -- -` to also print the DB user in the First name cell, useful for learning, not required for this milestone.
+**Expected result:** an added row shows `dvwa` in **Surname**. The ordinary user 1 row can still appear as well.
 
-**Done when:** a row shows the database name `dvwa` (Surname) and **Database Extraction** ticks.
+**Done when:** you identify the database name and **Database Extraction** is credited. The existing navigation title remains Database Extraction; this task's required result is the name.
 
-> **What you can do with this:** Knowing the database name (`dvwa`) lets you aim at the right tables next. Use `information_schema` (see the playground) to list every table and column, the map you need before stealing the good stuff in Task 3. 
+> **Troubleshooting:** A column-count error means the UNION did not supply exactly two values. A syntax error can mean a missing single quote or the missing space in `-- -`.
 
+**Optional:** after the required path, select **PDF** beside the walkthrough to open the complete guide, including **Payload playground**. `1' UNION SELECT user(), database() -- -` also returns the database account; it is not required for completion.
 
-### Task 3: steal the password hashes
+### Task 3: Admin Hash
 
-**Goal:** dump the `users` table so the admin's password hash appears.
+**Goal:** retrieve and identify the admin password hash.
 
-> **What you're doing & why:** Same UNION trick, but now you read the `users` table directly, usernames and their (MD5) password hashes. Seeing a real 32‑character hash in the results is the proof for this milestone. 
+**Where to work:** **SQL Injection**, **User ID** in DVWA.
 
-_**`1' UNION SELECT user, password FROM users -- -`** - UNION-reads the `users` table directly, returning every username and its MD5 password hash in the results._
-```bash
+1. In DVWA's **User ID** field, paste and select **Submit**:
+
+```text
 1' UNION SELECT user, password FROM users -- -
 ```
 
-> **Note:** Rows like `admin` → `5f4dcc3b5aa765d61d8327deb882cf99` (that hash is the word “password”). Drop a hash into a cracker like CrackStation to confirm. 
+2. Find the added row whose **First name** value is `admin`. For these injected rows, **First name** displays the selected username and **Surname** displays its password hash; those labels do not describe the injected values.
+3. Identify the admin row's 32-character hexadecimal hash. A **hash** is a one-way derived value used to check passwords; it is not plaintext or reversible encryption. Weak passwords and fast hashes can still be guessed by comparing candidate hashes.
 
-**Done when:** the results show user + 32‑character hash rows and **Admin Hash** ticks.
+**Expected result:** username/hash pairs appear, including the admin account. Existing ordinary name rows may also appear; distinguish them from the injected pairs.
 
-> **What you can do with this:** Those are MD5 password hashes, **crack them offline** with a wordlist tool (hashcat, John the Ripper) or a lookup site like CrackStation. The admin hash is just `MD5('password')`, so it falls instantly. Once cracked you could log in as `admin`; in the real world you'd also try that password on the target's other services (credential reuse). 
+**Done when:** you identify the admin username and its corresponding hash and **Admin Hash** is credited. The checker sees a returned hash; your row identification supplies the learning evidence.
 
+**Why it matters:** the lab demonstrates why password storage needs protection from injection and suitable password hashing. Select **PDF** beside the walkthrough for the complete guide's **Payload playground**; cracking-tool exploration is not required here.
 
-### Task 4: make the site run your script
+### Task 4: Reflected XSS
 
-**Goal:** get DVWA to reflect and run a `<script>`.
+**Goal:** demonstrate that reflected input can execute a script in the DVWA result page.
 
-> **What you're doing & why:** The XSS (Reflected) page echoes your name straight back with no cleaning at Low security. Send it a `<script>` and the browser runs it, a pop-up appears. The portal sees your script reflected in the reply and scores it. 
+**Where to work:** select **XSS (Reflected)** above DVWA; use **What's your name?**.
 
-#### Click the **XSS (Reflected)** button above the DVWA panel, then in the “What's your name?” box, submit:
-```bash
+1. Switch from **SQL Injection** to **XSS (Reflected)**. This task changes browser behavior, rather than a database query.
+2. In DVWA's **What's your name?** field, paste and select **Submit**:
+
+```text
 <script>alert(1)</script>
 ```
 
-**Done when:** an `alert` pop-up appears (your script ran) and **Reflected XSS** ticks.
+3. Observe the popup containing `1`, then dismiss it with **OK** before continuing. **Reflected** means this response includes the input you just submitted; it is not saved as a stored message for later visitors.
 
-> **What you can do with this:** You can run _any_ JavaScript in whoever opens the page. In the real world an attacker wraps this in a link and sends it to a victim, opening it could steal their session cookie, log keystrokes, redirect them to a fake login, or act as them on the site. (Here the sandbox blocks cookie theft, try `<script>alert(document.cookie)</script>` in the playground and watch it come up empty.) 
+**Expected result:** the popup demonstrates script execution in this lab page. The portal's separate scoring signal is the script tag reflected in DVWA's response, not direct observation of execution.
 
-### Task 5: capture the flag
+**Done when:** you observe and dismiss the popup and **Reflected XSS** is credited.
 
-**Goal:** read the secret **flag** that your Reflected XSS from Task 4 reveals, then
-submit it in the portal. This is the same kind of capture-the-flag as Scenario 1.
+> **Troubleshooting:** Check **Low**, the correct module and field, and the exact script tags. A credited task without a popup does not prove execution; browser dialog settings may affect what you see. The lab's sandbox isolates the vulnerable page from portal cookies, so this demonstration does not establish access to the portal session.
 
-> **What you're doing & why:** When you submit in the XSS (Reflected) page, your lab
-> shows a capture-the-flag value planted just for you, right on that result page.
-> Reading it off the page and pasting it back is how this task is scored.
+### Task 5: Capture the Flag
 
-**Step 1 - reveal the flag (in DVWA):** click the **XSS (Reflected)** button above
-the DVWA panel. In the **"What's your name?"** box, submit the Task 4 payload:
-```bash
+**Goal:** read your lab's capture code and submit it in the portal.
+
+**Where to work:** **XSS (Reflected)** in DVWA, then **Capture the Flag** in task navigation and its **Status** area.
+
+1. If needed, repeat Task 4's payload in the DVWA **What's your name?** field and select **Submit**:
+
+```text
 <script>alert(1)</script>
 ```
 
-**Step 2 - read your code:** after you click **Submit**, scroll down the XSS
-(Reflected) page. You'll see a line like:
+2. Dismiss the popup with **OK**. Scroll **inside the DVWA result page** and find **Your capture-the-flag code:**. This lab's Low-security page reveals the planted code for nonempty name input; the code itself is not evidence that a script executed.
+3. Read your actual code. **Example only — do not submit this:** `brave-otter-7421` illustrates the two-words-and-four-digits format; it is not your answer.
+4. Select **Capture the Flag** in the portal's task navigation. While incomplete, enter your code in **Submit the flag you found** under **Status** and select **Submit**.
 
-> **Your capture-the-flag code:** `brave-otter-7421`
+**Expected result:** a correct code is accepted and points are awarded. A wrong code displays feedback without completing the task. Preserve hyphens and digits. Capitalization and surrounding whitespace are normalized; copying the displayed code exactly is simplest.
 
-It's a short, easy-to-read code (two words and some numbers), and it is **unique to
-you**. There is only this one code on the page, so there's no guessing which value to
-copy.
+**Done when:** **Capture the Flag** is credited. The submission field disappears after completion. All five tasks total **350 points**.
 
-**Step 3 - submit it (in the portal):** open the **Tasks** panel, find **Capture
-the Flag**, type that code into **Submit the flag you found**, and click **Submit**.
+> **Troubleshooting:** If no code appears, check **Low**, nonempty input, and **XSS (Reflected)**; scroll the DVWA page rather than the Guide. If the result has no code after these checks, ask your instructor to check flag setup. Do not guess or submit the example.
 
-- **Correct code → the task completes and points are awarded.**
-- **Wrong code → no points, with a message to check it and try again.** Type it
-  exactly as shown (for example `brave-otter-7421`). Capital letters don't matter.
+## 5. Payload playground (optional, not required for scoring)
 
-**How it's scored:** by the code you submit - there is no automatic detection for
-this task.
+After all five required tasks, compare these inputs only in your lab:
 
-**Scenario complete** when all 5 milestones pass and your total is **350 points** (50 + 75 + 100 + 75 + 50). 
+| DVWA field | Optional input | Observation to compare |
+| --- | --- | --- |
+| SQL Injection: User ID | `1'` | A quote can cause a SQL syntax error. |
+| SQL Injection: User ID | `1' UNION SELECT user(), database() -- -` | Database account and database name. |
+| SQL Injection: User ID | `1' UNION SELECT user(), @@version -- -` | Database account and server version. |
+| XSS (Reflected): What's your name? | `<b>bold</b>` | Markup rendering, without establishing script execution. |
+| XSS (Reflected): What's your name? | `<script>alert(document.domain)</script>` | Browser context of the vulnerable page; dismiss the popup. |
 
----
-## 5. Payload playground (explore, not required for scoring)
-
-Once you've earned the four milestones, try these to actually _understand_ the two bugs. They're safe here, it's your isolated lab. Paste each into the matching DVWA field.
-
-### SQL Injection, in the _User ID_ box
-
-Payload | What it teaches / what you'll see  
---- | ---  
-`1'` | Breaks the quote → SQL syntax error. The error text confirms injection.  
-`1' AND '1'='1` vs `1' AND '1'='2` | **Boolean logic:** the first returns user 1, the second returns nothing, the page answers true/false to your condition.  
-`1' ORDER BY 2 -- -` then `1' ORDER BY 3 -- -` | **Column counting:** 2 works, 3 errors → the query has **2 columns** (why UNION needs two values).  
-`1' UNION SELECT null, null -- -` | Confirms UNION works and both columns are printable.  
-`1' UNION SELECT user(), @@version -- -` | Reveals the **DB user** and the **MySQL/MariaDB version**.  
-`1' UNION SELECT table_name, table_schema FROM information_schema.tables -- -` | Lists every **table** in the server (the database's blueprint).  
-`1' UNION SELECT column_name, table_name FROM information_schema.columns WHERE table_name='users' -- -` | Lists the **columns** of the `users` table so you know what to steal.  
-`1' UNION SELECT user, CONCAT(user,0x3a,password) FROM users -- -` | Dumps each account as `user:hash` in one field, ready to feed a password cracker. (`0x3a` is a colon.)  
-  
-### Reflected XSS, in the _“What's your name?”_ box
-
-Payload | What it teaches / what you'll see  
---- | ---  
-`<script>alert(1)</script>` | The classic proof, a pop-up means your script executed.  
-`<script>alert(document.domain)</script>` | Shows _which site_ the script runs as, useful for judging impact.  
-`<img src=x onerror=alert('XSS')>` | XSS **without** a `<script>` tag, a broken image fires the code. Handy when scripts are filtered.  
-`<svg onload=alert(1)>` | Another script‑less vector, the SVG's load event runs your code.  
-`<b>bold</b>` or `<marquee>hi</marquee>` | Harmless HTML injection, proves your markup is rendered, not escaped, before you reach for scripts.  
-`<script>alert(document.cookie)</script>` | **Try it, and notice it fails / is empty.** The sandbox gives this page no real origin, so it _can't read the portal's cookies_. That's the isolation working: even a real XSS here can't hijack your session.  
-  
-> **Note:** This is **reflected** XSS: the script only runs for whoever opens your crafted link, and isn't saved. **Stored** XSS (a different module) saves the payload on the server so it fires for every visitor, more dangerous. Both are fixed the same way: escape/encode output and validate input. 
-
----
-## 6. Common problems & fixes
-
-Problem | Fix  
---- | ---  
-Milestone didn't tick | Make sure the result actually appeared (rows / error / pop-up), confirm **Security = Low** , then submit again.  
-Only one row / no rows | Security isn't Low, or the payload has a typo. Re-check the quote and the `-- -` (dash‑dash‑space‑dash).  
-UNION says “different number of columns” | This module has **2** columns, your `UNION SELECT` must return exactly two values (pad with `null`).  
-XSS didn't pop | Security isn't Low (higher levels escape your input), or you're on the wrong module, use **XSS (Reflected)**.  
+Optional offline password-guessing tools compare candidate hashes; no cracking is required to complete **Admin Hash**. Do not send lab hashes to external lookup services as part of the required workflow.
