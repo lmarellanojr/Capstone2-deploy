@@ -114,7 +114,7 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                 </Button>
               </div>
               <p id={`${uid}-pw-msg`} className={`mt-1 text-xs ${touched && lengthError ? "text-danger" : "text-text-muted"}`}>
-                {touched && lengthError ? lengthError : "8–128 characters. Keycloak's password policy may add rules."}
+                {touched && lengthError ? lengthError : "8–128 characters. Not a common password, the username, the email, or one of the last 3 passwords."}
               </p>
               {password && !lengthError && (
                 <button
