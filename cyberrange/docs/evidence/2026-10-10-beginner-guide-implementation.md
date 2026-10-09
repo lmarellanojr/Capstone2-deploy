@@ -60,6 +60,12 @@ The browser QA fixture uses the real ExercisePanel, GuideView, MarkdownView and 
 - Existing PDF button calls the print action; the existing full-guide print root includes every task and no Copy buttons. Four pod-6 PDFs generated with browser print: 8 / 6 / 7 / 5 pages for Scenarios 1 / 2 / 3 / 4. Text extraction found no unresolved address tokens. PDFs and screenshots are local QA artifacts under `evidence/guide-browser/`, not independent content sources.
 - `git diff --check`: passed. Production diff is limited to the four guides, useScenarios learner strings and ScenarioTips learner strings. No task metadata or renderer/layout/scoring code changed.
 
+## PR #172 review follow-up
+
+At head `f71cb155fc0b0dbae302277996939de086a8f8a5`, reviewer `leniejoice` left two non-blocking inline notes. The Scenario 1 Task 2 guidance now explains that `nmap -F` may satisfy history scoring while hiding 8180, and points learners to the targeted scan for the evidence needed next. The Scenario 3 Task 3 cue now names the affected system, alert, and recommended response, matching the words recognized by M3 while explaining that response actions remain evidence-based choices.
+
+Checker sources: Scenario 1's `check_scenario_1(2)` accepts `-p` or `-F` against the assigned target; `check_scenario_1(3)` expects `-sV`. Scenario 3's `check_scenario_9(3)` requires more than 200 bytes and any of `system|attack|alert|recommend`. The plan's stronger learning requirements remain intact.
+
 Live verification still required: actual SSH interaction and alert delay, editor availability (`vi`) and optional `python3`, exploit prompt/session behavior, actual service restart and new/old credential outcomes. The guide explicitly avoids guaranteed alert latency and labels optional syntax checking as conditional on python3 availability. If vi is absent, the guide directs the learner to the instructor; installed editor availability was not established from provisioning sources.
 
 No scoring/provisioning/layout defects were patched. No deployment, remote lab mutation, PR or publication is part of this implementation.

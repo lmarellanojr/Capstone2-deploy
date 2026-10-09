@@ -89,7 +89,7 @@ nmap -p 21,22,80,8180 $TARGET_META
 
 > **Troubleshooting:** If 8180 is missing, confirm you used `-p 21,22,80,8180` and meta's assigned address. Wait for startup and retry once. A fast scan may omit 8180; persistent missing services need an instructor check.
 
-**Optional — Kali shell:** `nmap -F $TARGET_META` scans common ports and may omit 8180; `nmap -p- $TARGET_META` scans all 65,535 TCP ports and takes longer. Neither replaces the targeted required path.
+**Optional — Kali shell:** `nmap -F $TARGET_META` scans common ports and may omit 8180. It can satisfy the command-history check, but you still need to observe 8180 for Tasks 3–4; the targeted `-p 21,22,80,8180` scan shows it directly. `nmap -p- $TARGET_META` scans all 65,535 TCP ports and takes longer.
 
 ### Task 3: Service Version Detection
 

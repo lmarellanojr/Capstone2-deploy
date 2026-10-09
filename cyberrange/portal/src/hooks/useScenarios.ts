@@ -195,7 +195,7 @@ export const SCENARIOS: Scenario[] = [
       {
         id: 3, name: 'Write the incident report', description: 'Turn your findings into actions for a supervisor.', points: 75, guideTaskNumber: 3,
         instructions: ['On meta, save /home/msfadmin/incident_report.txt with summary, affected system, evidence, interpretation, and recommended response.', 'Explain whether successful access is supported by the evidence. Exceed 200 bytes and justify response choices.'],
-        cue: 'Clarity and observed evidence come first. The size check is more than 200 bytes; blocking, rotation, isolation, and tuning are choices to justify.', cueVariant: 'info',
+        cue: 'Summarize the affected system, the alert, and your recommended response. The report must exceed 200 bytes; blocking, rotation, isolation, and tuning remain choices to justify.', cueVariant: 'info',
       },
     ],
   },
