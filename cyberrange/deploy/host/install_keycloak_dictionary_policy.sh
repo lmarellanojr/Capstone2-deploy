@@ -4,15 +4,31 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${DICTIONARY_POLICY_JAR:-$ROOT/keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar}"
 DST=/opt/keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar
+PINNED_JAR_SHA256=4fdc81228cef096503d64dda01a3d4d041972527c13c97813e28b1dd4914a9a6
 [[ -s "$SRC" ]] || { echo "missing dictionary provider artifact: $SRC (build with Maven first)"; exit 1; }
-# Refuse malformed archives and jars without their SPI registration/data.
+if [[ -z "${DICTIONARY_POLICY_JAR:-}" ]]; then
+  actual=$(sha256sum "$SRC" | cut -d' ' -f1)
+  [[ "$actual" == "$PINNED_JAR_SHA256" ]] || { echo "dictionary provider JAR checksum mismatch"; exit 1; }
+fi
+# Refuse malformed archives, extra SPIs/classes, and jars without their SPI registration/data.
 python3 - "$SRC" <<'PY'
 import hashlib, sys, zipfile
+ALLOWED_CLASSES = {
+    "edu/mmdc/cyberrange/policy/DictionaryMatcher.class",
+    "edu/mmdc/cyberrange/policy/DictionaryPasswordPolicyProvider.class",
+    "edu/mmdc/cyberrange/policy/DictionaryPasswordPolicyProviderFactory.class",
+}
+SPI = "META-INF/services/org.keycloak.policy.PasswordPolicyProviderFactory"
 try:
     with zipfile.ZipFile(sys.argv[1]) as jar:
         if jar.testzip() is not None:
             raise ValueError("corrupt archive")
-        registration = jar.read("META-INF/services/org.keycloak.policy.PasswordPolicyProviderFactory").decode()
+        for name in jar.namelist():
+            if name.startswith("META-INF/services/") and not name.endswith("/") and name != SPI:
+                raise ValueError("unexpected SPI registration: " + name)
+            if name.endswith(".class") and name not in ALLOWED_CLASSES:
+                raise ValueError("unexpected class: " + name)
+        registration = jar.read(SPI).decode()
         if "edu.mmdc.cyberrange.policy.DictionaryPasswordPolicyProviderFactory" not in registration.split():
             raise ValueError("dictionary provider registration missing")
         dictionary = jar.read("dictionary/scowl-en-v1.txt")

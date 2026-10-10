@@ -31,6 +31,7 @@ class DictionaryPolicyTest {
     @Test void boundsWorkBeforeAndAfterNormalization() {
         var matcher = smallDictionary();
         assertTrue(matcher.rejects(null));
+        assertTrue(matcher.rejects(""));
         assertTrue(matcher.rejects("7".repeat(129)));
         assertTrue(matcher.rejects("ﬃ".repeat(44)));
         assertFalse(matcher.rejects("7".repeat(128)));

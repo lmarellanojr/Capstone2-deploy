@@ -1,6 +1,7 @@
 """Installer fail-closed and restart/order contracts without a live container."""
 from pathlib import Path
 import os
+import re
 import subprocess
 import zipfile
 import sys
@@ -10,10 +11,12 @@ import pytest
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "install_keycloak_dictionary_policy.sh"
 
-def run(tmp_path, *, version="25.0.6", old="", active=True, ready=True, valid=True, dictionary_valid=True):
+def run(tmp_path, *, version="25.0.6", old="", active=True, ready=True, valid=True, dictionary_valid=True, extra_spi=False):
     jar = tmp_path / "policy.jar"
     with zipfile.ZipFile(jar, "w") as z:
         z.writestr("META-INF/services/org.keycloak.policy.PasswordPolicyProviderFactory", "edu.mmdc.cyberrange.policy.DictionaryPasswordPolicyProviderFactory")
+        if extra_spi:
+            z.writestr("META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory", "edu.mmdc.cyberrange.policy.EvilFactory")
         z.writestr("dictionary/scowl-en-v1.txt", (HERE.parent / "keycloak/dictionary-policy/src/main/resources/dictionary/scowl-en-v1.txt").read_bytes() if dictionary_valid else b"a\ni\n")
         z.writestr("META-INF/cyberrange-dictionary-policy.properties", "keycloak.version=" + ("25.0.6" if valid else "26.0.0") + "\npolicy.id=dictionaryWords\ndictionary.id=scowl-en-v1\n")
     if old == "same":
@@ -47,6 +50,15 @@ def test_committed_provider_jar_exists_and_matches_installer_checksum():
     assert "keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar" in text
     jar = HERE.parent / "keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar"
     assert jar.is_file() and jar.stat().st_size > 0
+    pinned = re.search(r"^PINNED_JAR_SHA256=([0-9a-f]{64})$", text, re.M).group(1)
+    assert hashlib.sha256(jar.read_bytes()).hexdigest() == pinned
+
+
+def test_extra_spi_registration_is_refused(tmp_path):
+    result, calls = run(tmp_path, extra_spi=True)
+    assert result.returncode != 0
+    assert "unexpected SPI" in result.stdout + result.stderr
+    assert "file push" not in calls
 
 @pytest.mark.parametrize("version,valid", [("26.0.0", True), ("25.0.6", False)])
 def test_incompatible_version_or_artifact_never_installed(tmp_path, version, valid):

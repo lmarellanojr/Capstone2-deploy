@@ -58,7 +58,7 @@ final class DictionaryMatcher {
 
     boolean rejects(String password) {
         // Bound work before Unicode normalization, including requests bypassing length policy.
-        if (password == null || password.length() > MAX_PASSWORD_LENGTH) return true;
+        if (password == null || password.isEmpty() || password.length() > MAX_PASSWORD_LENGTH) return true;
         String normalized = Normalizer.normalize(password, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT);
         if (normalized.length() > MAX_PASSWORD_LENGTH) return true;
         for (int start = 0; start < normalized.length(); start++) {
