@@ -58,3 +58,15 @@ export function landingPathForRole(roles: string[] | undefined): string | null {
   if (roles?.includes("student")) return "/dashboard"
   return null
 }
+
+// Keep request-time middleware and the client gate aligned. Only dashboard
+// entry changes by role; permitted deep links and shared lab pages stay put.
+export function redirectPathForRole(pathname: string, roles: string[] | undefined): string | null {
+  const landing = landingPathForRole(roles)
+  if (!landing) return "/no-role"
+  const path = pathname.replace(/\/+$/, "") || "/"
+  if (path === "/dashboard" && landing !== "/dashboard") return landing
+  const required = requiredRolesForPath(path)
+  if (required && !hasRequiredRole(roles, required)) return landing
+  return null
+}

@@ -1,4 +1,24 @@
-import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole, landingPathForRole } from "./routeRoles"
+import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole, landingPathForRole, redirectPathForRole } from "./routeRoles"
+
+describe("redirectPathForRole", () => {
+  it.each([
+    ["/dashboard", ["student"], null],
+    ["/dashboard/", ["instructor"], "/instructor"],
+    ["/dashboard", ["student", "admin"], "/admin"],
+    ["/dashboard", ["student", "instructor"], "/instructor"],
+    ["/dashboard", [], "/no-role"],
+    ["/admin/users", ["instructor"], "/instructor"],
+    ["/instructor/students", ["admin"], null],
+    ["/scenario/2", ["instructor"], null],
+    ["/dashboard/history", ["admin"], null],
+    ["/dashboard-other", ["admin"], null],
+  ] as [string, string[], string | null][])("%s for %j redirects to %s", (path, roles, expected) => {
+    expect(redirectPathForRole(path, roles)).toBe(expected)
+    if (expected && expected !== "/no-role") {
+      expect(redirectPathForRole(expected, roles)).toBeNull()
+    }
+  })
+})
 
 describe("requiredRolesForPath", () => {
   it("requires admin only for /admin routes", () => {

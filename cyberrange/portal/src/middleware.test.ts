@@ -35,17 +35,20 @@ async function visit(caller: Caller, pathname: string) {
 }
 
 // Expected outcome per caller: "allow" or the path the browser is redirected to.
-const STUDENT_PAGES = ["/dashboard", "/scenarios", "/scenario/2"]
+const STUDENT_PAGES = ["/scenarios", "/scenario/2"]
+const DASHBOARD_PAGES = ["/dashboard", "/dashboard/", "/dashboard?tab=progress"]
 const INSTRUCTOR_PAGES = ["/instructor", "/instructor/students", "/instructor/students/student_demo", "/instructor/reviews", "/instructor/reviews/1"]
 const ADMIN_PAGES = ["/admin", "/admin/users", "/admin/pods", "/admin/pods/5", "/admin/system"]
 
 const EXPECT: Record<string, Record<Caller, string>> = {
+  dashboard: { unauthenticated: "login", no_role: "/no-role", student: "allow", instructor: "/instructor", admin: "/admin" },
   student: { unauthenticated: "login", no_role: "/no-role", student: "allow", instructor: "allow", admin: "allow" },
   instructor: { unauthenticated: "login", no_role: "/no-role", student: "/dashboard", instructor: "allow", admin: "allow" },
-  admin: { unauthenticated: "login", no_role: "/no-role", student: "/dashboard", instructor: "/dashboard", admin: "allow" },
+  admin: { unauthenticated: "login", no_role: "/no-role", student: "/dashboard", instructor: "/instructor", admin: "allow" },
 }
 
 const CASES: [string, string][] = [
+  ...DASHBOARD_PAGES.map((p): [string, string] => [p, "dashboard"]),
   ...STUDENT_PAGES.map((p): [string, string] => [p, "student"]),
   ...INSTRUCTOR_PAGES.map((p): [string, string] => [p, "instructor"]),
   ...ADMIN_PAGES.map((p): [string, string] => [p, "admin"]),
@@ -68,10 +71,23 @@ describe("page RBAC matrix (middleware.ts)", () => {
 })
 
 describe("manual URL attempts", () => {
+  it.each([
+    [["student", "instructor"], "/instructor"],
+    [["student", "admin", "instructor"], "/admin"],
+  ] as [string[], string][])("uses role priority for %j without a redirect loop", async (roles, target) => {
+    mockedGetToken.mockResolvedValue({ roles } as never)
+    const req = (pathname: string) => new NextRequest(new URL(pathname, ORIGIN), {
+      headers: { host: "cyberrange.example.test", "x-forwarded-proto": "https" },
+    })
+    const res = await middleware(req("/dashboard"))
+    expect(new URL(res.headers.get("location")!).pathname).toBe(target)
+    expect((await middleware(req(target))).headers.get("location")).toBeNull()
+  })
+
   it("query string and trailing slash do not dodge the admin check", async () => {
     for (const p of ["/admin?role=admin", "/admin/users?as=admin", "/admin/", "/admin/users/"]) {
       expect(await visit("student", p)).toBe("/dashboard")
-      expect(await visit("instructor", p)).toBe("/dashboard")
+      expect(await visit("instructor", p)).toBe("/instructor")
     }
   })
 
