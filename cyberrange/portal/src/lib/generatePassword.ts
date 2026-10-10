@@ -1,18 +1,17 @@
 // Temporary passwords an Admin can read out or paste to a student.
-// Ambiguous characters (0/O, 1/l/I) are left out; at least one character of
-// each class is guaranteed so common Keycloak password policies accept it.
+// Digits and symbols avoid the realm's English dictionary substring rule,
+// including single-letter words. 24 characters compensate for this alphabet.
 // Uses crypto.getRandomValues — never Math.random for credentials.
 
-const LOWER = "abcdefghijkmnpqrstuvwxyz"
-const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
 const DIGIT = "23456789"
 const SYMBOL = "!@#$%*-_=+"
-const ALL = LOWER + UPPER + DIGIT + SYMBOL
+const ALL = DIGIT + SYMBOL
 
 /** `rand(n)` returns an unbiased integer in [0, n). Injectable for tests. */
-export function generatePassword(length = 14, rand: (n: number) => number = secureRandomInt): string {
-  const size = Math.max(length, 8)
-  const chars = [LOWER, UPPER, DIGIT, SYMBOL].map((set) => set[rand(set.length)])
+export function generatePassword(length = 24, rand: (n: number) => number = secureRandomInt): string {
+  if (!Number.isFinite(length)) throw new RangeError("Password length must be finite")
+  const size = Math.min(128, Math.max(Math.trunc(length), 8))
+  const chars = [DIGIT, SYMBOL].map((set) => set[rand(set.length)])
   while (chars.length < size) chars.push(ALL[rand(ALL.length)])
   // Fisher–Yates so the guaranteed characters aren't always at the front.
   for (let i = chars.length - 1; i > 0; i--) {

@@ -210,7 +210,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                 {showPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
               </button>
             </div>
-            {errorText("password", "8–128 characters. Not a common password, the username or the email.")}
+            {errorText("password", "8–128 characters. No English dictionary words anywhere in the password, including short words. Not a common password, the username or the email.")}
           </div>
 
           <label className="flex items-start gap-2 text-sm text-text-secondary cursor-pointer">

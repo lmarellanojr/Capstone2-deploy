@@ -88,12 +88,15 @@ expect() {
   fi
 }
 
-STRONG="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)Aa1!"
+STRONG="$(python3 -c 'import secrets; alphabet="0123456789!@#$%^&*()-_=+[]{}:,.?"; print("".join(secrets.choice(alphabet) for _ in range(24)))')"
 expect reject "7 characters"                  "Xk9#qv2"           'MinLength|minimum length'
 expect reject "common password (blocklist)"   "password1"         'Blacklist'
 expect reject "blocklist ignores case"        "PassWord123"       'Blacklist'
 expect reject "same as username"              "$PROBE"            'NotUsername|equal to the username'
 expect reject "same as email"                 "$EMAIL"            'NotEmail|equal to the email'
+expect reject "embedded dictionary word"     "982!sunshine#731" 'invalidPasswordDictionaryWordMessage|dictionary word'
+expect reject "mixed-case dictionary word"   "982!SuNsHiNe#731" 'invalidPasswordDictionaryWordMessage|dictionary word'
+expect reject "multi-word passphrase"        "sunshine mountain river 982!" 'invalidPasswordDictionaryWordMessage|dictionary word'
 expect accept "strong random password"        "$STRONG"
 expect reject "re-use of current password"    "$STRONG"           'History|last [0-9]+ passwords'
 expect reject "129 characters"                "$(printf 'k%.0s' $(seq 1 129))" 'MaxLength|maximum length'

@@ -56,12 +56,12 @@ def script_env() -> dict[str, str]:
 
 
 def verify(r: dict) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-c", _BLOCKS[0]], input=json.dumps(r),
+    return subprocess.run([sys.executable, "-c", _BLOCKS[-1]], input=json.dumps(r),
                           capture_output=True, text=True, env=script_env())
 
 
 def test_script_embeds_one_verifier():
-    assert len(_BLOCKS) == 1
+    assert len(_BLOCKS) == 2
 
 
 @pytest.mark.parametrize("path", [SCRIPT, VERIFY, INSTALL, PUSH_REALM])
@@ -69,11 +69,12 @@ def test_scripts_are_valid_bash(path):
     subprocess.run(["bash", "-n", str(path)], check=True)
 
 
-def test_policy_follows_nist_800_63b():
+def test_policy_retains_baseline_and_requested_dictionary_rule():
     clauses = dict(re.findall(r"(\w+)\(([^)]*)\)", script_policy()))
     assert int(clauses["length"]) >= 8  # MFA is mandatory (SEC-03); 15 without it
     assert int(clauses["maxLength"]) >= 64
     assert {"notUsername", "notEmail", "passwordHistory", "passwordBlacklist"} <= set(clauses)
+    assert clauses["dictionaryWords"] == "scowl-en-v1"
     # No composition rules and no forced expiry.
     assert not {"upperCase", "lowerCase", "digits", "specialChars", "forceExpiredPasswordChange"} & set(clauses)
 
@@ -106,6 +107,8 @@ def test_verifier_passes_on_the_scripted_policy():
     (script_policy().replace("passwordHistory(3)", "passwordHistory(0)"), "passwordHistory(>=1) missing"),
     (script_policy("x.txt"), "passwordBlacklist is not cyberrange-common-passwords.txt"),
     (script_policy(""), "passwordBlacklist is not"),
+    (script_policy().replace(" and dictionaryWords(scowl-en-v1)", ""), "dictionaryWords is not"),
+    (script_policy().replace("scowl-en-v1", "wrong"), "dictionaryWords is not"),
 ])
 def test_verifier_fails_closed_on_weak_policy(policy, problem):
     r = verify(realm(policy))
@@ -163,7 +166,7 @@ def test_every_reject_probe_names_the_policy_rule():
     # A bare non-zero exit must never count as "rejected by the policy".
     probes = re.findall(r"^expect (reject|accept) .*$", VERIFY.read_text(), re.M)
     rejects = re.findall(r"^expect reject (.*)$", VERIFY.read_text(), re.M)
-    assert len(probes) == 8 and len(rejects) == 7
+    assert len(probes) == 11 and len(rejects) == 10
     for line in rejects:
         assert re.search(r"'[^']+'\s*$", line), f"no expected-error regex: {line}"
 
@@ -234,3 +237,11 @@ def test_realm_restore_installs_the_blocklist():
 
 def test_enable_restarts_keycloak_only_when_blocklist_changed():
     assert re.search(r'BLOCKLIST_CHANGED.*\n\s*echo "blocklist changed.*\n\s*lxc exec guacamole -- systemctl restart keycloak', TEXT)
+
+
+@pytest.mark.parametrize("providers,accepted", [({}, False), ({"dictionaryWords": {}}, True)])
+def test_running_provider_is_required(providers, accepted):
+    info = {"providers": {"password-policy": {"providers": providers}}}
+    result = subprocess.run([sys.executable, "-c", _BLOCKS[0]], input=json.dumps(info), capture_output=True, text=True)
+    assert (result.returncode == 0) is accepted
+    assert TEXT.index("kcadm.sh get serverinfo") < TEXT.index('kcadm.sh update "realms/$REALM"')

@@ -14,6 +14,9 @@ lxc exec guacamole -- id keycloak &>/dev/null || {
   exit 1
 }
 
+bash "$(dirname "$0")/install_keycloak_dictionary_policy.sh"
+bash "$(dirname "$0")/install_keycloak_blocklist.sh"
+
 lxc exec guacamole -- mkdir -p /opt/keycloak/data/import
 lxc file push "$SRC" "guacamole${DST}"
 lxc exec guacamole -- chown keycloak:keycloak "$DST"

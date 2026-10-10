@@ -2,3 +2,4 @@
 *.sh text eol=lf
 # Keycloak reads blocklists line by line; a CR would become part of every entry.
 cyberrange/deploy/keycloak/password-blacklists/*.txt text eol=lf
+cyberrange/deploy/keycloak/dictionary-policy/src/main/resources/dictionary/* text eol=lf

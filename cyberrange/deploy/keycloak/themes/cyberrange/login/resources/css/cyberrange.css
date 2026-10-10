@@ -401,6 +401,19 @@ ul#kc-totp-supported-apps.cr-apps {
 .cr-devices .pf-c-tile { border-radius: 8px; }
 .cr-devices input:checked + .pf-c-tile { border-color: var(--cr-accent); box-shadow: 0 0 0 1px var(--cr-accent); }
 
+/* Password feedback supplements Keycloak's server-side validation. */
+.cr-strength { margin: 10px 0 14px; }
+.cr-strength__bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.cr-strength__bar span { height: 6px; border-radius: 999px; background: #e2e8f0; }
+.cr-strength p { margin: 7px 0 0; font-size: 13px; color: var(--cr-text); }
+.cr-strength .cr-strength__hint { color: var(--cr-text-2); font-size: 12px; line-height: 1.5; }
+.cr-strength[data-score="1"] span:first-child { background: #dc2626; }
+.cr-strength[data-score="2"] span:nth-child(-n+2) { background: #d97706; }
+.cr-strength[data-score="3"] span:nth-child(-n+3) { background: #2563eb; }
+.cr-strength[data-score="4"] span { background: #15803d; }
+.cr-strength__generate { margin-top: 10px; padding: 7px 12px; border: 1px solid var(--cr-text-2); border-radius: 6px; background: transparent; color: var(--cr-text); font-size: 13px; cursor: pointer; }
+.cr-strength__generate:focus-visible { outline: 2px solid var(--cr-accent); outline-offset: 2px; }
+
 /* ---- small screens ---------------------------------------------------- */
 
 @media (max-width: 1023px) {
