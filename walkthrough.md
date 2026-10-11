@@ -4,8 +4,8 @@
 
 - Repo worktree: isolated checkout of `Capstone2-deploy`
 - Branch: `fix/scenario1-personal-flag`
-- Base: `220e6d34ee36a30fee0f9bd5b5a3d651d96ac3c3` (merge of PR #172)
-- Commit: `d03eb3a` (rebased on current `origin/main`)
+- Base: `060587b861702e2935467bc03fd96a5ac8e5c9a7` (`origin/main` at PR creation)
+- Implementation commit: `36e214b` (branch rebased on current `origin/main`)
 
 ## Requirement
 
@@ -46,6 +46,5 @@ The equal-pane layout received a static diff review; no live browser screenshot 
 ## Limits
 
 - No live host provision. Unit tests use mocked LXD.
-- `v11.sql` is untracked until commit.
-- Do not commit `cyberrange/uv.lock` from this worktree unless asked.
+- Local `cyberrange/uv.lock` remains untracked and is excluded from the PR.
 - Deploy planting, validator, and guide together. Old pods keep a stored username until reprovision; the new validator rejects those usernames immediately.
