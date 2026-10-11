@@ -225,6 +225,8 @@ SEED
 
 echo "=== OCI ARM64 golden build (repo: ${REPO}) ==="
 build_meta
+echo "[*] Required Wazuh agent bake for meta-base..."
+bash "${REPO}/deploy/golden/bake_wazuh_agent.sh" meta-base
 build_kali
 build_dvwa
 echo "=== Done ==="

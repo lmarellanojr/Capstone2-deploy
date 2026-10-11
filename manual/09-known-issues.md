@@ -376,7 +376,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://<api>/pods/<pod_id>/alerts?rul
 | Stops at | Likely cause | Action |
 |---|---|---|
 | 1 | Task 0 never reached meta's sshd (wrong `$TARGET_META`, sshd down) or rsyslog not installed on the golden | Fix Task 0 target / add rsyslog to the meta golden |
-| 2 | Agent points at the wrong manager address (**seen live**, see root cause above); or no `auth.log` localfile; or not enrolled | Re-provision after #112 / pin the manager's `eth0`; add the localfile in `bake_wazuh_agent.sh`; see Issue 7 for enrolment |
+| 2 | Agent points at the wrong manager address (**seen live**, see root cause above); a legacy `meta-base` lacks the `auth.log` localfile; or the agent is not enrolled | Apply #112 / pin the manager's `eth0`; for a legacy image, destroy pods and rerun `bash deploy/oci_build_goldens_arm64.sh` so `meta-base` is rebaked and validated; see Issue 7 for enrolment |
 | 3 | Decoder/rule did not match this sshd's log line | Record the exact line; check it with `wazuh-logtest` on the manager |
 | 4 | Alert is older than the pod (expected after #112), or buried under more than 200 CIS/SCA rows | Tick **Rule 5710 only** (server-side filter) |
 
