@@ -12,7 +12,10 @@ export PATH="/snap/bin:/usr/sbin:/usr/bin:/bin"
 REPO=/home/llms_admin/cyberrange
 ADMIN_ENV="$REPO/deploy/keycloak/admin.env"
 CLIENT_SECRET=$(openssl rand -hex 24)
-STUDENT_PW="St0d!$(openssl rand -hex 8)"
+generate_dictionary_free_password() {
+  openssl rand -hex 24 | LC_ALL=C tr 'abcdef' '!@#$%^'
+}
+STUDENT_PW="$(generate_dictionary_free_password)"
 
 # Push secrets into guest without echoing them
 umask 077

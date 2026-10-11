@@ -24,6 +24,9 @@ def run(tmp_path, *, version="25.0.6", old="", active=True, ready=True, valid=Tr
     # Functions survive sourcing, so all container operations are recorded.
     shell = r'''
 python3() { "$TEST_PYTHON" "$@"; }
+dirname() { "$TEST_PYTHON" -c 'import os,sys; print(os.path.dirname(sys.argv[1]))' "$1"; }
+sha256sum() { "$TEST_PYTHON" -c 'import hashlib,sys; p=sys.argv[1]; print(hashlib.sha256(open(p,"rb").read()).hexdigest(), p)' "$1"; }
+cut() { local checksum; IFS=' ' read -r checksum _; printf '%s\n' "$checksum"; }
 lxc() {
   printf "%s\n" "$*" >> "$CALLS"
   case "$*" in
@@ -37,7 +40,7 @@ lxc() {
 source "$1"
 '''
     calls = tmp_path / "calls"
-    env = dict(os.environ, TEST_PYTHON=Path(sys.executable).as_posix(), DICTIONARY_POLICY_JAR=jar.as_posix(), CALLS=calls.as_posix(), VERSION=version, OLD=old, ACTIVE=str(int(active)), READY=str(int(ready)), DICTIONARY_POLICY_READY_TIMEOUT="0")
+    env = dict(os.environ, TEST_PYTHON=Path(sys.executable).as_posix(), DICTIONARY_POLICY_JAR=jar.as_posix(), DICTIONARY_POLICY_JAR_SHA256=hashlib.sha256(jar.read_bytes()).hexdigest(), CALLS=calls.as_posix(), VERSION=version, OLD=old, ACTIVE=str(int(active)), READY=str(int(ready)), DICTIONARY_POLICY_READY_TIMEOUT="0")
     result = subprocess.run(["bash", "-c", shell, "bash", SCRIPT.as_posix()], env=env, capture_output=True, text=True)
     return result, calls.read_text() if calls.exists() else ""
 
@@ -70,6 +73,7 @@ def test_install_atomic_root_owned_and_restarts_first_active_install(tmp_path):
     result, calls = run(tmp_path)
     assert result.returncode == 0, result.stderr
     assert "chown root:root" in calls and "chmod 0644" in calls
+    assert "chown root:root /opt/keycloak/providers" in calls and "chmod 0755 /opt/keycloak/providers" in calls
     assert calls.index("file push") < calls.index("chown root:root") < calls.index("mv -f") < calls.index("systemctl restart")
     assert "curl -fsS" in calls
 
@@ -96,6 +100,7 @@ def test_unchanged_artifact_does_not_push_or_restart(tmp_path):
     assert "DICTIONARY_POLICY_UNCHANGED" in result.stdout
     assert "file push" not in calls and "systemctl restart" not in calls
     assert "chown root:root" in calls and "chmod 0644" in calls
+    assert "chown root:root /opt/keycloak/providers" in calls and "chmod 0755 /opt/keycloak/providers" in calls
 
 def test_missing_artifact_refused_before_container_mutation(tmp_path):
     env = dict(os.environ, DICTIONARY_POLICY_JAR=(tmp_path / "missing.jar").as_posix())
@@ -109,3 +114,27 @@ def test_truncated_dictionary_refused_before_container_mutation(tmp_path):
     assert result.returncode != 0
     assert "checksum mismatch" in result.stdout + result.stderr
     assert calls == ""
+
+
+def test_override_jar_requires_matching_explicit_checksum(tmp_path):
+    jar = tmp_path / "provider.jar"
+    jar.write_bytes(b"test artifact")
+    env = dict(os.environ, DICTIONARY_POLICY_JAR=jar.as_posix(), DICTIONARY_POLICY_JAR_SHA256="0" * 64)
+    wrong = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True)
+    assert wrong.returncode != 0 and "checksum mismatch" in wrong.stdout
+    env["DICTIONARY_POLICY_JAR_SHA256"] = hashlib.sha256(jar.read_bytes()).hexdigest()
+    right = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True)
+    assert right.returncode != 0
+    assert "missing dictionary provider artifact" not in right.stdout
+
+
+@pytest.mark.parametrize("name", ["setup_verify_accounts.sh", "create_demo_accounts.sh", "create_keycloak_realm.sh", "verify_adm_user.sh"])
+def test_existing_account_generators_create_long_dictionary_free_passwords(name):
+    text = (HERE / name).read_text()
+    function = re.search(r"generate_dictionary_free_password\(\) \{\n(.*?)\n\}", text, re.S)
+    assert function, f"{name} has no dictionary-free password generator"
+    command = "generate_dictionary_free_password() {\n" + function.group(1) + "\n}\nfor _ in $(seq 1 8); do generate_dictionary_free_password; echo; done"
+    result = subprocess.run(["bash", "-lc", command], capture_output=True, text=True, check=True)
+    passwords = [password for password in result.stdout.splitlines() if password]
+    assert len(passwords) == 8
+    assert all(re.fullmatch(r"[0-9!@#$%^]{48}", password) for password in passwords)

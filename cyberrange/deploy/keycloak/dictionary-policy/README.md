@@ -1,6 +1,6 @@
 # Dictionary substring password policy
 
-Issue #174, parent #169. The `dictionaryWords(scowl-en-v1)` Keycloak policy rejects a password containing any entry from the bundled English dictionary, including a word embedded within a longer value or a multi-word passphrase. Matching applies Unicode NFKC and locale-independent lowercase normalization. Short entries, including `a`, `i` and `k`, count; there is no minimum word-length exemption. Punctuation does not join separate letters into a word. Leetspeak, arbitrary homoglyphs and other languages are not covered by this English dictionary.
+Issue #174, parent #169. The `dictionaryWords(scowl-en-v1)` Keycloak policy rejects a password containing any entry from the bundled English dictionary, including a word embedded within a longer value or a multi-word passphrase. Matching applies Unicode NFKC and locale-independent lowercase normalization. Every English word is checked without a minimum-length exception. It retains the valid one-letter words `a`, `i` and `o`; SCOWL's entries `b` through `z` that only name alphabet symbols are excluded. Punctuation does not join separate letters into a word. Leetspeak, arbitrary homoglyphs and other languages are not covered by this English dictionary.
 
 This is an additional project rule requested for Cyber Range. It goes beyond the existing standards-based whole-password blocklist. The meter remains advisory and cannot guarantee policy acceptance. Generated credentials use 24 random digits/symbols (Web Crypto), avoiding English dictionary substrings while retaining roughly 100 bits of alphabet entropy. Keycloak still enforces length, blocklist, username/email and password history.
 
@@ -28,7 +28,7 @@ The policy-enabling script installs the provider, restarts Keycloak when the art
 
 SCOWL/English Speller Database revision `7e99edab8e32f9f9ea2b15f249ca8d4d67237410` (`rel-2026.02.25`), from https://github.com/en-wl/wordlist. The full upstream copyright/license is preserved at `src/main/resources/dictionary/Copyright` and packaged with the provider.
 
-Extraction: size60 American/British/Oxford/Canadian spellings, variant level1, no special categories, abbreviations or proper-name classes; deaccent; retain lowercase ASCII surface forms plus `I -> i`; sort and deduplicate. Capitalized surface forms are excluded before lowercasing because upstream proper-name classifications are incomplete. Result: 81,370 entries, 780,069 bytes, longest entry23 letters. Runtime and installer require SHA256 `981da5c06d01da21cdf6f37def0661ffb028266d21ce8f572510a5022e0a238d`.
+Extraction: size60 American/British/Oxford/Canadian spellings, variant level1, no special categories, abbreviations or proper-name classes; deaccent; retain lowercase ASCII surface forms of two or more letters, plus the valid single-letter words `a`, `i`, `o`; sort and deduplicate. Capitalized surface forms are excluded before lowercasing because upstream proper-name classifications are incomplete. SCOWL treats the rest of the alphabet as letter-name entries, which are excluded because they are not English words. Result: 81,347 entries, 780,046 bytes, longest entry23 letters. Runtime and installer require SHA256 `85bdeb119fa7f3a13853300147624e58de150cfbffd213d02bbc669ac2db9887`.
 
 After extracting the pinned source archive, run in its root:
 

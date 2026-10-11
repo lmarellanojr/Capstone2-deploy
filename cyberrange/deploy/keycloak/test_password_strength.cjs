@@ -67,6 +67,7 @@ test('generation is secure, dictionary-free, and never submits or changes confir
         generated.add(password);
     }
     assert.equal(generated.size, 100);
+    assert.equal(doc.getElementById('password-new').type, 'text', 'Generated password is visible to the user');
     assert.equal(doc.getElementById('password-confirm').value, 'existing');
     assert.equal(submitted, false);
     assert.match(doc.querySelector('.cr-strength__hint').textContent, /dictionary.*save/);

@@ -24,9 +24,12 @@ OUT_FILE=/home/llms_admin/cyberrange-data/demo-accounts.env
 [[ -f "$ADMIN_ENV" ]] || { echo "missing $ADMIN_ENV"; exit 1; }
 lxc info guacamole &>/dev/null || { echo "guacamole container not found"; exit 1; }
 
-STUDENT_PW="Dstu!$(openssl rand -hex 8)"
-INSTRUCTOR_PW="Dins!$(openssl rand -hex 8)"
-ADMIN_PW="Dadm!$(openssl rand -hex 8)"
+generate_dictionary_free_password() {
+  openssl rand -hex 24 | LC_ALL=C tr 'abcdef' '!@#$%^'
+}
+STUDENT_PW="$(generate_dictionary_free_password)"
+INSTRUCTOR_PW="$(generate_dictionary_free_password)"
+ADMIN_PW="$(generate_dictionary_free_password)"
 
 umask 077
 install -m 600 /dev/null /tmp/demo-seed.env

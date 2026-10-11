@@ -27,7 +27,7 @@
         const hint = doc.createElement("p");
         hint.id = "cr-password-strength-hint";
         hint.className = "cr-strength__hint";
-        hint.textContent = "Estimate only; dictionary and history checks happen when you save. No English dictionary words anywhere, including short words such as a and i. Use Generate password for a word-free option.";
+        hint.textContent = "Estimate only; dictionary and history checks happen when you save. English words anywhere in the password, including a, i and o, are refused. Use Generate password for a word-free option.";
         container.appendChild(bar);
         container.appendChild(label);
         container.appendChild(hint);
@@ -52,6 +52,7 @@
                     const previous = chars[i]; chars[i] = chars[j]; chars[j] = previous;
                 }
                 input.value = chars.join("");
+                input.type = "text";
                 input.dispatchEvent(new doc.defaultView.Event("input", { bubbles: true }));
                 input.dispatchEvent(new doc.defaultView.Event("change", { bubbles: true }));
                 input.focus();

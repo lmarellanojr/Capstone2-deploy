@@ -16,7 +16,7 @@ import java.util.Set;
 /** Immutable, local matcher. Candidate passwords are never retained or logged. */
 final class DictionaryMatcher {
     static final int MAX_PASSWORD_LENGTH = 128;
-    static final String DICTIONARY_SHA256 = "981da5c06d01da21cdf6f37def0661ffb028266d21ce8f572510a5022e0a238d";
+    static final String DICTIONARY_SHA256 = "85bdeb119fa7f3a13853300147624e58de150cfbffd213d02bbc669ac2db9887";
     private final Set<String> words;
     private final int maxWordLength;
 

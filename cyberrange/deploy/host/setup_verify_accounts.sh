@@ -51,12 +51,15 @@ lxc info guacamole &>/dev/null || { echo "guacamole container not found"; exit 1
 
 umask 077
 trap 'rm -f /tmp/verify-seed.env /tmp/kc-verify-out.env' EXIT
+generate_dictionary_free_password() {
+  openssl rand -hex 24 | LC_ALL=C tr 'abcdef' '!@#$%^'
+}
 install -m 600 /dev/null /tmp/verify-seed.env
 {
-  echo "VERIFY_STUDENT_PASSWORD=Vstu!$(openssl rand -hex 12)"
-  echo "VERIFY_INSTRUCTOR_PASSWORD=Vins!$(openssl rand -hex 12)"
-  echo "VERIFY_ADMIN_PASSWORD=Vadm!$(openssl rand -hex 12)"
-  echo "PROBE_PASSWORD=Vprb!$(openssl rand -hex 12)"
+  echo "VERIFY_STUDENT_PASSWORD=$(generate_dictionary_free_password)"
+  echo "VERIFY_INSTRUCTOR_PASSWORD=$(generate_dictionary_free_password)"
+  echo "VERIFY_ADMIN_PASSWORD=$(generate_dictionary_free_password)"
+  echo "PROBE_PASSWORD=$(generate_dictionary_free_password)"
 } > /tmp/verify-seed.env
 # Defensive: an interrupted earlier run can leave these owned by the
 # exec-mapped uid, which makes `lxc file push` fail with "Error: Forbidden".

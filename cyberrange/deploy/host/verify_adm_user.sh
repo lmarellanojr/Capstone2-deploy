@@ -27,7 +27,10 @@ API="http://${API_BIND_HOST}:${API_BIND_PORT}"
 TOKEN_URL="${KEYCLOAK_INTROSPECT_URL%/introspect}"
 RESP=$(mktemp); chmod 600 "$RESP"; trap 'rm -f "$RESP"' EXIT
 TEST_USER="adm_user_test_$(date +%H%M%S)"
-TEST_PW="Adm!$(openssl rand -hex 8)"
+generate_dictionary_free_password() {
+  openssl rand -hex 24 | LC_ALL=C tr 'abcdef' '!@#$%^'
+}
+TEST_PW="$(generate_dictionary_free_password)"
 TEST_ADMIN="adm_admin_test_$(date +%H%M%S)"
 NOBODY=00000000-0000-0000-0000-000000000000
 FAILS=0

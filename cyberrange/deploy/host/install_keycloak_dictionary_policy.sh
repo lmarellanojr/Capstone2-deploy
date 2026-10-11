@@ -4,12 +4,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${DICTIONARY_POLICY_JAR:-$ROOT/keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar}"
 DST=/opt/keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar
-PINNED_JAR_SHA256=4fdc81228cef096503d64dda01a3d4d041972527c13c97813e28b1dd4914a9a6
+PINNED_JAR_SHA256=7cdc29ef4fa8a8ded203ed60e1643ebbd4c12016369b0c307cdea4df65636ad4
 [[ -s "$SRC" ]] || { echo "missing dictionary provider artifact: $SRC (build with Maven first)"; exit 1; }
 if [[ -z "${DICTIONARY_POLICY_JAR:-}" ]]; then
-  actual=$(sha256sum "$SRC" | cut -d' ' -f1)
-  [[ "$actual" == "$PINNED_JAR_SHA256" ]] || { echo "dictionary provider JAR checksum mismatch"; exit 1; }
+  expected_sum=$PINNED_JAR_SHA256
+else
+  [[ "${DICTIONARY_POLICY_JAR_SHA256:-}" =~ ^[a-fA-F0-9]{64}$ ]] || {
+    echo "DICTIONARY_POLICY_JAR_SHA256 is required when overriding the pinned provider JAR"; exit 1;
+  }
+  expected_sum=${DICTIONARY_POLICY_JAR_SHA256,,}
 fi
+actual=$(sha256sum "$SRC" | cut -d' ' -f1)
+[[ "$actual" == "$expected_sum" ]] || { echo "dictionary provider JAR checksum mismatch"; exit 1; }
 # Refuse malformed archives, extra SPIs/classes, and jars without their SPI registration/data.
 python3 - "$SRC" <<'PY'
 import hashlib, sys, zipfile
@@ -32,7 +38,7 @@ try:
         if "edu.mmdc.cyberrange.policy.DictionaryPasswordPolicyProviderFactory" not in registration.split():
             raise ValueError("dictionary provider registration missing")
         dictionary = jar.read("dictionary/scowl-en-v1.txt")
-        if hashlib.sha256(dictionary).hexdigest() != "981da5c06d01da21cdf6f37def0661ffb028266d21ce8f572510a5022e0a238d":
+        if hashlib.sha256(dictionary).hexdigest() != "85bdeb119fa7f3a13853300147624e58de150cfbffd213d02bbc669ac2db9887":
             raise ValueError("embedded dictionary checksum mismatch")
         metadata = dict(line.split("=", 1) for line in jar.read("META-INF/cyberrange-dictionary-policy.properties").decode().splitlines() if "=" in line and not line.startswith("#"))
         for key, value in {"keycloak.version": "25.0.6", "policy.id": "dictionaryWords", "dictionary.id": "scowl-en-v1"}.items():
@@ -52,6 +58,8 @@ if [[ "$new_sum" == "$old_sum" ]]; then
   # Repair metadata after install_keycloak_unit.sh ownership setup too.
   lxc exec guacamole -- chown root:root "$DST"
   lxc exec guacamole -- chmod 0644 "$DST"
+  lxc exec guacamole -- chown root:root /opt/keycloak/providers
+  lxc exec guacamole -- chmod 0755 /opt/keycloak/providers
   echo DICTIONARY_POLICY_UNCHANGED
   exit 0
 fi
@@ -64,6 +72,8 @@ lxc exec guacamole -- chmod 0644 "$stage"
 staged_sum=$(lxc exec guacamole -- sha256sum "$stage" | cut -d' ' -f1)
 [[ "$staged_sum" == "$new_sum" ]] || { echo "dictionary provider checksum mismatch"; exit 1; }
 lxc exec guacamole -- mv -f "$stage" "$DST"
+lxc exec guacamole -- chown root:root /opt/keycloak/providers
+lxc exec guacamole -- chmod 0755 /opt/keycloak/providers
 if lxc exec guacamole -- systemctl is-active --quiet keycloak.service; then
   lxc exec guacamole -- systemctl restart keycloak.service
   deadline=$((SECONDS + ${DICTIONARY_POLICY_READY_TIMEOUT:-120}))

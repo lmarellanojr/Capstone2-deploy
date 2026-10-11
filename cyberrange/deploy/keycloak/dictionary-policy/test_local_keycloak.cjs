@@ -18,7 +18,9 @@ const secret = process.env.LOCAL_KEYCLOAK_ADMIN_PASSWORD;
 assert(secret, 'LOCAL_KEYCLOAK_ADMIN_PASSWORD is required');
 const realm = 'dictionary-test-' + crypto.randomBytes(6).toString('hex');
 const callback = 'http://127.0.0.1:18084/callback';
-const policy = 'length(8) and maxLength(128) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3) and dictionaryWords(scowl-en-v1)';
+const blocklist = process.env.LOCAL_KEYCLOAK_BLOCKLIST_NAME || 'cyberrange-common-passwords.txt';
+assert.match(blocklist, /^[A-Za-z0-9._-]+$/, 'Blocklist must be a local filename');
+const policy = `length(8) and maxLength(128) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3) and passwordBlacklist(${blocklist}) and dictionaryWords(scowl-en-v1)`;
 const alphabet = '0123456789!@#$%^&*()-_=+[]{}:,.?';
 const strong = () => Array.from({ length: 24 }, () => alphabet[crypto.randomInt(alphabet.length)]).join('');
 const word = '982!SuNsHiNe#731';
@@ -90,6 +92,7 @@ async function browserFlow(javaScriptEnabled) {
       generated = await page.locator('#password-new').inputValue();
       assert.equal(generated.length, 24);
       assert(!/[A-Za-z]/.test(generated));
+      await page.locator('#password-confirm').fill(generated);
     } else {
       generated = strong();
       await page.locator('#password-new').fill(generated);
@@ -111,9 +114,17 @@ async function browserFlow(javaScriptEnabled) {
     });
     assert.equal(login.status, 200, 'Local admin authentication failed');
     token = (await login.json()).access_token;
+    const serverInfo = await admin('serverinfo');
+    assert.equal(serverInfo.status, 200, 'Local serverinfo is unavailable');
+    const info = await serverInfo.json();
+    const passwordProviders = info.providers?.['password-policy']?.providers || {};
+    assert(passwordProviders.dictionaryWords, 'dictionaryWords provider is not registered in local Keycloak');
     const response = await admin('realms', 'POST', { realm, enabled: true, loginTheme: 'cyberrange', passwordPolicy: policy });
     assert.equal(response.status, 201, 'Disposable realm creation failed');
     madeRealm = true;
+    const realmReadback = await (await admin('realms/' + realm)).json();
+    assert(realmReadback.passwordPolicy.includes(`passwordBlacklist(${blocklist})`), 'Realm blacklist policy was not saved');
+    assert(realmReadback.passwordPolicy.includes('dictionaryWords(scowl-en-v1)'), 'Realm dictionary policy was not saved');
     assert.equal((await admin('realms/' + realm + '/clients', 'POST', { clientId: 'local-probe', enabled: true, publicClient: true, standardFlowEnabled: true, directAccessGrantsEnabled: true, redirectUris: [callback] })).status, 201);
     const rejected = await admin('realms/' + realm + '/users', 'POST', { username: 'bad-create', enabled: true, credentials: [{ type: 'password', value: word }] });
     assert.equal(rejected.status, 400, 'Create with dictionary credential must fail');

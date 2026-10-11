@@ -4468,7 +4468,6 @@ azimuth
 azimuths
 azure
 azures
-b
 baa
 baaed
 baaing
@@ -9268,7 +9267,6 @@ byways
 byword
 bywords
 byzantine
-c
 cab
 cabal
 caballero
@@ -17218,7 +17216,6 @@ czarism
 czarist
 czarists
 czars
-d
 dab
 dabbed
 dabber
@@ -22482,7 +22479,6 @@ dystonia
 dystopi
 dystopia
 dystopian
-e
 each
 eager
 eagerer
@@ -25733,7 +25729,6 @@ eyewash
 eyewear
 eyewitness
 eyewitnesses
-f
 fa
 fab
 fable
@@ -29207,7 +29202,6 @@ fuzzily
 fuzziness
 fuzzing
 fuzzy
-g
 gab
 gabardine
 gabardines
@@ -31817,7 +31811,6 @@ gyve
 gyved
 gyves
 gyving
-h
 ha
 habanero
 habaneros
@@ -38014,7 +38007,6 @@ ivies
 ivories
 ivory
 ivy
-j
 jab
 jabbed
 jabber
@@ -38739,7 +38731,6 @@ juxtaposes
 juxtaposing
 juxtaposition
 juxtapositions
-k
 kabbalah
 kaboom
 kabuki
@@ -39316,7 +39307,6 @@ kvetcher
 kvetchers
 kvetches
 kvetching
-l
 la
 lab
 label
@@ -41725,7 +41715,6 @@ lyricists
 lyrics
 lysosomal
 lysosomes
-m
 ma
 mac
 macabre
@@ -46040,7 +46029,6 @@ mythologizing
 mythology
 myths
 myxomatosis
-n
 naan
 naans
 nab
@@ -49877,7 +49865,6 @@ oxymoronic
 oyster
 oysters
 ozone
-p
 pa
 pablum
 pabulum
@@ -56360,7 +56347,6 @@ pythons
 pyx
 pyxes
 pzazz
-q
 qua
 quack
 quacked
@@ -56750,7 +56736,6 @@ quotient
 quotients
 quoting
 qwerty
-r
 rabbet
 rabbeted
 rabbeting
@@ -61826,7 +61811,6 @@ ruttiest
 rutting
 rutty
 rye
-s
 sabbath
 sabbaths
 sabbatical
@@ -71146,7 +71130,6 @@ systems
 systole
 systoles
 systolic
-t
 ta
 tab
 tabbed
@@ -75274,7 +75257,6 @@ tyres
 tyro
 tyros
 tzatziki
-u
 ubiquitous
 ubiquitously
 ubiquity
@@ -77583,7 +77565,6 @@ uvular
 uvulars
 uvulas
 uxorious
-v
 vac
 vacancies
 vacancy
@@ -78805,7 +78786,6 @@ vulvae
 vuvuzela
 vuvuzelas
 vying
-w
 wack
 wacker
 wackest
@@ -80974,7 +80954,6 @@ wussier
 wussies
 wussiest
 wussy
-x
 xenon
 xenophobe
 xenophobes
@@ -80994,7 +80973,6 @@ xylophone
 xylophones
 xylophonist
 xylophonists
-y
 ya
 yacht
 yachted
@@ -81229,7 +81207,6 @@ yuppifying
 yups
 yurt
 yurts
-z
 zanier
 zanies
 zaniest

@@ -27,6 +27,7 @@ class DictionaryPolicyTest {
         assertFalse(matcher.rejects("m!o!o!n123"));
         assertFalse(matcher.rejects("728!$938#527+682%394=876*"));
         assertFalse(matcher.rejects("x".repeat(128)));
+        assertFalse(matcher.rejects("928#xq#zv#728"));
     }
     @Test void boundsWorkBeforeAndAfterNormalization() {
         var matcher = smallDictionary();
@@ -73,9 +74,10 @@ class DictionaryPolicyTest {
         assertEquals("scowl-en-v1", factory.getDefaultConfigValue());
         assertFalse(factory.isMultiplSupported());
         var provider = factory.create(null);
-        for (String word : new String[]{"sunshine", "orchid", "river", "copper", "moon", "a", "i"}) {
+        for (String word : new String[]{"sunshine", "orchid", "river", "copper", "moon", "a", "i", "o"}) {
             assertNotNull(provider.validate("test-user", "928#" + word + "#728"), word);
         }
+        assertNull(provider.validate("test-user", "928#xq#zv#728"));
         assertNull(provider.validate("test-user", "728!$938#527+682%394=876*"));
     }
     @Test void truncatedOrAlteredPinnedDictionaryFailsClosed() {
