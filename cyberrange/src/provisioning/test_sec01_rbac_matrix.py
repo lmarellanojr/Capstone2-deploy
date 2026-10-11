@@ -78,7 +78,8 @@ ROUTE_POLICY = {
             "label": "browser:sqli-m1",
         },
     ),
-
+    ("GET", "/users/me/orientation"): (ANY_APP_ROLE, "/users/me/orientation", None),
+    ("POST", "/users/me/orientation"): (ANY_APP_ROLE, "/users/me/orientation", None),
     ("POST", "/pods/provision"): (ANY_APP_ROLE, "/pods/provision", {"student_id": "ignored", "scenario_id": "01"}),
     ("GET", "/pods"): (ANY_APP_ROLE, "/pods", None),
     ("GET", "/pods/{pod_id}/status"): (ANY_APP_ROLE, f"/pods/{POD}/status", None),
