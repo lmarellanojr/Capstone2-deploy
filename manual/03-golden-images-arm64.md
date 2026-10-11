@@ -31,22 +31,29 @@ builder containers behind.
 
 ## What gets built
 
-Three images, in three stages. The first stage builds all three bases; the second
-and third rebake two of them in place.
+The first stage builds the three bases and automatically adds the Wazuh agent to
+`meta-base`; the second stage rebakes `dvwa-base` with its database ready.
 
 | Stage | Command | Produces |
 |---|---|---|
-| 1 | `oci_build_goldens_arm64.sh` | `kali-base`, `meta-base`, `dvwa-base` |
-| 2 | `bake_wazuh_agent.sh meta-base` | `meta-base` + wazuh-agent 4.7.5 (pinned to the manager) |
-| 3 | `bake_dvwa_ready.sh` | `dvwa-base` + DVWA database initialised, security low |
+| 1 | `oci_build_goldens_arm64.sh` | `kali-base`, `meta-base` + Wazuh agent 4.7.5, `dvwa-base` |
+| 2 | `bake_dvwa_ready.sh` | `dvwa-base` + DVWA database initialised, security low |
 
 > **The image aliases are `kali-base`, `meta-base` and `dvwa-base`.** There is no
 > `kali:golden`. In LXD, `name:alias` means *remote server `name`*, so
 > `lxc launch kali:golden` tries to contact a remote called `kali` and fails.
 
-Stages 2 and 3 each leave a dated rollback alias — `meta-base-prewazuh-YYYYMMDD`
-and `dvwa-base-predvwaready-YYYYMMDD` — so a bad rebake can be reverted without
-rebuilding from scratch.
+The Wazuh bake leaves a unique, fingerprint-anchored rollback alias for
+`meta-base`; the DVWA bake leaves a dated rollback alias. Both let you revert a
+bad rebake without rebuilding from scratch. After a successful Wazuh bake the
+script keeps the two newest `meta-base-prewazuh-*` aliases and deletes older
+ones (and any image that no longer has an alias). Prune leftover rollback
+images by hand if a failed run left orphans:
+
+```bash
+lxc image alias list | grep prewazuh
+lxc image list
+```
 
 ---
 
@@ -109,6 +116,9 @@ minutes wall clock. Expected progress lines:
 [*] Creating meta ARM64 builder (init+start)...
 [*] Publishing meta-base from meta-build...
 [+] meta-base published.
+[*] Required Wazuh agent bake for meta-base...
+[*] Validating staging image while services are running
+[+] Rebaked meta-base; rollback alias = meta-base-prewazuh-<timestamp>-<pid>
 [*] Creating Kali ARM64 builder (init+start)...
 [*] Publishing kali-base from kali-build...
 [+] kali-base published.
@@ -139,29 +149,26 @@ provisioner grants it per-pod at provision time.
 
 ---
 
-## Step 2: Bake the Wazuh agent onto `meta-base`
+## Step 2: Wazuh is baked automatically into `meta-base`
 
-Do this only if you are using the Wazuh scoring path (Chapter 06). It is optional.
+The release builder runs `bake_wazuh_agent.sh meta-base` after building the
+base alias when the current `meta-base` description does not already contain
+`wazuh-agent 4.7.5 auth.log collection`. A later builder run can therefore
+fill in missing `kali-base` or `dvwa-base` images while lab pods exist, without
+rebaking a valid Wazuh image. Legacy images without that marker still get a
+forced bake. Do not treat the bake as an optional scoring add-on.
 
-**Preflight — no student pods may be running:**
+The bake refuses to republish while any provisioned lab pod instance exists. It
+installs the pinned agent and rsyslog, confirms auth/authpriv events reach
+`/var/log/auth.log`, validates the Wazuh syslog collection entry and manager
+address template, then publishes the candidate. If publication fails, the old
+`meta-base` alias is restored. The rollback alias includes a timestamp and PID.
 
-```bash
-lxc list --format csv -c n | grep '^pod-student-' && echo "DESTROY THESE FIRST" || echo "clear"
-```
-
-```bash
-cd ~/cyberrange
-bash deploy/golden/bake_wazuh_agent.sh meta-base
-```
-
-The agent version is pinned to **4.7.5** inside `bake_wazuh_agent.sh`, matching
-the manager pinned in Chapter 02 Step 4b. Neither chapter depends on the other
-having run — both pin the same literal — but if you change one, change both.
+The agent version is pinned to **4.7.5**, matching the manager in Chapter 02
+Step 4b. If you change one version, change both.
 
 The clone runs on the `default` profile deliberately — `pod-target-base` has
 `ipv4_filtering` on and no egress, so `apt` would fail there.
-
-Rollback alias created: `meta-base-prewazuh-YYYYMMDD`.
 
 ---
 
@@ -197,13 +204,13 @@ Rollback alias created: `dvwa-base-predvwaready-YYYYMMDD`.
 lxc image list
 ```
 
-Expect three aliases plus the two dated rollback aliases. Reference sizes from the
+Expect the three base aliases plus rollback aliases. Reference sizes from the
 live host:
 
 | Alias | Size | Notes |
 |---|---|---|
 | `kali-base` | ~4.5 GiB | kali-rolling arm64, ssh enabled, `student` present |
-| `meta-base` | ~600 MiB | wazuh-agent 4.7.5 held |
+| `meta-base` | ~600 MiB | wazuh-agent 4.7.5 held; collects `/var/log/auth.log` |
 | `dvwa-base` | ~1.0 GiB | description ends `DVWA db ready, security low` |
 
 ### Disk

@@ -225,6 +225,12 @@ SEED
 
 echo "=== OCI ARM64 golden build (repo: ${REPO}) ==="
 build_meta
+if lxc image info meta-base 2>/dev/null | grep -Fq 'wazuh-agent 4.7.5 auth.log collection'; then
+  echo "[*] meta-base already has Wazuh 4.7.5 auth.log collection; skipping rebake"
+else
+  echo "[*] Required Wazuh agent bake for meta-base..."
+  bash "${REPO}/deploy/golden/bake_wazuh_agent.sh" meta-base
+fi
 build_kali
 build_dvwa
 echo "=== Done ==="
