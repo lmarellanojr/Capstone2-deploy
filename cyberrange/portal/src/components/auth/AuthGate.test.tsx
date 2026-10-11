@@ -18,6 +18,7 @@ const push = jest.fn()
 
 beforeEach(() => {
   jest.clearAllMocks()
+  window.history.replaceState({}, "", "/")
   routerMock.mockReturnValue({ replace, push })
 })
 
@@ -68,5 +69,19 @@ it("preserves the login callback for an unauthenticated visitor", () => {
   render(<AuthGate><div>Page content</div></AuthGate>)
   expect(screen.queryByText("Page content")).not.toBeInTheDocument()
   expect(push).toHaveBeenCalledWith("/login?callbackUrl=%2Fadmin%2Fusers")
+  expect(replace).not.toHaveBeenCalled()
+})
+
+it("preserves repeated and encoded query values when a session expires client-side", () => {
+  const query = "?status=running&tag=one&tag=two&filter=name%3DA%26B&returnTo=%2Fadmin%2Fpods"
+  window.history.replaceState({}, "", `/admin/pods${query}#details`)
+  pathnameMock.mockReturnValue("/admin/pods")
+  sessionMock.mockReturnValue({ status: "unauthenticated", data: null })
+  render(<AuthGate><div>Page content</div></AuthGate>)
+  const loginUrl = new URL(push.mock.calls[0][0], window.location.origin)
+  expect(loginUrl.origin).toBe(window.location.origin)
+  expect(loginUrl.pathname).toBe("/login")
+  expect(loginUrl.searchParams.get("callbackUrl")).toBe(`/admin/pods${query}`)
+  expect(screen.queryByText("Page content")).not.toBeInTheDocument()
   expect(replace).not.toHaveBeenCalled()
 })

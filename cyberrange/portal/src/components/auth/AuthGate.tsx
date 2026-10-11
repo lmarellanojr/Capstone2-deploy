@@ -11,7 +11,7 @@ interface AuthGateProps {
 }
 
 /**
- * Redirects to /login (preserving the current path as callbackUrl) when unauthenticated,
+ * Redirects to /login (preserving path and query as callbackUrl) when unauthenticated,
  * and shows a spinner while session status is still resolving. Used by section layouts
  * (e.g. instructor, admin) so individual pages don't each repeat this check.
  *
@@ -37,7 +37,9 @@ export function AuthGate({ children }: AuthGateProps) {
   useEffect(() => {
     if (status === "unauthenticated") {
       const params = new URLSearchParams();
-      params.set("callbackUrl", pathname);
+      // Match middleware's pathname + search callback without adding a
+      // useSearchParams dependency to every protected section's rendering.
+      params.set("callbackUrl", `${pathname}${window.location.search}`);
       router.push(`/login?${params.toString()}`);
     } else if (redirectPath) {
       router.replace(redirectPath);
