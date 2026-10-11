@@ -51,12 +51,15 @@ lxc info guacamole &>/dev/null || { echo "guacamole container not found"; exit 1
 
 umask 077
 trap 'rm -f /tmp/verify-seed.env /tmp/kc-verify-out.env' EXIT
+generate_dictionary_free_password() {
+  openssl rand -hex 24 | LC_ALL=C tr 'abcdef' '!@#%^_'
+}
 install -m 600 /dev/null /tmp/verify-seed.env
 {
-  echo "VERIFY_STUDENT_PASSWORD=Vstu!$(openssl rand -hex 12)"
-  echo "VERIFY_INSTRUCTOR_PASSWORD=Vins!$(openssl rand -hex 12)"
-  echo "VERIFY_ADMIN_PASSWORD=Vadm!$(openssl rand -hex 12)"
-  echo "PROBE_PASSWORD=Vprb!$(openssl rand -hex 12)"
+  printf '%s=%q\n' VERIFY_STUDENT_PASSWORD "$(generate_dictionary_free_password)"
+  printf '%s=%q\n' VERIFY_INSTRUCTOR_PASSWORD "$(generate_dictionary_free_password)"
+  printf '%s=%q\n' VERIFY_ADMIN_PASSWORD "$(generate_dictionary_free_password)"
+  printf '%s=%q\n' PROBE_PASSWORD "$(generate_dictionary_free_password)"
 } > /tmp/verify-seed.env
 # Defensive: an interrupted earlier run can leave these owned by the
 # exec-mapped uid, which makes `lxc file push` fail with "Error: Forbidden".
@@ -279,14 +282,14 @@ lxc exec guacamole -- rm -f /tmp/kc-verify-out.env
 SECRET=$(sed -n 's/^SECRET=//p' /tmp/kc-verify-out.env)
 rm -f /tmp/kc-verify-out.env /tmp/verify-seed.env
 {
-  echo "VERIFY_CLIENT_ID=$CLIENT_ID"
-  echo "VERIFY_CLIENT_SECRET=$SECRET"
-  echo "VERIFY_STUDENT=verify_student"
-  echo "VERIFY_STUDENT_PASSWORD=$VERIFY_STUDENT_PASSWORD"
-  echo "VERIFY_INSTRUCTOR=verify_instructor"
-  echo "VERIFY_INSTRUCTOR_PASSWORD=$VERIFY_INSTRUCTOR_PASSWORD"
-  echo "VERIFY_ADMIN=verify_admin"
-  echo "VERIFY_ADMIN_PASSWORD=$VERIFY_ADMIN_PASSWORD"
+  printf '%s=%q\n' VERIFY_CLIENT_ID "$CLIENT_ID"
+  printf '%s=%q\n' VERIFY_CLIENT_SECRET "$SECRET"
+  printf '%s=%q\n' VERIFY_STUDENT verify_student
+  printf '%s=%q\n' VERIFY_STUDENT_PASSWORD "$VERIFY_STUDENT_PASSWORD"
+  printf '%s=%q\n' VERIFY_INSTRUCTOR verify_instructor
+  printf '%s=%q\n' VERIFY_INSTRUCTOR_PASSWORD "$VERIFY_INSTRUCTOR_PASSWORD"
+  printf '%s=%q\n' VERIFY_ADMIN verify_admin
+  printf '%s=%q\n' VERIFY_ADMIN_PASSWORD "$VERIFY_ADMIN_PASSWORD"
 } > "$OUT_FILE"
 chmod 600 "$OUT_FILE"
 echo "credentials written to $OUT_FILE (not printed)"

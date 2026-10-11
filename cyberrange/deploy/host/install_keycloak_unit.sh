@@ -51,6 +51,10 @@ lxc exec guacamole -- chmod 600 /etc/keycloak/admin.env
 lxc file push "$UNIT_SRC" guacamole/etc/systemd/system/keycloak.service
 lxc exec guacamole -- chown -R keycloak:keycloak /opt/keycloak
 
+# Recursive chown above would make providers/ writable by keycloak. The
+# dictionary installer re-owns providers/ root:root 0755 after it copies the JAR.
+bash "$ROOT/host/install_keycloak_dictionary_policy.sh"
+
 # --- C2-alt: seed the realm import file if a host-canonical copy exists -------
 # No LXD disk device, no idmap arithmetic (the previous `chown 100000:100000`
 # was wrong: useradd --system gives `keycloak` a non-zero UID, so the host-side

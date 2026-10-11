@@ -24,16 +24,19 @@ OUT_FILE=/home/llms_admin/cyberrange-data/demo-accounts.env
 [[ -f "$ADMIN_ENV" ]] || { echo "missing $ADMIN_ENV"; exit 1; }
 lxc info guacamole &>/dev/null || { echo "guacamole container not found"; exit 1; }
 
-STUDENT_PW="Dstu!$(openssl rand -hex 8)"
-INSTRUCTOR_PW="Dins!$(openssl rand -hex 8)"
-ADMIN_PW="Dadm!$(openssl rand -hex 8)"
+generate_dictionary_free_password() {
+  openssl rand -hex 24 | LC_ALL=C tr 'abcdef' '!@#%^_'
+}
+STUDENT_PW="$(generate_dictionary_free_password)"
+INSTRUCTOR_PW="$(generate_dictionary_free_password)"
+ADMIN_PW="$(generate_dictionary_free_password)"
 
 umask 077
 install -m 600 /dev/null /tmp/demo-seed.env
 {
-  echo "STUDENT_PW=${STUDENT_PW}"
-  echo "INSTRUCTOR_PW=${INSTRUCTOR_PW}"
-  echo "ADMIN_PW=${ADMIN_PW}"
+  printf '%s=%q\n' STUDENT_PW "$STUDENT_PW"
+  printf '%s=%q\n' INSTRUCTOR_PW "$INSTRUCTOR_PW"
+  printf '%s=%q\n' ADMIN_PW "$ADMIN_PW"
 } > /tmp/demo-seed.env
 # Defensive: an earlier interrupted run can leave /tmp/admin.env or
 # /tmp/demo-seed.env in the container owned by the exec-mapped uid, which
