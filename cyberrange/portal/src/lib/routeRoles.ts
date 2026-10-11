@@ -24,15 +24,8 @@ export function hasRequiredRole(userRoles: string[] | undefined, required: Role[
   return required.some((role) => userRoles.includes(role))
 }
 
-// AUTH-05 review (Leo, PR #83): requiredRolesForPath returning null means
-// "no SPECIFIC role required here", not "any authenticated caller is fine
-// regardless of role" -- most matched routes (/dashboard, /scenario/*,
-// /lab/*, /progress, /settings, /profile) have no entry above, so an
-// authenticated account with none of the three app roles could type one of
-// those paths directly and reach the Student portal, bypassing the login
-// page's own role-less -> /no-role routing entirely. Used by middleware.ts
-// and AuthGate.tsx to redirect that case to /no-role regardless of which
-// matched path was requested.
+// Standalone recognized-role predicate. Middleware and AuthGate use
+// redirectPathForRole below, whose landing-path check enforces the no-role gate.
 const ALL_APP_ROLES: Role[] = ["student", "instructor", "admin"]
 
 export function hasAnyRecognizedRole(userRoles: string[] | undefined): boolean {
@@ -44,17 +37,30 @@ export function hasAnyRecognizedRole(userRoles: string[] | undefined): boolean {
 // mapping has one home instead of being split between this file and
 // lib/loginRouting.ts.
 //
-// This IS a priority order -- admin, then instructor, then student -- not a
-// plain lookup as an earlier comment here claimed. A multi-role account
-// resolves to whichever of those comes first. Today that's moot: Lenie and
-// Leonardo's team agreement is one role per account, and
-// deploy/host/verify_demo_accounts.sh enforces it for the three demo
-// accounts. But nothing in this function, or the type system, enforces it
-// once real role assignment ships (ADM-USER-04) -- if that ever allows a
-// multi-role account, admin will silently win here rather than erroring.
+// AUTH-04 intentionally prioritizes admin, then instructor, then student.
+// For multi-role accounts this determines both the login destination and
+// dashboard entry: redirectPathForRole sends a student+instructor account
+// away from /dashboard to /instructor; any admin role takes priority.
+// The demo accounts have one role each, but this policy also applies when
+// role assignment (ADM-USER-04) allows multiple roles on an account.
 export function landingPathForRole(roles: string[] | undefined): string | null {
   if (roles?.includes("admin")) return "/admin"
   if (roles?.includes("instructor")) return "/instructor"
   if (roles?.includes("student")) return "/dashboard"
+  return null
+}
+
+// Keep request-time middleware and the client gate aligned. Only dashboard
+// entry changes by role; permitted deep links and shared lab pages stay put.
+// requiredRolesForPath returning null means no specific role is required,
+// not that an account without an application role may enter. The landing
+// check sends those accounts to /no-role even on shared routes.
+export function redirectPathForRole(pathname: string, roles: string[] | undefined): string | null {
+  const landing = landingPathForRole(roles)
+  if (!landing) return "/no-role"
+  const path = pathname.replace(/\/+$/, "") || "/"
+  if (path === "/dashboard" && landing !== "/dashboard") return landing
+  const required = requiredRolesForPath(path)
+  if (required && !hasRequiredRole(roles, required)) return landing
   return null
 }

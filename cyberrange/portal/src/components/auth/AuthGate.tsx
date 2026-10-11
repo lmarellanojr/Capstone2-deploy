@@ -4,14 +4,14 @@ import { useSession } from "next-auth/react";
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { LoadingSpinner } from "@/components/ui";
-import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole } from "@/lib/routeRoles";
+import { redirectPathForRole } from "@/lib/routeRoles";
 
 interface AuthGateProps {
   children: React.ReactNode;
 }
 
 /**
- * Redirects to /login (preserving the current path as callbackUrl) when unauthenticated,
+ * Redirects to /login (preserving path and query as callbackUrl) when unauthenticated,
  * and shows a spinner while session status is still resolving. Used by section layouts
  * (e.g. instructor, admin) so individual pages don't each repeat this check.
  *
@@ -32,25 +32,19 @@ export function AuthGate({ children }: AuthGateProps) {
   const router = useRouter();
   const pathname = usePathname();
   const roles = session?.user?.roles;
-  const noRecognizedRole = status === "authenticated" && !hasAnyRecognizedRole(roles);
-  const requiredRoles = requiredRolesForPath(pathname);
-  const wrongRoleForPath =
-    status === "authenticated" &&
-    !noRecognizedRole &&
-    !!requiredRoles &&
-    !hasRequiredRole(roles, requiredRoles);
+  const redirectPath = status === "authenticated" ? redirectPathForRole(pathname, roles) : null;
 
   useEffect(() => {
     if (status === "unauthenticated") {
       const params = new URLSearchParams();
-      params.set("callbackUrl", pathname);
+      // Match middleware's pathname + search callback without adding a
+      // useSearchParams dependency to every protected section's rendering.
+      params.set("callbackUrl", `${pathname}${window.location.search}`);
       router.push(`/login?${params.toString()}`);
-    } else if (noRecognizedRole) {
-      router.push("/no-role");
-    } else if (wrongRoleForPath) {
-      router.push("/dashboard");
+    } else if (redirectPath) {
+      router.replace(redirectPath);
     }
-  }, [status, noRecognizedRole, wrongRoleForPath, router, pathname]);
+  }, [status, redirectPath, router, pathname]);
 
   if (status === "loading") {
     return (
@@ -60,7 +54,7 @@ export function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  if (status === "unauthenticated" || noRecognizedRole || wrongRoleForPath) {
+  if (status === "unauthenticated" || redirectPath) {
     return null;
   }
 
