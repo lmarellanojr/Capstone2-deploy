@@ -90,6 +90,63 @@ def get_lxd_free_mb() -> Optional[float]:
         return None
 
 
+def plant_flags_during_provision(
+    client,
+    student_id: str,
+    pod_id: int,
+    vmids: Dict[str, str],
+    scenario_id: str,
+) -> None:
+    """Generate and plant per-student flags.
+
+    Scenario 1 failures are fatal (never mark ACTIVE). Other scenarios stay
+    nonfatal. Audit details never include flags, argv, or raw exception text
+    for Scenario 1.
+    """
+    from flag_planting import (
+        S1_FLAG_FAIL_REASONS,
+        S1_FLAG_GENERIC_ERROR,
+        Scenario1FlagPlantingError,
+        prepare_scenario_flags,
+    )
+
+    scen_int = int(str(scenario_id).strip())
+    try:
+        conn_flags = get_db_connection()
+        try:
+            flags_map = prepare_scenario_flags(
+                client, student_id, pod_id, vmids, scen_int, conn_flags
+            )
+        finally:
+            conn_flags.close()
+        log_event(
+            "FLAGS_PLANTED_OK",
+            student_id,
+            pod_id,
+            detail=f"scenario={scen_int}, milestones={sorted(list(flags_map.keys()))}",
+        )
+    except Scenario1FlagPlantingError as exc:
+        reason = exc.reason if exc.reason in S1_FLAG_FAIL_REASONS else "kali_exec_exception"
+        log_event(
+            "FLAGS_PLANTED_FAIL",
+            student_id,
+            pod_id,
+            detail=f"scenario=1, reason={reason}",
+        )
+        raise RuntimeError(S1_FLAG_GENERIC_ERROR) from None
+    except Exception as e:
+        if scen_int == 1:
+            log_event(
+                "FLAGS_PLANTED_FAIL",
+                student_id,
+                pod_id,
+                detail="scenario=1, reason=kali_exec_exception",
+            )
+            raise RuntimeError(S1_FLAG_GENERIC_ERROR) from None
+        logger.warning(f"Scenario flag generation/planting skipped/failed: {e}")
+        log_event("FLAGS_PLANTED_FAIL", student_id, pod_id, detail=str(e))
+
+
 def perform_provisioning(student_id: str, pod_id: int, vmids: Dict[str, str], scenario_id: str):
     wazuh_agent_id = None
     connection_id = None
@@ -340,41 +397,7 @@ write_files:
             logger.warning(f"Wazuh enroll skipped/failed: {e}")
             log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))
 
-        # Plant dynamic per-student milestone flags for hybrid scoring (SCORE-HYBRID #111)
-        try:
-            scen_int = int(str(scenario_id).strip())
-            from flag_planting import generate_all_scenario_flags, plant_scenario_flags, save_pod_flags
-            flags_map = generate_all_scenario_flags(student_id, scen_int)
-            # Scenario 1 Milestone 5 is "whoami" in the Kali terminal: its flag is
-            # the student's live Kali login name read from the container (not an
-            # HMAC, not hardcoded), so the student simply types what `whoami` prints.
-            if scen_int == 1:
-                from flag_planting import read_kali_whoami
-                flags_map[5] = read_kali_whoami(client, vmids, student_id)
-            # Scenario 6 (portal "Scenario 2") Milestone 5 is the capture-the-flag:
-            # a single human-readable code (e.g. brave-otter-7421) shown on the XSS
-            # (Reflected) result page, not an HMAC FLAG{...} token. Easier to read,
-            # and only this one value is displayed, so there's no ambiguity.
-            if scen_int == 6:
-                from flag_planting import generate_capture_flag
-                flags_map[5] = generate_capture_flag(student_id, scen_int, 5)
-            conn_flags = get_db_connection()
-            try:
-                save_pod_flags(conn_flags, pod_id, student_id, scen_int, flags_map)
-            finally:
-                conn_flags.close()
-
-            plant_scenario_flags(client, student_id, pod_id, vmids, scen_int, flags_map)
-            # Security invariant: audit log detail must NEVER include plaintext flags
-            log_event(
-                "FLAGS_PLANTED_OK",
-                student_id,
-                pod_id,
-                detail=f"scenario={scen_int}, milestones={sorted(list(flags_map.keys()))}",
-            )
-        except Exception as e:
-            logger.warning(f"Scenario flag generation/planting skipped/failed: {e}")
-            log_event("FLAGS_PLANTED_FAIL", student_id, pod_id, detail=str(e))
+        plant_flags_during_provision(client, student_id, pod_id, vmids, scenario_id)
 
         conn = get_db_connection()
         with conn:

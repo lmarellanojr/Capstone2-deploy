@@ -1309,6 +1309,90 @@ def test_pure_flag_valid_flag_alone_passes(client, hybrid_db: str):
     assert n == 1
 
 
+def test_s1_m5_validate_flag_rejects_username_missing_and_cross_user(hybrid_db: str):
+    """S1 M5 accepts only that student's stored HMAC; usernames and missing rows fail."""
+    from flag_planting import generate_milestone_flag, save_pod_flags
+
+    conn = sqlite3.connect(hybrid_db)
+    conn.row_factory = sqlite3.Row
+    alice = "student_alice"
+    bob = "student_bob"
+    alice_flag = generate_milestone_flag(alice, 1, 5)
+    bob_flag = generate_milestone_flag(bob, 1, 5)
+    assert alice_flag != bob_flag
+
+    valid, _ = validate_flag(conn, 1, 5, alice_flag, student_id=alice)
+    assert valid is False
+
+    save_pod_flags(conn, 1, alice, 1, {5: "student"})
+    valid, _ = validate_flag(conn, 1, 5, "student", student_id=alice)
+    assert valid is False
+    valid, _ = validate_flag(conn, 1, 5, alice_flag, student_id=alice)
+    assert valid is False
+    valid, _ = validate_flag(conn, 1, 5, "tomcat", student_id=alice)
+    assert valid is False
+
+    save_pod_flags(conn, 1, alice, 1, {5: alice_flag})
+    save_pod_flags(conn, 2, bob, 1, {5: bob_flag})
+    valid, _ = validate_flag(conn, 1, 5, alice_flag, student_id=alice)
+    assert valid is True
+    valid, _ = validate_flag(conn, 1, 5, bob_flag, student_id=alice)
+    assert valid is False
+    valid, _ = validate_flag(conn, 1, 5, "student", student_id=alice)
+    assert valid is False
+    conn.close()
+
+
+def test_migration_v11_updates_s1_m5_rubric_copy(tmp_path: Path):
+    """v11 rewrites S1 M5 name/criteria only; expected_flag and points stay."""
+    db_file = str(tmp_path / "v11.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA journal_mode=WAL")
+    start = migrate.current_version(conn)
+    for version, sql_path in migrate._migration_files():
+        if version > 10 or version <= start:
+            continue
+        with conn:
+            if version == 3 and not migrate._has_column(
+                conn, "milestone_verification", "student_id"
+            ):
+                conn.execute(
+                    "ALTER TABLE milestone_verification ADD COLUMN student_id TEXT"
+                )
+            if version == 4:
+                migrate._upgrade_review_cases_schema(conn)
+            migrate._run_sql_file(conn, sql_path)
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+    row = conn.execute(
+        "SELECT name, criteria, expected_flag, points FROM milestone_rubrics "
+        "WHERE scenario_id=1 AND milestone_id=5"
+    ).fetchone()
+    assert row[0] == "Capture the Flag (whoami)"
+    assert "whoami" in row[1]
+    expected_flag, points = row[2], row[3]
+    conn.close()
+
+    applied = migrate.apply(db_file)
+    assert applied >= 11
+    conn = sqlite3.connect(db_file)
+    row = conn.execute(
+        "SELECT name, criteria, expected_flag, points FROM milestone_rubrics "
+        "WHERE scenario_id=1 AND milestone_id=5"
+    ).fetchone()
+    assert row[0] == "Capture the Flag"
+    assert "scenario1.txt" in row[1]
+    assert "whoami" not in row[1]
+    assert row[2] == expected_flag
+    assert row[3] == points
+    count = conn.execute("SELECT COUNT(*) FROM milestone_rubrics").fetchone()[0]
+    assert count == 15
+    s1m5 = next(r for r in DEFAULT_RUBRICS if r["scenario_id"] == 1 and r["milestone_id"] == 5)
+    assert s1m5["name"] == row[0]
+    assert s1m5["criteria"] == row[1]
+    conn.close()
+    assert migrate.apply(db_file) >= 11
+
+
 def test_pure_flag_wrong_flag_no_score_no_review(client, hybrid_db: str):
     """(1,5) pure-flag: a wrong flag never scores and never opens a review case."""
     student = "student_pureflag2"

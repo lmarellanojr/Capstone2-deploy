@@ -295,7 +295,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
           {/* Active / Expired: Two-Pane Split Layout */}
           {((phase === 'active' && pod) || (phase === 'expired' && pod)) && (
             <div className="flex-1 min-h-0 flex flex-col">
-              <div className="flex-1 min-h-0 grid grid-cols-1 min-[900px]:grid-cols-[380px_1fr] gap-3 mb-3 overflow-y-auto min-[900px]:overflow-hidden">
+              <div className="flex-1 min-h-0 grid grid-cols-1 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 mb-3 overflow-y-auto min-[900px]:overflow-hidden">
                 {/* Left Pane: ExercisePanel */}
                 {currentMilestone && (
                   <div className="min-h-0 h-full">

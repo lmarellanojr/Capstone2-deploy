@@ -20,9 +20,39 @@ logger = logging.getLogger("provision_api")
 
 DEFAULT_COHORT_SECRET = "cyberrange-default-cohort-secret-2026"
 
+S1_FLAG_FAIL_REASONS = frozenset(
+    {
+        "missing_client",
+        "empty_flag",
+        "kali_exec_nonzero",
+        "kali_exec_exception",
+        "save_failed",
+    }
+)
+S1_FLAG_GENERIC_ERROR = "Scenario 1 flag planting failed"
+S1_KALI_FLAG_PATH = "/opt/cyberrange/flags/scenario1.txt"
+S1_KALI_M5_SCRIPT = """
+set -euo pipefail
+mkdir -p /opt/cyberrange/flags
+chmod 0755 /opt /opt/cyberrange /opt/cyberrange/flags
+printf '%s\\n' "$1" > /opt/cyberrange/flags/scenario1.txt
+chown root:root /opt/cyberrange/flags/scenario1.txt
+chmod 0644 /opt/cyberrange/flags/scenario1.txt
+"""
+
+
+class Scenario1FlagPlantingError(RuntimeError):
+    """Fatal Scenario 1 M5 plant/save failure. Message is constant; reason is allowlisted."""
+
+    def __init__(self, reason: str):
+        safe_reason = reason if reason in S1_FLAG_FAIL_REASONS else "kali_exec_exception"
+        super().__init__(S1_FLAG_GENERIC_ERROR)
+        self.reason = safe_reason
+
+
 SCENARIO_MILESTONES: Dict[int, List[int]] = {
     # Milestone 5 on scenarios 1 and 6 is the pure-flag "capture the flag" final
-    # task (see hybrid_scoring.PURE_FLAG_MILESTONES); its flag is planted below.
+    # task (see hybrid_scoring.PURE_FLAG_MILESTONES). Scenario 1 plants M5 on Kali.
     1: [1, 2, 3, 4, 5],
     6: [1, 2, 3, 4, 5],
     9: [1, 2, 3],
@@ -197,30 +227,62 @@ def _exec_script(inst: Any, script: str, *args: str) -> None:
     inst.execute(cmd)
 
 
-def read_kali_whoami(client: Any, vmids: Dict[str, str], student_id: str) -> str:
-    """Return the account name a student sees from `whoami` in the Kali terminal.
-
-    Scenario 1's capture-the-flag is simply the student's own Kali login name, so
-    the flag is read live from the Kali container (the regular UID 1000 login
-    user) rather than hardcoded. Falls back to 'student' only if the container
-    cannot be read, so a transient infra error never makes the milestone
-    impossible to pass.
-    """
-    fallback = "student"
-    if client is None:
-        return fallback
+def plant_scenario1_kali_m5(
+    client: Any,
+    student_id: str,
+    vmids: Dict[str, str],
+    flag: str,
+) -> None:
+    """Plant Scenario 1 M5 on the student's Kali. Raises on any failure; never logs the flag."""
     kali_name = vmids.get("kali", f"pod-{student_id}-kali")
     try:
         kali = client.instances.get(kali_name)
-        # The Kali terminal logs in as the regular (UID 1000) account; that is
-        # what `whoami` prints there. Read it from the container, not hardcoded.
-        res = kali.execute(["bash", "-c", "getent passwd 1000 | cut -d: -f1"])
-        out = (getattr(res, "stdout", "") or "").strip()
-        name = next((ln.strip() for ln in out.splitlines() if ln.strip()), "")
-        return name or fallback
-    except Exception as e:  # pragma: no cover - defensive, needs live LXD
-        logger.warning(f"read_kali_whoami failed for {kali_name}: {e}")
-        return fallback
+        cmd = ["bash", "-c", S1_KALI_M5_SCRIPT, "_", flag]
+        res = kali.execute(cmd)
+        exit_code = getattr(res, "exit_code", 1)
+        if exit_code != 0:
+            logger.warning(
+                "scenario=1 milestone=5 kali=%s exit=%s", kali_name, exit_code
+            )
+            raise Scenario1FlagPlantingError("kali_exec_nonzero")
+    except Scenario1FlagPlantingError:
+        raise
+    except Exception:
+        logger.warning("scenario=1 milestone=5 kali=%s exit=exception", kali_name)
+        raise Scenario1FlagPlantingError("kali_exec_exception") from None
+
+
+def prepare_scenario_flags(
+    client: Any,
+    student_id: str,
+    pod_id: int,
+    vmids: Dict[str, str],
+    scenario_id: int,
+    conn: sqlite3.Connection,
+) -> Dict[int, str]:
+    """Generate, plant, and persist flags. Scenario 1 is fail-closed; others stay nonfatal."""
+    s_id = int(scenario_id)
+    flags_map = generate_all_scenario_flags(student_id, s_id)
+    if s_id == 6:
+        flags_map[5] = generate_capture_flag(student_id, s_id, 5)
+
+    if s_id == 1:
+        m5_flag = (flags_map.get(5) or "").strip()
+        if client is None:
+            raise Scenario1FlagPlantingError("missing_client")
+        if not m5_flag:
+            raise Scenario1FlagPlantingError("empty_flag")
+        plant_scenario_flags(client, student_id, pod_id, vmids, s_id, flags_map)
+        plant_scenario1_kali_m5(client, student_id, vmids, m5_flag)
+        try:
+            save_pod_flags(conn, pod_id, student_id, s_id, flags_map)
+        except Exception:
+            raise Scenario1FlagPlantingError("save_failed") from None
+        return flags_map
+
+    save_pod_flags(conn, pod_id, student_id, s_id, flags_map)
+    plant_scenario_flags(client, student_id, pod_id, vmids, s_id, flags_map)
+    return flags_map
 
 
 def plant_scenario_flags(
@@ -253,7 +315,6 @@ def plant_scenario_flags(
             m2_flag = flags_map.get(2, "")
             m3_flag = flags_map.get(3, "")
             m4_flag = flags_map.get(4, "")
-            m5_flag = flags_map.get(5, "")
 
             s1_script = """
 set -euo pipefail
@@ -276,10 +337,9 @@ mkdir -p /var/lib/tomcat9/webapps/ROOT /usr/share/tomcat9/webapps/ROOT
 printf '\\n<!-- Service Version Detection: %s -->\\n' "$3" >> /var/lib/tomcat9/webapps/ROOT/index.html 2>/dev/null || true
 printf 'Service Version Detection Flag: %s\\n' "$3" > /var/www/html/version.txt 2>/dev/null || true
 
-# M4 is scored from Metasploit history (behavioral) and M5 is "whoami" in the
-# exploited Tomcat shell (the flag is simply the word `tomcat`), so no flag file
-# is planted here. Clean up any stray flag files from earlier designs so students
-# don't cat the wrong value.
+# M4 is scored from Metasploit history. M5 is planted on Kali, not meta.
+# Remove stray meta flag files from earlier designs so students do not cat
+# the wrong value from the exploited host.
 rm -f /home/tomcat/flag.txt /home/tomcat/whoami_flag.txt /tmp/flag_m4.txt 2>/dev/null || true
 """
             _exec_script(meta, s1_script, m1_flag, m2_flag, m3_flag, m4_flag)
