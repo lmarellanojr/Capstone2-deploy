@@ -45,7 +45,15 @@ The first stage builds the three bases and automatically adds the Wazuh agent to
 
 The Wazuh bake leaves a unique, fingerprint-anchored rollback alias for
 `meta-base`; the DVWA bake leaves a dated rollback alias. Both let you revert a
-bad rebake without rebuilding from scratch.
+bad rebake without rebuilding from scratch. After a successful Wazuh bake the
+script keeps the two newest `meta-base-prewazuh-*` aliases and deletes older
+ones (and any image that no longer has an alias). Prune leftover rollback
+images by hand if a failed run left orphans:
+
+```bash
+lxc image alias list | grep prewazuh
+lxc image list
+```
 
 ---
 
@@ -143,9 +151,12 @@ provisioner grants it per-pod at provision time.
 
 ## Step 2: Wazuh is baked automatically into `meta-base`
 
-The release builder always runs `bake_wazuh_agent.sh meta-base` after building
-or reusing the base alias. Do not treat this as an optional scoring add-on.
-Rebaking an existing alias uses the same preflight and validation.
+The release builder runs `bake_wazuh_agent.sh meta-base` after building the
+base alias when the current `meta-base` description does not already contain
+`wazuh-agent 4.7.5 auth.log collection`. A later builder run can therefore
+fill in missing `kali-base` or `dvwa-base` images while lab pods exist, without
+rebaking a valid Wazuh image. Legacy images without that marker still get a
+forced bake. Do not treat the bake as an optional scoring add-on.
 
 The bake refuses to republish while any provisioned lab pod instance exists. It
 installs the pinned agent and rsyslog, confirms auth/authpriv events reach

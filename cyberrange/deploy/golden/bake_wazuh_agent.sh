@@ -3,12 +3,15 @@
 # Requires no provisioned lab pods. Preserves the original image under a fingerprint-
 # anchored rollback alias and restores the primary alias if publishing fails.
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ALIAS="${1:?usage: bake_wazuh_agent.sh <golden_alias>}"
 WORK="bake-${ALIAS}-$$"
 STAMP="$(date +%Y%m%d%H%M%S)-$$"
 ROLLBACK_ALIAS="${ALIAS}-prewazuh-${STAMP}"
 CANDIDATE_ALIAS="${ALIAS}-wazuh-candidate-${STAMP}"
+ROLLBACK_KEEP=2
 OLD_FP=""
+NEW_FP=""
 PRIMARY_MUTATION_STARTED=0
 PRIMARY_UPDATED=0
 
@@ -27,8 +30,26 @@ cleanup() {
     fi
   fi
   lxc image alias delete "$CANDIDATE_ALIAS" >/dev/null 2>&1 || true
+  if [ "$PRIMARY_UPDATED" -eq 0 ] && [ -n "${NEW_FP:-}" ]; then
+    lxc image delete "$NEW_FP" >/dev/null 2>&1 || true
+  fi
   lxc delete "$WORK" --force >/dev/null 2>&1 || true
   return "$result"
+}
+
+prune_prewazuh_rollbacks() {
+  local prefix="${ALIAS}-prewazuh-"
+  local i=0 a fp
+  while IFS= read -r a; do
+    [ -n "$a" ] || continue
+    i=$((i + 1))
+    [ "$i" -le "$ROLLBACK_KEEP" ] && continue
+    fp="$(alias_fingerprint "$a")"
+    lxc image alias delete "$a" >/dev/null 2>&1 || true
+    if [ -n "$fp" ] && ! lxc image alias list --format csv | awk -F, -v f="$fp" '$2==f {found=1} END {exit !found}'; then
+      lxc image delete "$fp" >/dev/null 2>&1 || true
+    fi
+  done < <(lxc image alias list --format csv | awk -F, -v p="$prefix" 'index($1, p)==1 {print $1}' | sort -r)
 }
 trap cleanup EXIT
 
@@ -94,7 +115,6 @@ sed -i 's#<address>.*</address>#<address>MANAGER_IP</address>#' /var/ossec/etc/o
 python3 - <<'PY'
 from pathlib import Path
 import re
-import xml.etree.ElementTree as ET
 
 path = Path('/var/ossec/etc/ossec.conf')
 text = path.read_text()
@@ -116,17 +136,11 @@ else:
         raise SystemExit('ossec.conf has no closing </ossec_config>')
     text = text[:end] + entry + text[end:]
 path.write_text(text)
-root = ET.parse(path).getroot()
-entries = [n for n in root.findall('localfile')
-  if (n.findtext('location') or '').strip() == '/var/log/auth.log'
-  and (n.findtext('log_format') or '').strip() == 'syslog']
-if len(entries) != 1:
-    raise SystemExit(f'expected one syslog auth.log entry; found {len(entries)}')
 PY
 : > /var/ossec/etc/client.keys
 chown root:wazuh /var/ossec/etc/client.keys
 chmod 640 /var/ossec/etc/client.keys
-systemctl disable wazuh-agent
+systemctl disable wazuh-agent || true
 systemctl stop wazuh-agent || true
 rm -f /var/ossec/queue/rids/* /var/ossec/queue/agent-info/* 2>/dev/null || true
 : > /var/ossec/logs/ossec.log
@@ -135,17 +149,16 @@ rm -f /var/lib/dbus/machine-id
 CONFIGURE
 
 echo "[*] Validating staging image while services are running"
+lxc file push "${SCRIPT_DIR}/ossec_localfile.py" "${WORK}/tmp/ossec_localfile.py" </dev/null
 lxc exec "$WORK" -- bash -s <<'VALIDATE'
 set -euo pipefail
 test "$(dpkg --print-architecture)" = arm64
 dpkg-query -W -f='${Version}\n' wazuh-agent | grep -q '^4\.7\.5-'
 grep -q '<address>MANAGER_IP</address>' /var/ossec/etc/ossec.conf
-python3 - <<'PY'
-import xml.etree.ElementTree as ET
-root = ET.parse('/var/ossec/etc/ossec.conf').getroot()
-entries = [n for n in root.findall('localfile')
-  if (n.findtext('location') or '').strip() == '/var/log/auth.log'
-  and (n.findtext('log_format') or '').strip() == 'syslog']
+PYTHONPATH=/tmp python3 - <<'PY'
+from pathlib import Path
+from ossec_localfile import authlog_syslog_entries
+entries = authlog_syslog_entries(Path('/var/ossec/etc/ossec.conf').read_text())
 assert len(entries) == 1, f'expected one auth.log syslog entry; got {len(entries)}'
 PY
 grep -REq '^[[:space:]]*auth,authpriv\.\*[[:space:]]+/var/log/auth\.log([[:space:]]|$)' \
@@ -159,8 +172,11 @@ for i in $(seq 1 10); do
   [ "$i" = 10 ] && { echo "authpriv probe did not reach /var/log/auth.log" >&2; exit 1; }
   sleep 1
 done
-sed -i "/${probe}/d" /var/log/auth.log
+: > /var/log/auth.log
+: > /var/log/syslog 2>/dev/null || true
+: > /var/log/dpkg.log 2>/dev/null || true
 test -f /var/log/auth.log
+test ! -s /var/log/auth.log
 test ! -s /etc/machine-id
 test "$(systemctl is-active wazuh-agent 2>/dev/null || true)" != active
 VALIDATE
@@ -183,4 +199,5 @@ lxc image alias create "$ALIAS" "$NEW_FP"
 }
 PRIMARY_UPDATED=1
 lxc image alias delete "$CANDIDATE_ALIAS"
+prune_prewazuh_rollbacks
 echo "[+] Rebaked ${ALIAS}; rollback alias = ${ROLLBACK_ALIAS} (fp ${OLD_FP:0:12})"
