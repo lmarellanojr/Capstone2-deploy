@@ -137,4 +137,33 @@ def test_existing_account_generators_create_long_dictionary_free_passwords(name)
     result = subprocess.run(["bash", "-lc", command], capture_output=True, text=True, check=True)
     passwords = [password for password in result.stdout.splitlines() if password]
     assert len(passwords) == 8
-    assert all(re.fullmatch(r"[0-9!@#$%^]{48}", password) for password in passwords)
+    assert all(re.fullmatch(r"[0-9!@#%^_]{48}", password) for password in passwords)
+    assert all("$" not in password for password in passwords)
+
+
+def test_generated_passwords_survive_env_file_round_trip(tmp_path):
+    text = (HERE / "setup_verify_accounts.sh").read_text()
+    function = re.search(r"generate_dictionary_free_password\(\) \{\n(.*?)\n\}", text, re.S)
+    assert function
+    seed = tmp_path / "seed.env"
+    py = Path(sys.executable).as_posix()
+    command = (
+        "generate_dictionary_free_password() {\n"
+        + function.group(1)
+        + "\n}\n"
+        + "for name in VERIFY_STUDENT_PASSWORD VERIFY_INSTRUCTOR_PASSWORD VERIFY_ADMIN_PASSWORD PROBE_PASSWORD; do\n"
+        + "  printf '%s=%q\\n' \"$name\" \"$(generate_dictionary_free_password)\"\n"
+        + "done > \"$SEED\"\n"
+        + "set -a\n. \"$SEED\"\nset +a\n"
+        + "export VERIFY_STUDENT_PASSWORD VERIFY_INSTRUCTOR_PASSWORD VERIFY_ADMIN_PASSWORD PROBE_PASSWORD\n"
+        + f"\"{py}\" -c \"import os,re; names=['VERIFY_STUDENT_PASSWORD','VERIFY_INSTRUCTOR_PASSWORD','VERIFY_ADMIN_PASSWORD','PROBE_PASSWORD'];\n"
+        + "[print(n+'_OK') for n in names if re.fullmatch(r'[0-9!@#%^_]{48}', os.environ[n]) and '$' not in os.environ[n]]\""
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        env=dict(os.environ, SEED=seed.as_posix()),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.count("_OK") == 4

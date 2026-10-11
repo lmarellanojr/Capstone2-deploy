@@ -13,7 +13,7 @@ REPO=/home/llms_admin/cyberrange
 ADMIN_ENV="$REPO/deploy/keycloak/admin.env"
 CLIENT_SECRET=$(openssl rand -hex 24)
 generate_dictionary_free_password() {
-  openssl rand -hex 24 | LC_ALL=C tr 'abcdef' '!@#$%^'
+  openssl rand -hex 24 | LC_ALL=C tr 'abcdef' '!@#%^_'
 }
 STUDENT_PW="$(generate_dictionary_free_password)"
 
@@ -21,8 +21,8 @@ STUDENT_PW="$(generate_dictionary_free_password)"
 umask 077
 install -m 600 /dev/null /tmp/kc-seed.env
 {
-  echo "CLIENT_SECRET=${CLIENT_SECRET}"
-  echo "STUDENT_PW=${STUDENT_PW}"
+  printf '%s=%q\n' CLIENT_SECRET "$CLIENT_SECRET"
+  printf '%s=%q\n' STUDENT_PW "$STUDENT_PW"
 } > /tmp/kc-seed.env
 lxc file push "$ADMIN_ENV" guacamole/tmp/admin.env </dev/null
 lxc file push /tmp/kc-seed.env guacamole/tmp/kc-seed.env </dev/null

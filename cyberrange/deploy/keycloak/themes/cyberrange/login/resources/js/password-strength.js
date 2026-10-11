@@ -3,11 +3,27 @@
     "use strict";
     function estimate(value) {
         if (!value) return 0;
+        // a/i/o and letter-runs are dictionary words; do not call those Strong.
+        if (/[aio]/i.test(value) || /[A-Za-z]{2,}/.test(value)) return 1;
         const normalized = value.toLowerCase().replace(/[0@]/g, "a").replace(/[1!]/g, "i").replace(/3/g, "e").replace(/\$/g, "s");
         if (value.length < 8 || /(.+)\1{2,}/u.test(normalized) ||
             /password|passw|qwerty|letmein|welcome|cyberrange|capstone|123456|abcdef/i.test(normalized) ||
             new Set(normalized).size < 5) return 1;
         return value.length < 12 ? 2 : value.length < 16 ? 3 : 4;
+    }
+    function passwordToggle(input) {
+        const group = input.closest(".pf-c-input-group, .pf-v5-c-input-group");
+        if (!group) return null;
+        return group.querySelector("[data-password-toggle], button[type=button]");
+    }
+    function setPasswordVisible(input, visible) {
+        const want = visible ? "text" : "password";
+        const toggle = passwordToggle(input);
+        if (input.type !== want && toggle) toggle.click();
+        if (input.type !== want) input.type = want;
+        if (toggle && toggle.hasAttribute("aria-label")) {
+            toggle.setAttribute("aria-label", visible ? "Hide password" : "Show password");
+        }
     }
     function mount(doc) {
         const input = doc.getElementById("password-new");
@@ -52,7 +68,7 @@
                     const previous = chars[i]; chars[i] = chars[j]; chars[j] = previous;
                 }
                 input.value = chars.join("");
-                input.type = "text";
+                setPasswordVisible(input, true);
                 input.dispatchEvent(new doc.defaultView.Event("input", { bubbles: true }));
                 input.dispatchEvent(new doc.defaultView.Event("change", { bubbles: true }));
                 input.focus();
@@ -69,7 +85,9 @@
         }
         input.addEventListener("input", update);
         input.addEventListener("change", update);
-        if (input.form) input.form.addEventListener("reset", function () { setTimeout(update, 0); });
+        if (input.form) input.form.addEventListener("reset", function () {
+            setTimeout(function () { setPasswordVisible(input, false); update(); }, 0);
+        });
         update();
     }
     if (typeof module !== "undefined" && module.exports) module.exports = { estimate, mount };
