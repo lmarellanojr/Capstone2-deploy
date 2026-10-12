@@ -1310,7 +1310,7 @@ def test_pure_flag_valid_flag_alone_passes(client, hybrid_db: str):
 
 
 def test_s1_m5_validate_flag_rejects_username_missing_and_cross_user(hybrid_db: str):
-    """S1 M5 accepts only that student's stored HMAC; usernames and missing rows fail."""
+    """S1 M5 accepts only that student's correctly shaped stored flag."""
     from flag_planting import generate_milestone_flag, save_pod_flags
 
     conn = sqlite3.connect(hybrid_db)
@@ -1336,6 +1336,18 @@ def test_s1_m5_validate_flag_rejects_username_missing_and_cross_user(hybrid_db: 
     save_pod_flags(conn, 2, bob, 1, {5: bob_flag})
     valid, _ = validate_flag(conn, 1, 5, alice_flag, student_id=alice)
     assert valid is True
+    malformed_values = (
+        "student",
+        "tomcat",
+        "FLAG{S01_M5_AABBCCDDEEFF}trailing",
+        "XFLAG{S01_M5_AABBCCDDEEFF}",
+        "FLAG{S01_M5_AABBCCDDEEFF00}",
+    )
+    for malformed in malformed_values:
+        save_pod_flags(conn, 1, alice, 1, {5: malformed})
+        valid, _ = validate_flag(conn, 1, 5, malformed, student_id=alice)
+        assert valid is False
+    save_pod_flags(conn, 1, alice, 1, {5: alice_flag})
     valid, _ = validate_flag(conn, 1, 5, bob_flag, student_id=alice)
     assert valid is False
     valid, _ = validate_flag(conn, 1, 5, "student", student_id=alice)
@@ -1343,9 +1355,27 @@ def test_s1_m5_validate_flag_rejects_username_missing_and_cross_user(hybrid_db: 
     conn.close()
 
 
-def test_migration_v11_updates_s1_m5_rubric_copy(tmp_path: Path):
-    """v11 rewrites S1 M5 name/criteria only; expected_flag and points stay."""
-    db_file = str(tmp_path / "v11.db")
+def test_s1_m5_stored_flag_survives_secret_rotation(hybrid_db: str, monkeypatch):
+    """A planted flag remains valid when COHORT_FLAG_SECRET rotates later."""
+    from flag_planting import generate_milestone_flag, save_pod_flags
+
+    conn = sqlite3.connect(hybrid_db)
+    conn.row_factory = sqlite3.Row
+    student = "student_rotated_secret"
+    old_flag = generate_milestone_flag(student, 1, 5, secret="old-cohort-secret")
+    save_pod_flags(conn, 1, student, 1, {5: old_flag})
+    monkeypatch.setenv("COHORT_FLAG_SECRET", "new-cohort-secret")
+
+    valid, _ = validate_flag(conn, 1, 5, old_flag, student_id=student)
+    assert valid is True
+    valid, _ = validate_flag(conn, 1, 5, "FLAG{S01_M5_ABCDEF123456}", student_id=student)
+    assert valid is False
+    conn.close()
+
+
+def test_migration_v12_requires_v11_and_retries_in_order(tmp_path: Path, monkeypatch):
+    """A missing v11 cannot be skipped; after v11, v12 updates S1 M5 idempotently."""
+    db_file = str(tmp_path / "v12.db")
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA journal_mode=WAL")
     start = migrate.current_version(conn)
@@ -1372,9 +1402,39 @@ def test_migration_v11_updates_s1_m5_rubric_copy(tmp_path: Path):
     expected_flag, points = row[2], row[3]
     conn.close()
 
-    applied = migrate.apply(db_file)
-    assert applied >= 11
+    all_migrations = [
+        (version, path)
+        for version, path in migrate._migration_files()
+        if version != 11
+    ]
+    monkeypatch.setattr(
+        migrate,
+        "_migration_files",
+        lambda: all_migrations,
+    )
+    with pytest.raises(RuntimeError, match="requires the PR #184 v11"):
+        migrate.apply(db_file)
     conn = sqlite3.connect(db_file)
+    assert migrate.current_version(conn) == 10
+    conn.close()
+
+    v11_path = tmp_path / "v11.sql"
+    v11_path.write_text(
+        "CREATE TABLE IF NOT EXISTS user_onboarding ("
+        "subject TEXT PRIMARY KEY, orientation_completed_at TIMESTAMP);",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        migrate,
+        "_migration_files",
+        lambda: sorted([*all_migrations, (11, str(v11_path))]),
+    )
+    applied = migrate.apply(db_file)
+    assert applied == 12
+    conn = sqlite3.connect(db_file)
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='user_onboarding'"
+    ).fetchone()
     row = conn.execute(
         "SELECT name, criteria, expected_flag, points FROM milestone_rubrics "
         "WHERE scenario_id=1 AND milestone_id=5"
@@ -1390,7 +1450,45 @@ def test_migration_v11_updates_s1_m5_rubric_copy(tmp_path: Path):
     assert s1m5["name"] == row[0]
     assert s1m5["criteria"] == row[1]
     conn.close()
-    assert migrate.apply(db_file) >= 11
+    assert migrate.apply(db_file) == 12
+
+    # A previous PR #181 v11 may already be recorded without #184's table.
+    legacy_db = str(tmp_path / "legacy-v11.db")
+    conn = sqlite3.connect(legacy_db)
+    for version, sql_path in all_migrations:
+        if version > 10:
+            continue
+        with conn:
+            if version == 3 and not migrate._has_column(
+                conn, "milestone_verification", "student_id"
+            ):
+                conn.execute(
+                    "ALTER TABLE milestone_verification ADD COLUMN student_id TEXT"
+                )
+            if version == 4:
+                migrate._upgrade_review_cases_schema(conn)
+            migrate._run_sql_file(conn, sql_path)
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+    conn.execute("INSERT INTO schema_version (version) VALUES (11)")
+    conn.commit()
+    conn.close()
+
+    assert migrate.apply(legacy_db) == 12
+    conn = sqlite3.connect(legacy_db)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM schema_version WHERE version=11"
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='user_onboarding'"
+    ).fetchone()
+    assert conn.execute(
+        "SELECT name FROM milestone_rubrics WHERE scenario_id=1 AND milestone_id=5"
+    ).fetchone()[0] == "Capture the Flag"
+    conn.execute("DROP TABLE user_onboarding")
+    conn.commit()
+    conn.close()
+    assert migrate.check(legacy_db) is False
+    assert migrate.apply(legacy_db) == 12
 
 
 def test_pure_flag_wrong_flag_no_score_no_review(client, hybrid_db: str):

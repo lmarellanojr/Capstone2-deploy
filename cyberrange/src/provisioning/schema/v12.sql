@@ -1,4 +1,4 @@
--- Schema migration v11: Scenario 1 M5 rubric copy (personal FLAG file).
+-- Schema migration v12: Scenario 1 M5 rubric copy (personal FLAG file).
 --
 -- v10 seeded Capture the Flag (whoami). INSERT OR IGNORE will not update
 -- existing rows, so this migration rewrites name/criteria only. Do not

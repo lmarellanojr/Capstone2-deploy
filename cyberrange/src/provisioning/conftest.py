@@ -53,13 +53,30 @@ def _default_student_claims(username: str = "student1") -> dict:
 
 
 @pytest.fixture(autouse=True)
-def temp_db(monkeypatch):
+def temp_db(monkeypatch, tmp_path):
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
         db_path = tf.name
     tf.close()
     monkeypatch.setattr("config.DB_PATH", db_path)
     monkeypatch.setattr("db.DB_PATH", db_path)
     monkeypatch.setattr("auth.AUTH_ENABLED", True)
+
+    # PR #184 owns v11 in production. Until it merges, model its exact migration
+    # in tests so the v12 guard and the rest of the suite exercise the ordered path.
+    migrations = migrate._migration_files
+    if not any(version == 11 for version, _ in migrations()):
+        v11_path = tmp_path / "v11.sql"
+        v11_path.write_text(
+            "CREATE TABLE IF NOT EXISTS user_onboarding ("
+            "subject TEXT PRIMARY KEY, "
+            "orientation_completed_at TIMESTAMP);",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            migrate,
+            "_migration_files",
+            lambda: sorted([*migrations(), (11, str(v11_path))]),
+        )
 
     app.dependency_overrides[verify_token] = lambda: _default_student_claims()
 

@@ -213,7 +213,7 @@ def list_rubrics(conn: sqlite3.Connection, scenario_id: int) -> List[dict]:
 
 
 # Scenario 1 Milestone 5 is a per-student HMAC planted on Kali. Authenticated
-# S1 M5 validation requires the stored row to match generate_milestone_flag.
+# S1 M5 validation requires the student's stored flag to have the expected format.
 
 _FLAG_TOKEN = re.compile(r"FLAG\{[^{}\s]+\}", re.IGNORECASE)
 
@@ -266,15 +266,10 @@ def validate_flag(
             planted_expected = get_student_expected_flag(conn, clean_sid, 1, 5)
             if not planted_expected:
                 return False, rubric
-            try:
-                generated = generate_milestone_flag(clean_sid, 1, 5)
-            except Exception:
-                return False, rubric
             stored_norm = planted_expected.strip().upper()
-            generated_norm = generated.strip().upper()
-            if not secrets.compare_digest(stored_norm, generated_norm):
+            if not re.fullmatch(r"FLAG\{S01_M5_[0-9A-F]{12}\}", stored_norm):
                 return False, rubric
-            return secrets.compare_digest(clean_submitted, generated_norm), rubric
+            return secrets.compare_digest(clean_submitted, stored_norm), rubric
 
         # 1. If student has a provisioned dynamic flag in pod_milestone_flags, that is authoritative.
         # Static v5.sql git answer keys MUST NOT pass for a provisioned student.
