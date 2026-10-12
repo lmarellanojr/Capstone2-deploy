@@ -35,6 +35,17 @@ export const scoringClient = axios.create({
   timeout: 10000,
 })
 
+export const onboarding = {
+  async getOrientation(): Promise<{ completed: boolean }> {
+    const response = await apiClient.get<{ completed: boolean }>("/onboarding/orientation")
+    return response.data
+  },
+  async completeOrientation(): Promise<{ completed: boolean }> {
+    const response = await apiClient.post<{ completed: boolean }>("/onboarding/orientation")
+    return response.data
+  },
+}
+
 scoringClient.interceptors.response.use(
   (response) => response,
   (error) => {

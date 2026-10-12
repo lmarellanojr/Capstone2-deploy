@@ -1,4 +1,20 @@
-import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole, landingPathForRole, redirectPathForRole } from "./routeRoles"
+import { requiredRolesForPath, hasRequiredRole, hasAnyRecognizedRole, landingPathForRole, redirectPathForRole, onboardingRedirectPath } from "./routeRoles"
+
+describe("onboardingRedirectPath", () => {
+  it("redirects incomplete recognized-role users and preserves the query string", () => {
+    expect(onboardingRedirectPath("/scenarios", "?tab=defensive&tag=one", ["student"], false))
+      .toBe("/orientation?returnTo=%2Fscenarios%3Ftab%3Ddefensive%26tag%3Done")
+  })
+
+  it.each(["/orientation", "/login", "/no-role", "/auth-error"])("allows %s without an onboarding API check", (path) => {
+    expect(onboardingRedirectPath(path, "", ["student"], false)).toBeNull()
+  })
+
+  it("does not check completed or role-less accounts", () => {
+    expect(onboardingRedirectPath("/dashboard", "", ["student"], true)).toBeNull()
+    expect(onboardingRedirectPath("/dashboard", "", [], false)).toBeNull()
+  })
+})
 
 describe("redirectPathForRole", () => {
   it.each([

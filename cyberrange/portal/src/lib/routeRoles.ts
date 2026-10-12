@@ -27,6 +27,7 @@ export function hasRequiredRole(userRoles: string[] | undefined, required: Role[
 // Standalone recognized-role predicate. Middleware and AuthGate use
 // redirectPathForRole below, whose landing-path check enforces the no-role gate.
 const ALL_APP_ROLES: Role[] = ["student", "instructor", "admin"]
+const ONBOARDING_ALLOWLIST = new Set(["/orientation", "/login", "/no-role", "/auth-error"])
 
 export function hasAnyRecognizedRole(userRoles: string[] | undefined): boolean {
   return hasRequiredRole(userRoles, ALL_APP_ROLES)
@@ -63,4 +64,14 @@ export function redirectPathForRole(pathname: string, roles: string[] | undefine
   const required = requiredRolesForPath(path)
   if (required && !hasRequiredRole(roles, required)) return landing
   return null
+}
+
+export function onboardingRedirectPath(
+  pathname: string,
+  search: string,
+  roles: string[] | undefined,
+  completed: boolean,
+): string | null {
+  if (ONBOARDING_ALLOWLIST.has(pathname) || completed || !landingPathForRole(roles)) return null
+  return `/orientation?returnTo=${encodeURIComponent(`${pathname}${search}`)}`
 }
