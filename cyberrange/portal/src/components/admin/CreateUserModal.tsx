@@ -158,7 +158,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
               aria-describedby={`${uid}-email-msg`}
               className={input(errors.email)}
             />
-            {errorText("email")}
+            {errorText("email", "With a temporary password, the username and password are emailed automatically when mail is configured.")}
           </div>
 
           <fieldset>

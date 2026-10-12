@@ -13,6 +13,7 @@ import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { useToastContext } from "@/context/ToastContext";
 import { formatSqliteDate } from "@/lib/sqliteTime";
 import { APP_ROLES } from "@/lib/adminUserValidation";
+import { createCredentialFeedback, resetCredentialFeedback } from "@/lib/credentialEmailFeedback";
 import type { AdminUser, AppRole } from "@/lib/api";
 
 const ROLE_BADGE: Record<AppRole, "brand" | "info" | "default"> = {
@@ -277,12 +278,10 @@ export default function AdminUsersPage() {
         user={resetting}
         onClose={() => setResetting(null)}
         onReset={async (u, password, temporary) => {
-          await resetPassword(u.id, password, temporary);
-          success(
-            temporary
-              ? `${u.username}'s password was reset. They'll choose a new one at next sign-in.`
-              : `${u.username}'s password was reset.`
-          );
+          const updated = await resetPassword(u.id, password, temporary);
+          const feedback = resetCredentialFeedback(updated, temporary);
+          if (feedback.kind === "error") toastError(feedback.message);
+          else success(feedback.message);
         }}
       />
 
@@ -290,7 +289,11 @@ export default function AdminUsersPage() {
         isOpen={creating}
         onClose={() => setCreating(false)}
         onCreate={createUser}
-        onCreated={(u) => success(`Created ${u.username} (${u.role ? ROLE_LABEL[u.role] : "no role"}).`)}
+        onCreated={(u) => {
+          const feedback = createCredentialFeedback(u, u.role ? ROLE_LABEL[u.role] : "no role");
+          if (feedback.kind === "error") toastError(feedback.message);
+          else success(feedback.message);
+        }}
       />
 
       <Modal isOpen={confirm !== null} onClose={() => (confirmBusy ? undefined : setConfirm(null))}>

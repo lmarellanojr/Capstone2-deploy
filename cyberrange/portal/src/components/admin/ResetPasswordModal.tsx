@@ -140,6 +140,11 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                 <span className="text-text-muted">(recommended)</span>
               </span>
             </label>
+            {user.email && (
+              <p className="text-xs text-text-muted">
+                A temporary password will be emailed to {user.email} when mail is configured.
+              </p>
+            )}
 
             {error && (
               <div role="alert" className="alert-error p-3 text-sm">
