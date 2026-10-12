@@ -12,7 +12,7 @@ After Apps Script accepts a booking, it calls the assigned domain using that dom
 
 - `cyberrange/booking/Code.gs` is the repository copy of the updated Apps Script; the supplied `C:\Users\Windows\Downloads\Code.gs` was updated to match.
 - `cyberrange/src/provisioning/booking_router.py`, `keycloak_admin.py`, and `provision_api_fastapi.py` implement the secret-protected, student-only account workflow.
-- `cyberrange/src/provisioning/schema/v12.sql` stores durable per-email claims in SQLite so API workers cannot create concurrently.
+- `cyberrange/src/provisioning/schema/v13.sql` stores durable per-email claims in SQLite so API workers cannot create concurrently. Current `main` already uses v12 for a separate scenario migration.
 - `cyberrange/portal/src/app/api/booking/provision/route.ts` provides the server-side authenticated proxy.
 - `cyberrange/env/oci-12gib.env.example` and `cyberrange/portal/.env.local.example` document the server-side secret locations.
 - `docs/BOOKING-ACCOUNT-PROVISIONING.md` describes configuration, Apps Script installation, deployment, and recovery.

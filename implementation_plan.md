@@ -17,7 +17,7 @@ After a booking is accepted, create a student account for the tester's email in 
 ## Files
 
 - `cyberrange/src/provisioning/booking_router.py` (new): request validation, shared-secret authorization, exact user lookup, student account creation, temporary password generation, and mail status.
-- `cyberrange/src/provisioning/schema/v12.sql`: create the unique, durable booking-account claim table in the existing per-domain SQLite database; the API tests exercise the migration fixture.
+- `cyberrange/src/provisioning/schema/v13.sql`: create the unique, durable booking-account claim table in the existing per-domain SQLite database; v12 is already used on current `main` for a separate scenario migration.
 - `cyberrange/src/provisioning/provision_api_fastapi.py`: register the internal booking router.
 - `cyberrange/portal/src/app/api/booking/provision/route.ts` (new): secret-guarded server proxy to the internal API.
 - `cyberrange/portal/.env.local.example`: declare the server-only booking secret.

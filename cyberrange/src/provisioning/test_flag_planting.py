@@ -21,13 +21,18 @@ import db
 import migrate
 from flag_planting import (
     DEFAULT_COHORT_SECRET,
+    S1_FLAG_GENERIC_ERROR,
+    S1_KALI_FLAG_PATH,
     SCENARIO_MILESTONES,
+    Scenario1FlagPlantingError,
     generate_all_scenario_flags,
     generate_capture_flag,
     generate_milestone_flag,
     get_cohort_secret,
     get_student_expected_flag,
+    plant_scenario1_kali_m5,
     plant_scenario_flags,
+    prepare_scenario_flags,
     save_pod_flags,
 )
 
@@ -76,6 +81,10 @@ def test_flag_cross_student_uniqueness():
     flag_alice = generate_milestone_flag("student_alice", 1, 1, secret="secret-key-1")
     flag_bob = generate_milestone_flag("student_bob", 1, 1, secret="secret-key-1")
     assert flag_alice != flag_bob
+    m5_alice = generate_milestone_flag("student_alice", 1, 5, secret="secret-key-1")
+    m5_bob = generate_milestone_flag("student_bob", 1, 5, secret="secret-key-1")
+    assert m5_alice != m5_bob
+    assert m5_alice.startswith("FLAG{S01_M5_")
 
 
 def test_flag_cross_milestone_uniqueness():
@@ -187,9 +196,8 @@ def test_plant_scenario_flags_mock_client():
     call_args = meta_mock.execute.call_args[0][0]
     assert call_args[0] == "bash"
     assert call_args[1] == "-c"
-    # Verify positional parameter passing ($1..$4). Scenario 1 M5 is the live
-    # `whoami` value (read at provision time), not planted via this script, so
-    # FLAG_5 is intentionally not passed to the S1 container script.
+    # Verify positional parameter passing ($1..$4). Scenario 1 M5 is planted on
+    # Kali by a separate helper, so FLAG_5 is not passed to the meta script.
     assert "FLAG_1" in call_args
     assert "FLAG_2" in call_args
     assert "FLAG_3" in call_args
@@ -207,7 +215,7 @@ def test_plant_scenario_flags_mock_client():
 
 
 def test_plant_scenario_flags_handles_exec_failure():
-    """Container exec failure logs warning but does not raise exception (fail-open)."""
+    """Meta/DVWA exec failure logs warning but does not raise (fail-open)."""
     client = MagicMock()
     meta_mock = MagicMock()
     meta_mock.execute.side_effect = RuntimeError("Container execution timeout")
@@ -216,26 +224,185 @@ def test_plant_scenario_flags_handles_exec_failure():
     vmids = {"meta": "pod-student_alice-meta"}
     flags_map = {1: "FLAG_1"}
 
-    # Must not raise
     plant_scenario_flags(client, "student_alice", 1, vmids, 1, flags_map)
+    plant_scenario_flags(client, "student_alice", 1, vmids, 9, flags_map)
+    plant_scenario_flags(client, "student_alice", 1, vmids, 11, flags_map)
 
 
-def test_read_kali_whoami_reads_live_value():
-    """S1 M5 flag is the student's live Kali login name, not hardcoded."""
-    from flag_planting import read_kali_whoami
+def _instance_client(kali=None, meta=None, dvwa=None):
+    kali = kali or MagicMock()
+    meta = meta or MagicMock()
+    dvwa = dvwa or MagicMock()
+    for inst in (kali, meta, dvwa):
+        res = MagicMock()
+        res.exit_code = 0
+        inst.execute.return_value = res
+
+    def get(name):
+        if "kali" in name:
+            return kali
+        if "meta" in name:
+            return meta
+        return dvwa
+
     client = MagicMock()
-    kali = MagicMock()
-    res = MagicMock(); res.stdout = "student\n"
-    kali.execute.return_value = res
-    client.instances.get.return_value = kali
-    assert read_kali_whoami(client, {"kali": "pod-x-kali"}, "x") == "student"
+    client.instances.get.side_effect = get
+    return client, kali, meta, dvwa
 
 
-def test_read_kali_whoami_falls_back_on_failure():
-    from flag_planting import read_kali_whoami
+def test_plant_scenario1_kali_m5_uses_positional_path_and_exit_code():
+    client, kali, _meta, _dvwa = _instance_client()
+    flag = "FLAG{S01_M5_AABBCCDDEEFF}"
+    plant_scenario1_kali_m5(client, "student_alice", {"kali": "pod-student_alice-kali"}, flag)
+    argv = kali.execute.call_args[0][0]
+    assert argv[0] == "bash"
+    assert argv[1] == "-c"
+    assert S1_KALI_FLAG_PATH in argv[2]
+    assert "printf '%s\\n' \"$1\"" in argv[2]
+    assert flag not in argv[2]
+    assert argv[-1] == flag
+    assert "chmod 0644" in argv[2]
+    assert "chown root:root" in argv[2]
+
+
+def test_prepare_scenario_flags_raises_on_missing_client_empty_flag_and_nonzero(
+    test_db: str, monkeypatch: pytest.MonkeyPatch
+):
+    conn = sqlite3.connect(test_db)
+    vmids = {"kali": "pod-student_alice-kali", "meta": "pod-student_alice-meta"}
+    with pytest.raises(Scenario1FlagPlantingError, match=S1_FLAG_GENERIC_ERROR) as missing:
+        prepare_scenario_flags(None, "student_alice", 1, vmids, 1, conn)
+    assert missing.value.reason == "missing_client"
+
+    client_ok, _kali, _meta, _dvwa = _instance_client()
+    monkeypatch.setattr(
+        "flag_planting.generate_all_scenario_flags",
+        lambda *a, **k: {1: "FLAG{A}", 2: "FLAG{B}", 3: "FLAG{C}", 4: "FLAG{D}", 5: "  "},
+    )
+    with pytest.raises(Scenario1FlagPlantingError) as empty:
+        prepare_scenario_flags(client_ok, "student_alice", 1, vmids, 1, conn)
+    assert empty.value.reason == "empty_flag"
+    monkeypatch.setattr(
+        "flag_planting.generate_all_scenario_flags", generate_all_scenario_flags
+    )
+
+    client, kali, _meta, _dvwa = _instance_client()
+    kali.execute.return_value.exit_code = 1
+    with pytest.raises(Scenario1FlagPlantingError) as nonzero:
+        prepare_scenario_flags(client, "student_alice", 1, vmids, 1, conn)
+    assert nonzero.value.reason == "kali_exec_nonzero"
+
+    kali.execute.side_effect = RuntimeError("bash -c ... FLAG{S01_M5_DEADBEEF}")
+    with pytest.raises(Scenario1FlagPlantingError) as exec_exc:
+        prepare_scenario_flags(client, "student_alice", 1, vmids, 1, conn)
+    assert exec_exc.value.reason == "kali_exec_exception"
+    assert "FLAG{S01_M5_DEADBEEF}" not in str(exec_exc.value)
+    conn.close()
+
+
+def test_prepare_scenario_flags_s1_failed_plant_does_not_replace_stored_row(test_db: str):
+    conn = sqlite3.connect(test_db)
+    save_pod_flags(conn, 1, "student_alice", 1, {5: "student"})
+    client, kali, _meta, _dvwa = _instance_client()
+    kali.execute.return_value.exit_code = 1
+    vmids = {
+        "kali": "pod-student_alice-kali",
+        "meta": "pod-student_alice-meta",
+        "dvwa": "pod-student_alice-dvwa",
+    }
+    with pytest.raises(Scenario1FlagPlantingError):
+        prepare_scenario_flags(client, "student_alice", 1, vmids, 1, conn)
+    assert get_student_expected_flag(conn, "student_alice", 1, 5) == "student"
+    conn.close()
+
+
+def test_prepare_scenario_flags_s1_success_plants_kali_and_saves(test_db: str):
+    conn = sqlite3.connect(test_db)
+    client, kali, meta, _dvwa = _instance_client()
+    vmids = {
+        "kali": "pod-student_alice-kali",
+        "meta": "pod-student_alice-meta",
+        "dvwa": "pod-student_alice-dvwa",
+    }
+    flags_map = prepare_scenario_flags(client, "student_alice", 1, vmids, 1, conn)
+    stored = get_student_expected_flag(conn, "student_alice", 1, 5)
+    assert stored == flags_map[5]
+    assert stored.startswith("FLAG{S01_M5_")
+    kali_argv = kali.execute.call_args[0][0]
+    assert kali_argv[-1] == stored
+    meta_argv = meta.execute.call_args[0][0]
+    assert stored not in meta_argv
+    conn.close()
+
+
+def test_prepare_scenario_flags_other_scenario_exec_failure_is_nonfatal(test_db: str):
+    conn = sqlite3.connect(test_db)
     client = MagicMock()
-    client.instances.get.side_effect = RuntimeError("down")
-    # Falls back rather than leaving the milestone impossible.
-    assert read_kali_whoami(client, {"kali": "pod-x-kali"}, "x") == "student"
-    # No client at all -> fallback too.
-    assert read_kali_whoami(None, {}, "x") == "student"
+    dvwa = MagicMock()
+    dvwa.execute.side_effect = RuntimeError("timeout")
+    client.instances.get.return_value = dvwa
+    vmids = {"dvwa": "pod-student_alice-dvwa"}
+    flags_map = prepare_scenario_flags(client, "student_alice", 1, vmids, 6, conn)
+    assert get_student_expected_flag(conn, "student_alice", 6, 5) == flags_map[5]
+    conn.close()
+
+
+def test_s1_plant_failure_does_not_log_flag_token(test_db: str, monkeypatch: pytest.MonkeyPatch, caplog):
+    recorded = []
+
+    def fake_log_event(event_type, student_id=None, pod_id=None, vmid=None, result=None, detail=None):
+        recorded.append(detail or "")
+
+    import provision
+    monkeypatch.setattr(provision, "log_event", fake_log_event)
+    from provision import plant_flags_during_provision
+
+    client, kali, _meta, _dvwa = _instance_client()
+    leak = "FLAG{S01_M5_DEADBEEF}"
+    kali.execute.side_effect = RuntimeError(f"bash -c ... {leak}")
+    vmids = {
+        "kali": "pod-student_alice-kali",
+        "meta": "pod-student_alice-meta",
+        "dvwa": "pod-student_alice-dvwa",
+    }
+    with pytest.raises(RuntimeError, match=S1_FLAG_GENERIC_ERROR):
+        plant_flags_during_provision(client, "student_alice", 1, vmids, "1")
+    assert recorded
+    assert all(leak not in (d or "") for d in recorded)
+    assert recorded[-1] == "scenario=1, reason=kali_exec_exception"
+    assert leak not in caplog.text
+
+
+def test_plant_flags_during_provision_s1_raises_other_scenarios_do_not(test_db: str, monkeypatch: pytest.MonkeyPatch):
+    import provision
+    from provision import plant_flags_during_provision
+
+    monkeypatch.setattr(provision, "log_event", lambda *a, **k: None)
+
+    def boom(*_a, **_k):
+        raise Scenario1FlagPlantingError("missing_client")
+
+    monkeypatch.setattr("flag_planting.prepare_scenario_flags", boom)
+    with pytest.raises(RuntimeError, match=S1_FLAG_GENERIC_ERROR):
+        plant_flags_during_provision(MagicMock(), "student_alice", 1, {}, "1")
+
+    def other_fail(*_a, **_k):
+        raise RuntimeError("plant skipped FLAG{S01_M5_DEADBEEF}")
+
+    monkeypatch.setattr("flag_planting.prepare_scenario_flags", other_fail)
+    plant_flags_during_provision(MagicMock(), "student_alice", 1, {}, "6")
+
+    def untyped_s1(*_a, **_k):
+        raise RuntimeError("COHORT_FLAG_SECRET missing FLAG{S01_M5_DEADBEEF}")
+
+    recorded = []
+    monkeypatch.setattr(
+        provision,
+        "log_event",
+        lambda event_type, student_id=None, pod_id=None, vmid=None, result=None, detail=None: recorded.append(detail or ""),
+    )
+    monkeypatch.setattr("flag_planting.prepare_scenario_flags", untyped_s1)
+    with pytest.raises(RuntimeError, match=S1_FLAG_GENERIC_ERROR):
+        plant_flags_during_provision(MagicMock(), "student_alice", 1, {}, "1")
+    assert recorded[-1] == "scenario=1, reason=kali_exec_exception"
+    assert all("FLAG{" not in d for d in recorded)
