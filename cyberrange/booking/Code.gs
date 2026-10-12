@@ -28,7 +28,7 @@ const DOMAINS = {
 };
 
 const HEADERS = ['Booked at', 'Domain', 'Range URL', 'Slot', 'Date', 'Start', 'End',
-  'Name', 'Email', 'Student/Employee ID', 'Section', 'Notes', 'Status', 'Cancel code', 'Account status', 'Organizer notice sent'];
+  'Name', 'Email', 'Student/Employee ID', 'Section', 'Notes', 'Status', 'Cancel code', 'Account status', 'Organizer notice sent', 'Account status notified'];
 
 // Only these addresses may book.
 const ALLOWED_EMAIL_DOMAIN = '@mmdc.mcl.edu.ph';
@@ -74,7 +74,10 @@ function doPost(e) {
   if (notice) {
     try {
       lock.waitLock(10000);
-      if (notify_(notice) && notice.kind === 'New booking') setOrganizerNoticeSent_(notice.row, true);
+      if (notify_(notice) && notice.kind === 'New booking') {
+        setOrganizerNoticeSent_(notice.row, true);
+        setAccountStatusNotified_(notice.row, notice.row.accountStatus);
+      }
     } catch (err) {
       console.error('Booking notification deferred: ' + err);
     } finally {
@@ -120,7 +123,7 @@ function book_(b) {
   };
   sheet_().appendRow([
     new Date().toISOString(), row.domainId, row.url, row.slotId, row.date, row.start, row.end,
-    row.name, row.email, row.sid, row.section, row.notes, 'booked', token, 'pending', '',
+    row.name, row.email, row.sid, row.section, row.notes, 'booked', token, 'pending', '', '',
   ]);
   row.sheetRow = sheet_().getLastRow();
   row.accountStatus = 'pending';
@@ -164,6 +167,7 @@ function rows_() {
     name: r[7], email: r[8], sid: r[9], section: r[10], notes: r[11],
     status: String(r[12]).trim().toLowerCase(), token: r[13], accountStatus: String(r[14] || '').trim().toLowerCase(),
     organizerNoticeSent: String(r[15] || '').trim().toLowerCase() === 'yes',
+    accountStatusNotified: String(r[16] || '').trim().toLowerCase(),
   }));
 }
 
@@ -196,12 +200,18 @@ function hostOrigin_(url) {
 }
 
 function setAccountStatus_(r, value) {
-  sheet_().getRange(r.sheetRow, HEADERS.indexOf('Account status') + 1).setValue(value);
+  const row = r.sheetRow || r.row;
+  if (row) sheet_().getRange(row, HEADERS.indexOf('Account status') + 1).setValue(value);
 }
 
 function setOrganizerNoticeSent_(r, sent) {
   const row = r.sheetRow || r.row;
   if (row) sheet_().getRange(row, HEADERS.indexOf('Organizer notice sent') + 1).setValue(sent ? 'yes' : '');
+}
+
+function setAccountStatusNotified_(r, status) {
+  const row = r.sheetRow || r.row;
+  if (row) sheet_().getRange(row, HEADERS.indexOf('Account status notified') + 1).setValue(status || '');
 }
 
 function installProvisioningReconciliationTrigger() {
@@ -213,15 +223,58 @@ function installProvisioningReconciliationTrigger() {
 function reconcilePendingProvisioning() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return;
+  let candidates;
   try {
     const cutoff = Date.now() - 5 * 60 * 1000;
-    rows_().filter(r => r.status === 'booked' && !r.organizerNoticeSent && Date.parse(r.bookedAt) < cutoff)
-      .forEach(r => {
-        if (notify_({ kind: 'New booking', row: r })) setOrganizerNoticeSent_(r, true);
-      });
+    candidates = rows_().filter(r => {
+      if (r.status !== 'booked' || Date.parse(r.bookedAt) >= cutoff) return false;
+      const retryProvisioning = r.accountStatus === 'pending' || r.accountStatus === 'unknown';
+      const retryInitialNotice = !r.organizerNoticeSent;
+      const retryStatusNotice = r.organizerNoticeSent && r.accountStatus &&
+        r.accountStatus !== 'pending' && r.accountStatus !== 'unknown' &&
+        r.accountStatusNotified !== r.accountStatus;
+      return retryProvisioning || retryInitialNotice || retryStatusNotice;
+    });
   } finally {
     lock.releaseLock();
   }
+
+  candidates.forEach(candidate => {
+    const retryProvisioning = candidate.accountStatus === 'pending' || candidate.accountStatus === 'unknown';
+    const reconciledStatus = retryProvisioning ? provision_(candidate) : candidate.accountStatus;
+    if (!lock.tryLock(10000)) return;
+    try {
+      const current = rows_().find(r => r.row === candidate.row);
+      if (!current || current.status !== 'booked') return;
+
+      // Older rows already had their current status included in the sent notice.
+      if (current.organizerNoticeSent && !current.accountStatusNotified) {
+        setAccountStatusNotified_(current, current.accountStatus);
+        current.accountStatusNotified = current.accountStatus;
+      }
+
+      if (retryProvisioning && (current.accountStatus === 'pending' || current.accountStatus === 'unknown')) {
+        if (reconciledStatus !== current.accountStatus) {
+          setAccountStatus_(current, reconciledStatus);
+          current.accountStatus = reconciledStatus;
+        }
+      }
+
+      if (!current.organizerNoticeSent) {
+        if (notify_({ kind: 'New booking', row: current })) {
+          setOrganizerNoticeSent_(current, true);
+          setAccountStatusNotified_(current, current.accountStatus);
+        }
+      } else if (current.accountStatus && current.accountStatus !== 'pending' && current.accountStatus !== 'unknown' &&
+          current.accountStatusNotified !== current.accountStatus) {
+        if (notify_({ kind: 'Provisioning update', row: current })) {
+          setAccountStatusNotified_(current, current.accountStatus);
+        }
+      }
+    } finally {
+      lock.releaseLock();
+    }
+  });
 }
 
 // Emails the organizers. A failed email never fails the booking itself.
@@ -229,7 +282,8 @@ function notify_(n) {
   const r = n.row;
   const to = NOTIFY_EMAIL || Session.getEffectiveUser().getEmail();
   if (!to) return false;
-  const booked = n.kind === 'New booking';
+  const update = n.kind === 'Provisioning update';
+  const booked = n.kind === 'New booking' || update;
   const host = host_(r.url);
   const domain = domainLabel_(r.domainId) + ' · ' + host;
   const sheetUrl = SpreadsheetApp.getActiveSpreadsheet().getUrl();
@@ -247,7 +301,7 @@ function notify_(n) {
     : 'This seat on ' + domainLabel_(r.domainId) + ' is open again. No action is needed.';
 
   const text = [
-    (booked ? 'NEW BOOKING' : 'BOOKING CANCELLED'),
+    (update ? 'BOOKING ACCOUNT STATUS UPDATED' : booked ? 'NEW BOOKING' : 'BOOKING CANCELLED'),
     '',
     rows.map(x => pad_(x[0] + ':', 19) + x[1]).join('\n'),
     '',
@@ -257,10 +311,10 @@ function notify_(n) {
   ].join('\n');
 
   const html = layout_({
-    badge: booked ? ['New booking', '#1a7f37', '#dafbe1'] : ['Cancelled', '#cf222e', '#ffebe9'],
-    title: booked ? 'New session booked' : 'Session cancelled',
+    badge: update ? ['Account updated', '#0969da', '#ddf4ff'] : booked ? ['New booking', '#1a7f37', '#dafbe1'] : ['Cancelled', '#cf222e', '#ffebe9'],
+    title: update ? 'Tester account status updated' : booked ? 'New session booked' : 'Session cancelled',
     intro: booked
-      ? esc_(r.email) + ' reserved a seat on the cyber range.'
+      ? update ? 'The account status for ' + esc_(r.email) + ' was rechecked.' : esc_(r.email) + ' reserved a seat on the cyber range.'
       : esc_(r.email) + ' cancelled their reservation.',
     rows,
     callout: booked ? [r.accountStatus === 'created' || r.accountStatus === 'existing' ? 'Provisioning result' : 'Action required', next] : ['Seat released', next],
@@ -271,7 +325,7 @@ function notify_(n) {
   try {
     MailApp.sendEmail({
       to,
-      subject: (booked ? 'New booking: ' : 'Cancelled: ') + r.email + ' · ' + whenShort_(r) + ' · ' + domainLabel_(r.domainId),
+      subject: (update ? 'Account status updated: ' : booked ? 'New booking: ' : 'Cancelled: ') + r.email + ' · ' + whenShort_(r) + ' · ' + domainLabel_(r.domainId),
       body: text,
       htmlBody: html,
       name: 'MMDC Cyber Range Booking',
