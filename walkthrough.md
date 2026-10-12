@@ -1,0 +1,10 @@
+# Temporary credential email walkthrough
+
+- Branch: `feature/email-user-invites`
+- Implementation commit: `d464641` (`Email temporary credentials for admin-created users`)
+- Requirement: Admin-created accounts with an email and a temporary password receive the username and temporary password; Keycloak requires a new password at first sign-in. The same delivery occurs on temporary password reset so an Admin can recover from a failed send.
+- Changed files: `cyberrange/src/provisioning/credential_email.py` provides authenticated TLS SMTP; `users_router.py` sends after Keycloak writes and outside the global lock; `test_admin_users.py` and `test_credential_email.py` cover delivery, failure, ordering, and transport; the portal API, hook, feedback helper, tests, and create/reset UI report mail status; `env/oci-12gib.env.example` and `docs/ADM-USER-contract.md` document configuration and response behavior.
+- Checks: `C:\Users\Windows\OneDrive\Capstone2-deploy\Capstone2-deploy\cyberrange\.venv\Scripts\python.exe -m pytest -q src/provisioning/test_admin_users.py src/provisioning/test_credential_email.py --disable-warnings` — 126 passed; `npm.cmd test -- --runInBand src/lib/adminUserValidation.test.ts src/lib/credentialEmailFeedback.test.ts` — 2 suites, 16 tests passed; `node <typescript>/bin/tsc --noEmit --project tsconfig.json` — passed; `git diff --check` — passed.
+- Independent Anti final review: `APPROVED FOR MERGE`, with all security and delivery checks passing. Nonblocking note: SMTP transport exception sanitization is implemented but not directly unit-tested.
+- Independent Codex final review: `APPROVED (ALL CHECKS PASS)`, including API compatibility, portal feedback, and deployment configuration.
+- Limitations: Real inbox delivery was not tested because this workspace has no SMTP account. Set the documented SMTP variables and `PORTAL_PUBLIC_URL` in the host's `env/.env`, then restart `cyberrange-provision-api.service`. `sent` means SMTP accepted the message; it does not guarantee inbox receipt. A concurrent reset may supersede a password while an email is in flight.
