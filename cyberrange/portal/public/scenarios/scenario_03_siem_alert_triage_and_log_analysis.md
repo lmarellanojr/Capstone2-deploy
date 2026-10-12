@@ -29,7 +29,7 @@ Save files on **Target: meta (lab)** as `msfadmin`. **JSON** is structured text 
 Files on meta score automatically; there is no flag submission. A score confirms a limited check, so still review your evidence.
 
 - Task 1 looks for `alert_id`, `severity`, or `rule` in the triage file. It does not validate JSON syntax, require all fields, or enforce severity/classification enums. Complete all fields accurately for the exercise.
-- Task 2 looks for a rule ID and clock time on the same line, matching a genuine invalid-user SSH event in meta's authentication log. The checker allows five minutes of tolerance and whole-hour timezone differences by comparing minutes past the hour. Use the actual timestamp and state its timezone; do not invent a time to satisfy this limited check.
+- Task 2 requires rule `5710` and the complete ISO-8601 UTC timestamp (ending in `Z`) for a genuine invalid-user SSH event in meta's authentication log. The checker allows five minutes of tolerance around that event; it does not accept a time from a different date or timezone. Use each observed event's own timestamp; do not invent or reuse a time. If you started a timeline in an earlier session using only `HH:MM`, replace it with the full timestamp copied from SIEM.
 - Task 3 requires **more than 200 bytes**, plus at least one of `system`, `attack`, `alert`, or `recommend` (case-insensitive). More than 200 English characters satisfies the size threshold. Response actions are choices justified by evidence, not mandatory keywords.
 
 ## 3. Set up your lab
@@ -126,17 +126,17 @@ cat /home/msfadmin/alert_triage.json
 
 **Where to work:** **Open SIEM** for evidence; **Target: meta (lab)** for `/home/msfadmin/incident_timeline.md`.
 
-1. Use the individual failed-login event's displayed SIEM timestamp. Record its date and timezone consistently. **Each additional event needs its own observed timestamp.** `HH:MM` means hours and minutes in 24-hour time; it is a placeholder to replace.
+1. Expand Rule 5710 and click the individual failed-login event to copy its timestamp and rule. SIEM timestamps are shown in UTC; use the copied full ISO-8601 UTC timestamp ending in `Z`. **Each additional event needs its own observed timestamp.**
 2. In the meta shell, open:
 
 ```bash
 vi /home/msfadmin/incident_timeline.md
 ```
 
-3. Press **i**. Write a heading and one line per observed event, earliest first. Include phase, rule, real date/time, timezone, classification, and a brief evidence statement. Replace all placeholders in this reference structure and remove unused rows:
+3. Press **i**. Write a heading and one line per observed event, earliest first. Include phase, rule, the copied UTC timestamp, classification, and a brief evidence statement. Replace all placeholders in this reference structure and remove unused rows:
 
 > `# Incident timeline`\
-> `1. phase: initial_access_attempt, rule: 5710, time: <actual HH:MM>, date: <actual date>, timezone: <SIEM timezone>, classification: true_positive — <failed-login evidence>`
+> `1. phase: initial_access_attempt, rule: 5710, timestamp: <actual YYYY-MM-DDTHH:MM:SSZ>, classification: true_positive — <failed-login evidence>`
 
 4. Include the failed-login event even if it is the only observed event. Do not reuse its time for unrelated events. An accurate configuration alert may be unrelated; call it a false positive only if evidence shows the detection is incorrect. A failed login does not prove compromise.
 5. Press **Esc**, type **`:wq`**, and press Enter. In the meta shell, inspect:
@@ -145,11 +145,11 @@ vi /home/msfadmin/incident_timeline.md
 cat /home/msfadmin/incident_timeline.md
 ```
 
-**Expected result:** every line has a real timestamp and supported interpretation. No `HH:MM`, angle-bracket placeholders, unused phases, or invented events remain.
+**Expected result:** every line has a real UTC timestamp and supported interpretation. No angle-bracket placeholders, unused phases, or invented events remain.
 
 **Done when:** the timeline includes your observed failed-login event with its real rule and time, events are ordered correctly, and **Build the timeline** is credited.
 
-> **Troubleshooting:** Compare the individual rule-5710 time with your line and check the meta path. Scoring help explains timezone tolerance. If using `auth.log` as a fallback, label its timezone; do not mix UTC log times with local SIEM times without conversion.
+> **Troubleshooting:** Copy the individual rule-5710 event timestamp and check the meta path. SIEM displays UTC, and scoring checks the complete date and time against the failed-login event.
 
 ### Task 3: Write the incident report
 
@@ -181,10 +181,10 @@ wc -c /home/msfadmin/incident_report.txt
 
 **Example only — do not submit unchanged.** This entire chain is fictional; use your own observed event and host.
 
-1. Fictional alert: `2026-10-10 14:32 UTC+08:00`, rule `5710`, level `5`, agent `pod-example-meta`, description `sshd: attempt to login using a non-existent user`.
-2. Matching JSON excerpt: `"alert_id": "case-example", "severity": "medium", "rule": "5710", "agent": "pod-example-meta", "classification": "true_positive", "notes": "2026-10-10 14:32 UTC+08:00: invalid-user login attempt; no successful access established."`
-3. Matching timeline: `1. phase: initial_access_attempt, rule: 5710, time: 14:32, date: 2026-10-10, timezone: UTC+08:00, classification: true_positive — nonexistent-user SSH attempt.`
-4. Matching report: “At 14:32 UTC+08:00 on 10 October 2026, rule 5710 on system pod-example-meta recorded a nonexistent-user SSH attempt. This supports failed authentication; these records do not establish successful access. I recommend checking adjacent authentication events for repetition before choosing containment.”
+1. Fictional alert: `2026-10-10T06:32:00Z`, rule `5710`, level `5`, agent `pod-example-meta`, description `sshd: attempt to login using a non-existent user`.
+2. Matching JSON excerpt: `"alert_id": "case-example", "severity": "medium", "rule": "5710", "agent": "pod-example-meta", "classification": "true_positive", "notes": "2026-10-10T06:32:00Z: invalid-user login attempt; no successful access established."`
+3. Matching timeline: `1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-10T06:32:00Z, classification: true_positive — nonexistent-user SSH attempt.`
+4. Matching report: “At 06:32 UTC on 10 October 2026, rule 5710 on system pod-example-meta recorded a nonexistent-user SSH attempt. This supports failed authentication; these records do not establish successful access. I recommend checking adjacent authentication events for repetition before choosing containment.”
 
 ## 6. SOC playground (optional, not scored)
 

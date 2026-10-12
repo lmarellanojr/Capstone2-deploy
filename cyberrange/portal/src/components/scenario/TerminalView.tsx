@@ -563,7 +563,7 @@ export function TerminalView({
               Copy Wazuh manager IP
             </Button>
             <span className="text-xs text-text-muted">
-              Click a row to copy its timestamp + rule id.
+              Expand a rule and click an event to copy its UTC timestamp + rule id.
             </span>
           </div>
         </ModalBody>
