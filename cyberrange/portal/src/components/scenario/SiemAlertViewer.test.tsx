@@ -8,6 +8,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react"
 import { SiemAlertViewer } from "./SiemAlertViewer"
 import { POLL_MS } from "./siemAlertQuery"
 import { instructor, provisioning } from "@/lib/api"
+import { copyToClipboard } from "@/lib/copyToClipboard"
 
 jest.mock("@/lib/api", () => ({
   provisioning: { getAlerts: jest.fn() },
@@ -17,6 +18,8 @@ jest.mock("@/lib/api", () => ({
 jest.mock("@/context/ToastContext", () => ({
   useToastContext: () => ({ success: jest.fn(), warning: jest.fn() }),
 }))
+
+jest.mock("@/lib/copyToClipboard", () => ({ copyToClipboard: jest.fn().mockResolvedValue(true) }))
 
 const getAlerts = provisioning.getAlerts as jest.MockedFunction<typeof provisioning.getAlerts>
 const getPodAlerts = instructor.getPodAlerts as jest.MockedFunction<typeof instructor.getPodAlerts>
@@ -144,6 +147,15 @@ describe("SiemAlertViewer (SIEM-POLL)", () => {
     expect(screen.queryByTestId("siem-filter-summary")).not.toBeInTheDocument()
     expect(screen.getByText("5710")).toBeInTheDocument()
     expect(screen.getByText("19007")).toBeInTheDocument()
+  })
+
+  it("copies the expanded event as a canonical UTC timestamp with its rule id", async () => {
+    render(<SiemAlertViewer podId={7} />)
+    await flush()
+    fireEvent.click(screen.getByText("5710").closest("tr")!)
+    const eventRow = screen.getByTitle("Copy timestamp + rule id")
+    fireEvent.click(eventRow)
+    expect(copyToClipboard).toHaveBeenCalledWith("2026-09-25T02:00:02Z rule 5710")
   })
 
   it("filters by rule ID and keeps the 5710 shortcut server-side", async () => {

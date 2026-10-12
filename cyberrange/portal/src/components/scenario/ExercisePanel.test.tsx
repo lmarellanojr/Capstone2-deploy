@@ -63,6 +63,65 @@ describe('ExercisePanel', () => {
 
   const mockTask: Milestone = mockScenario.milestones[0]
 
+  it('shows instructor review on an incomplete scored SIEM task, but not prep or completed tasks', () => {
+    const onRequestReview = jest.fn()
+    const siemScenario: Scenario = {
+      ...mockScenario,
+      id: '09',
+      labSurface: 'siem',
+      milestones: [
+        { id: 2, name: 'Build the timeline', goal: 'Order the events', points: 75 },
+      ],
+    }
+    const props = {
+      pod: mockPod, scenario: siemScenario, currentTask: siemScenario.milestones[0],
+      taskIndex: 1, totalTasks: 3, completed: false, isFlag: false, lockedReview: false,
+      verifying: false, milestonesLoading: false, onVerify: jest.fn(), onFlagPass: jest.fn(), onRequestReview,
+    }
+    const { rerender } = render(<ExercisePanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: /Ask an instructor to check this task/i }))
+    expect(onRequestReview).toHaveBeenCalledWith(2, 'new')
+
+    rerender(<ExercisePanel {...props} milestonesLoading />)
+    expect(screen.queryByRole('button', { name: /Ask an instructor/i })).toBeNull()
+
+    rerender(<ExercisePanel {...props} completed />)
+    expect(screen.queryByRole('button', { name: /Ask an instructor/i })).toBeNull()
+
+    const prep = { ...props, currentTask: { ...props.currentTask, id: 0, unscored: true } }
+    rerender(<ExercisePanel {...prep} />)
+    expect(screen.queryByRole('button', { name: /Ask an instructor/i })).toBeNull()
+  })
+
+  it('shows retry state for a pending instructor review response', () => {
+    const onRequestReview = jest.fn()
+    const scenario: Scenario = { ...mockScenario, id: '09', labSurface: 'siem' }
+    render(
+      <ExercisePanel pod={mockPod} scenario={scenario} currentTask={{ ...mockTask, id: 3 }} taskIndex={2}
+        totalTasks={3} completed={false} isFlag={false} lockedReview={false} verifying={false}
+        milestonesLoading={false} latestReviewStatus="RETRY" hasLatestReview onVerify={jest.fn()}
+        onFlagPass={jest.fn()} onRequestReview={onRequestReview} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /send again/i }))
+    expect(onRequestReview).toHaveBeenCalledWith(3, 'retry')
+  })
+
+  it('shows waiting and expired states without offering an unavailable SIEM review action', () => {
+    const scenario: Scenario = { ...mockScenario, id: '09', labSurface: 'siem' }
+    const props = {
+      pod: mockPod, scenario, currentTask: { ...mockTask, id: 3 }, taskIndex: 2, totalTasks: 3,
+      completed: false, isFlag: false, lockedReview: false, verifying: false, milestonesLoading: false,
+      onVerify: jest.fn(), onFlagPass: jest.fn(), onRequestReview: jest.fn(), hasLatestReview: true,
+    }
+    const { rerender } = render(<ExercisePanel {...props} latestReviewStatus="PENDING" />)
+    expect(screen.getByText(/Instructor review requested/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Ask an instructor/i })).toBeNull()
+
+    rerender(<ExercisePanel {...props} expired />)
+    expect(screen.getByText(/instructor review unavailable/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Ask an instructor/i })).toBeNull()
+  })
+
   it('renders task header, goal instructions, points, and typing guidance', () => {
     render(
       <ExercisePanel

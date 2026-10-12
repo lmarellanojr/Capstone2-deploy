@@ -13,6 +13,7 @@ import {
   filteredEmptyCopy,
   filterOptions,
   formatAlertTime,
+  formatAlertTimestampUtc,
   groupAlertsByRule,
   hasActiveFilters,
   NO_FILTERS,
@@ -132,7 +133,7 @@ export function SiemAlertViewer({
 
   const copyEvent = useCallback(
     async (timestamp: string, ruleId: string) => {
-      const ok = await copyToClipboard(`${timestamp} ${ruleId}`)
+      const ok = await copyToClipboard(`${formatAlertTimestampUtc(timestamp)} rule ${ruleId}`)
       if (ok) success('Copied timestamp + rule id')
       else warning('Could not copy timestamp + rule id')
     },

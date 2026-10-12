@@ -606,14 +606,13 @@ check_scenario_8() {
     esac
 }
 
-# Scenario 9 M2 helper: is a time claimed in the timeline a REAL rule-5710 SSH
-# event (sshd "Invalid user" / failed login as a non-existent user) from
-# auth.log, within +/- $2 minutes, on a line that also carries a rule id?
+# Scenario 9 M2 helper: is a full UTC timestamp claimed alongside Rule 5710 in
+# the timeline within +/- $2 minutes of a real sshd invalid-user event?
 #
-# SCORE-FIX (Scenario 3 / scenario_id 9, Task 2 "True Positive Classification"):
-# the old check passed on ANY well-formed HH:MM that was not the literal
-# placeholder, so a fabricated/incorrect time (e.g. 00:00) scored. The claimed
-# time must now match a real detected event, so wrong/empty/malformed times fail.
+# `auth.log` uses UTC syslog timestamps without a year. Infer each event's year
+# from the trusted container UTC clock (nearest current/adjacent year), never
+# from the student's claim. The SIEM displays UTC and the guide asks students
+# to copy/record an ISO-8601 `Z` timestamp.
 # Runs as root in-container (lxc exec), so /var/log/auth.log is readable.
 # Returns 0 on a match, 1 otherwise.
 _s9_timeline_time_is_real() {
@@ -627,47 +626,72 @@ _s9_timeline_time_is_real() {
         done
     fi
     [[ -z "$authlog" || ! -f "$authlog" ]] && return 1
+    [[ "$tol" =~ ^[0-9]+$ ]] || return 1
 
-    # Real event minutes-of-day (0..1439) from genuine sshd invalid-user lines
-    # (rule 5710). Require the real sshd "... from <ip>" shape and exclude the
-    # planted "Invalid user flag-m1-<flag> ..." line that flag_planting writes at
-    # provision time -- otherwise a student could copy the planter's timestamp and
-    # pass without ever running the Task 0 SSH attempt.
-    local real_minutes
-    real_minutes=$(grep -hiE "invalid user" "$authlog" 2>/dev/null \
-        | grep -v "flag-m1-" \
-        | grep -iE "from " \
-        | grep -oE "[0-9]{2}:[0-9]{2}:[0-9]{2}" \
-        | awk -F: '{print ($1*60)+$2}' | sort -un)
-    [[ -z "$real_minutes" ]] && return 1
+    local now_epoch now_year candidate_year month day clock event_epoch
+    local nearest_epoch nearest_distance distance claim_stamp claim_base claim_epoch round_trip
+    local timestamp_re='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?Z'
+    local month_number
 
-    # Claimed times: lines carrying a rule id AND an HH:MM (placeholder excluded).
-    local claimed_minutes
-    claimed_minutes=$(grep -iE "rule[^0-9]{0,15}[0-9]{3,6}" "$timeline" 2>/dev/null \
-        | grep -oE "[0-9]{1,2}:[0-9]{2}" | grep -v "HH:MM" \
-        | awk -F: '{h=$1+0; m=$2+0; if (h<24 && m<60) print (h*60)+m}')
-    [[ -z "$claimed_minutes" ]] && return 1
+    # S9_NOW is a deterministic test seam only; production uses the container clock.
+    if [[ -n "${S9_NOW:-}" ]]; then
+        [[ "$S9_NOW" =~ ^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$ ]] || return 1
+        round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$S9_NOW" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || return 1
+        [[ "$round_trip" == "$S9_NOW" ]] || return 1
+        now_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "$S9_NOW" '+%s' 2>/dev/null) || return 1
+    else
+        now_epoch=$(TZ=UTC0 LC_ALL=C date -u '+%s' 2>/dev/null) || return 1
+    fi
+    now_year=$(TZ=UTC0 LC_ALL=C date -u -d "@$now_epoch" '+%Y' 2>/dev/null) || return 1
 
-    # PASS if any claimed minute matches any real event minute within +/- tol,
-    # EITHER as an absolute time (same timezone) OR as the same minutes-past-the-
-    # hour (a whole-hour timezone offset). The meta container logs in UTC, but the
-    # SIEM and the student's browser often show local time (e.g. UTC+8), so a
-    # correct event copied from the SIEM is hours off from auth.log yet shares the
-    # minutes. Matching minutes-of-hour accepts that real time while still
-    # rejecting fabricated/placeholder times (e.g. 00:00) and empty times.
-    awk -v tol="$tol" '
-        NR==FNR { real[$1]=1; next }
-        {
-            for (r in real) {
-                d=$1-r; if (d<0) d=-d;
-                if (d<=tol) { found=1; exit }        # same-timezone exact match
-                md=($1 % 60) - (r % 60); if (md<0) md=-md;
-                if (md>30) md=60-md;                 # wrap across the hour boundary
-                if (md<=tol) { found=1; exit }       # whole-hour timezone offset
-            }
-        }
-        END { exit(found?0:1) }
-    ' <(printf "%s\n" $real_minutes) <(printf "%s\n" $claimed_minutes)
+    while IFS= read -r line; do
+        [[ "$line" =~ [Rr]ule[^0-9]{0,15}5710([^0-9]|$) ]] || continue
+        while IFS= read -r claim_stamp; do
+            [[ "$claim_stamp" =~ ^$timestamp_re$ ]] || continue
+            claim_base=$(printf '%s' "$claim_stamp" | sed -E 's/\.[0-9]{1,3}Z$/Z/')
+            round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
+            [[ "$round_trip" == "$claim_base" ]] || continue
+            claim_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%s' 2>/dev/null) || continue
+
+            while IFS= read -r event; do
+                [[ "$event" == *'flag-m1-'* ]] && continue
+                [[ "$event" =~ sshd\[[0-9]+\]:.*Invalid\ user[[:space:]]+[^[:space:]]+[[:space:]]+from[[:space:]]+[0-9A-Fa-f:.]+ ]] || continue
+                [[ "$event" =~ ^([A-Z][a-z]{2})[[:space:]]+([0-9]{1,2})[[:space:]]+([0-9]{2}:[0-9]{2}:[0-9]{2}) ]] || continue
+                month="${BASH_REMATCH[1]}"
+                day="${BASH_REMATCH[2]}"
+                clock="${BASH_REMATCH[3]}"
+                printf -v day '%02d' "$day"
+                case "$month" in
+                    Jan) month_number=01 ;; Feb) month_number=02 ;; Mar) month_number=03 ;;
+                    Apr) month_number=04 ;; May) month_number=05 ;; Jun) month_number=06 ;;
+                    Jul) month_number=07 ;; Aug) month_number=08 ;; Sep) month_number=09 ;;
+                    Oct) month_number=10 ;; Nov) month_number=11 ;; Dec) month_number=12 ;;
+                    *) continue ;;
+                esac
+
+                nearest_epoch=''
+                nearest_distance=''
+                for candidate_year in "$((now_year - 1))" "$now_year" "$((now_year + 1))"; do
+                    event_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "${candidate_year}-${month_number}-${day}T${clock}Z" '+%s' 2>/dev/null) || continue
+                    round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "@$event_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
+                    [[ "$round_trip" == "${candidate_year}-${month_number}-${day}T${clock}Z" ]] || continue
+                    distance=$((event_epoch - now_epoch))
+                    (( distance < 0 )) && distance=$((-distance))
+                    if [[ -z "$nearest_distance" ]] || (( distance < nearest_distance )); then
+                        nearest_epoch="$event_epoch"
+                        nearest_distance="$distance"
+                    fi
+                done
+                [[ -n "$nearest_epoch" ]] || continue
+
+                distance=$((claim_epoch - nearest_epoch))
+                (( distance < 0 )) && distance=$((-distance))
+                (( distance <= tol * 60 )) && return 0
+            done < <(grep -hiE 'invalid user' "$authlog" 2>/dev/null | grep -iE 'from ')
+        done < <(grep -iE 'rule[^0-9]{0,15}5710([^0-9]|$)' <<< "$line" | grep -Eo "$timestamp_re")
+    done < "$timeline"
+
+    return 1
 }
 
 # Scenario 9: SIEM Alert Triage (Wazuh)

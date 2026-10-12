@@ -1054,7 +1054,7 @@ class TestScoringChecksDirectBashExecution:
         import subprocess
 
         setup_cmd = (
-            'mkdir -p /tmp && printf "# Incident Timeline\\n- 14:32 rule 5710 triggered (true_positive)\\n- phase 1 complete\\n" > /tmp/incident_timeline.md'
+            'mkdir -p /tmp && printf "# Incident Timeline\\n- timestamp: 2026-10-01T14:32:05Z rule 5710 (true_positive)\\n- phase 1 complete\\n" > /tmp/incident_timeline.md'
         )
         authlog_cmd = "mkdir -p /tmp && cat > /tmp/s9_authlog"
         cleanup_cmd = 'rm -f /tmp/incident_timeline.md /tmp/s9_authlog'
@@ -1064,7 +1064,7 @@ class TestScoringChecksDirectBashExecution:
                 [_BASH_EXE, "-c", authlog_cmd],
                 input=self._S09_AUTHLOG_1432.encode("utf-8"), check=True,
             )
-            rc, token, stderr = self._run_script(9, 2, env={"S9_AUTHLOG": "/tmp/s9_authlog"})
+            rc, token, stderr = self._run_script(9, 2, env={"S9_AUTHLOG": "/tmp/s9_authlog", "S9_NOW": "2026-10-01T14:33:05Z"})
             assert rc == 0
             assert token == "PASS"
         finally:
@@ -1101,7 +1101,7 @@ class TestScoringChecksDirectBashExecution:
                     [_BASH_EXE, "-c", "mkdir -p /tmp && cat > /tmp/s9_authlog"],
                     input=authlog.encode("utf-8"), check=True,
                 )
-                env = {"S9_AUTHLOG": "/tmp/s9_authlog"}
+                env = {"S9_AUTHLOG": "/tmp/s9_authlog", "S9_NOW": "2026-10-01T14:33:05Z"}
             rc, token, stderr = self._run_script(9, 2, env=env)
             assert rc == 0, stderr
             return token
@@ -1111,18 +1111,18 @@ class TestScoringChecksDirectBashExecution:
 
     def test_direct_bash_scenario_09_m2_guide_timeline_template_fails(self):
         template = self._guide_heredoc("/home/msfadmin/incident_timeline.md")
-        assert "HH:MM" in template  # guard: the test reads the real template
+        assert "<actual YYYY-MM-DDTHH:MM:SSZ>" in template  # guard: the test reads the real template
         assert self._score_s09_m2({"incident_timeline.md": template}) == "FAIL"
 
     def test_direct_bash_scenario_09_m2_filled_in_guide_timeline_passes(self):
-        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("HH:MM", "14:32")
+        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("<actual YYYY-MM-DDTHH:MM:SSZ>", "2026-10-01T14:32:05Z")
         assert self._score_s09_m2(
             {"incident_timeline.md": filled}, authlog=self._S09_AUTHLOG_1432
         ) == "PASS"
 
     def test_direct_bash_scenario_09_m2_wrong_time_fails(self):
         """A well-formed but incorrect time (no matching 5710 event) must FAIL."""
-        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("HH:MM", "00:00")
+        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("<actual YYYY-MM-DDTHH:MM:SSZ>", "2026-10-01T00:00:00Z")
         assert self._score_s09_m2(
             {"incident_timeline.md": filled}, authlog=self._S09_AUTHLOG_1432
         ) == "FAIL"
@@ -1158,10 +1158,10 @@ class TestScoringChecksDirectBashExecution:
         # Even with a real-looking triage file present, a placeholder/fabricated
         # timeline time must FAIL -- there is no triage shortcut around the time check.
         triage = json.dumps({"rule": "5710", "classification": "true_positive", "notes": "real event"})
-        for bad_time in ("HH:MM", "00:00"):
+        for bad_time in ("<actual YYYY-MM-DDTHH:MM:SSZ>", "2026-10-02T14:32:05Z"):
             body = (
                 "# Incident timeline\n"
-                f"1. phase: initial_access_attempt, rule: 5710, time: {bad_time}, true_positive\n"
+                f"1. phase: initial_access_attempt, timestamp: {bad_time}, rule: 5710, true_positive\n"
             )
             assert self._score_s09_m2(
                 {"alert_triage.json": triage, "incident_timeline.md": body},
