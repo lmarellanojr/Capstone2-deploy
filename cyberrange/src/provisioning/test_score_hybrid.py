@@ -1374,8 +1374,8 @@ def test_s1_m5_stored_flag_survives_secret_rotation(hybrid_db: str, monkeypatch)
 
 
 def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path):
-    """The v12 rubric update applies after v11 and is idempotent."""
-    db_file = str(tmp_path / "v12.db")
+    """v12 rubric update applies after v11; later migrations (e.g. v13) stay unpinned."""
+    db_file = str(tmp_path / "migrate-tail.db")
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA journal_mode=WAL")
     start = migrate.current_version(conn)
@@ -1402,13 +1402,16 @@ def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path):
     expected_flag, points = row[2], row[3]
     conn.close()
 
-    all_migrations = migrate._migration_files()
-    assert [version for version, _ in all_migrations][-2:] == [11, 12]
+    versions = [version for version, _ in migrate._migration_files()]
+    assert 12 in versions
     applied = migrate.apply(db_file)
-    assert applied == 12
+    assert applied == versions[-1]
     conn = sqlite3.connect(db_file)
     assert conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='user_onboarding'"
+    ).fetchone()
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='booking_account_claims'"
     ).fetchone()
     row = conn.execute(
         "SELECT name, criteria, expected_flag, points FROM milestone_rubrics "
@@ -1425,7 +1428,7 @@ def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path):
     assert s1m5["name"] == row[0]
     assert s1m5["criteria"] == row[1]
     conn.close()
-    assert migrate.apply(db_file) == 12
+    assert migrate.apply(db_file) == versions[-1]
 
 def test_pure_flag_wrong_flag_no_score_no_review(client, hybrid_db: str):
     """(1,5) pure-flag: a wrong flag never scores and never opens a review case."""
