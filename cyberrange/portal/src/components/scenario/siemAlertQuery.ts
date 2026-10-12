@@ -75,14 +75,17 @@ export function formatAlertTime(timestamp: string): string {
   const d = new Date(normalized)
   return Number.isNaN(d.getTime())
     ? timestamp
-    : d.toLocaleString(undefined, {
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      })
+    : `${d.toLocaleString(undefined, {
+        year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+        timeZone: 'UTC', hourCycle: 'h23',
+      })} UTC`
+}
+
+/** Canonical timestamp students can paste into the Scenario 3 timeline. */
+export function formatAlertTimestampUtc(timestamp: string): string {
+  const normalized = timestamp.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
+  const date = new Date(normalized)
+  return Number.isNaN(date.getTime()) ? timestamp : date.toISOString().replace(/\.000Z$/, 'Z')
 }
 
 export function alertsQuery(only5710: boolean): { limit: number; rule_id?: string } {

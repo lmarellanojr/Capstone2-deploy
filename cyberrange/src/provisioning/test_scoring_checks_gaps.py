@@ -168,7 +168,7 @@ def _timeline(content: str) -> str:
 def _authlog(tmp_path: Path, content: str) -> dict:
     p = tmp_path / f"auth-{uuid.uuid4().hex}.log"
     _write(p, content)
-    return {"S9_AUTHLOG": p.as_posix()}
+    return {"S9_AUTHLOG": p.as_posix(), "S9_NOW": "2026-10-01T14:33:05Z"}
 
 
 # One real failed/invalid-user SSH event at 14:32 (Wazuh rule 5710).
@@ -177,20 +177,18 @@ _AUTHLOG_5710 = "Oct  1 14:32:05 meta sshd[1337]: Invalid user oracle from 10.0.
 
 def test_s9_m2_correct_time_passes(tmp_path):
     env = _authlog(tmp_path, _AUTHLOG_5710)
-    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 14:33, true_positive\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T14:33:05Z, true_positive\n")
     try:
         assert run(tmp_path, 9, 2, extra_env=env) == "PASS"
     finally:
         _bash_rm(f)
 
 
-def test_s9_m2_timezone_shifted_time_passes(tmp_path):
-    # auth.log is UTC (18:10); the student copied the SIEM/local time (UTC+8 -> 02:1x).
-    # Same minutes-past-the-hour, whole-hour offset, so it is the real event.
-    env = _authlog(tmp_path, "Oct  1 18:10:05 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n")
-    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 02:07, true_positive\n")
+def test_s9_m2_same_time_on_wrong_date_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-02T14:32:05Z, true_positive\n")
     try:
-        assert run(tmp_path, 9, 2, extra_env=env) == "PASS"
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
     finally:
         _bash_rm(f)
 
@@ -200,7 +198,7 @@ def test_s9_m2_planted_flag_m1_line_does_not_count(tmp_path):
     # sshd event; copying its timestamp must not pass M2 (reviewer finding, PR #141).
     planted = "Oct  1 09:15:00 meta sshd[1]: Invalid user flag-m1-ABCDEF0 from 10.0.50.10 port 1 ssh2\n"
     env = _authlog(tmp_path, planted)
-    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 09:15, true_positive\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T09:15:00Z, true_positive\n")
     try:
         assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
     finally:
@@ -209,16 +207,62 @@ def test_s9_m2_planted_flag_m1_line_does_not_count(tmp_path):
 
 def test_s9_m2_wrong_time_fails(tmp_path):
     env = _authlog(tmp_path, _AUTHLOG_5710)
-    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 00:00, true_positive\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T00:00:00Z, true_positive\n")
     try:
         assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
     finally:
         _bash_rm(f)
 
 
+def test_s9_m2_wrong_year_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2025-10-01T14:32:05Z, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_invalid_calendar_date_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-02-30T14:32:05Z, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_timestamp_without_utc_designator_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T14:32:05, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_longer_rule_id_does_not_match_5710(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 57100, timestamp: 2026-10-01T14:32:05Z, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_new_year_rollover_passes(tmp_path):
+    env = _authlog(tmp_path, "Dec 31 23:59:00 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n")
+    env["S9_NOW"] = "2027-01-01T00:02:00Z"
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-12-31T23:59:30Z, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
 def test_s9_m2_placeholder_time_fails(tmp_path):
     env = _authlog(tmp_path, _AUTHLOG_5710)
-    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: HH:MM, true_positive\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: <actual timestamp>, true_positive\n")
     try:
         assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
     finally:
@@ -227,7 +271,7 @@ def test_s9_m2_placeholder_time_fails(tmp_path):
 
 def test_s9_m2_correct_time_but_no_real_event_fails(tmp_path):
     env = _authlog(tmp_path, "Oct  1 09:00:00 meta sshd[1]: Accepted password for msfadmin\n")
-    f = _timeline("1. phase: initial_access_attempt, rule: 5710, time: 14:33, true_positive\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T14:32:05Z, true_positive\n")
     try:
         assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
     finally:

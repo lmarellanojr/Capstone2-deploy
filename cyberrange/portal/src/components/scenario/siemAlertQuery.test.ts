@@ -9,6 +9,8 @@ import {
   NO_FILTERS,
   POLL_MS,
   severityBand,
+  formatAlertTime,
+  formatAlertTimestampUtc,
 } from "./siemAlertQuery"
 
 function alert(p: Partial<SiemAlert>): SiemAlert {
@@ -45,6 +47,15 @@ describe("severityBand", () => {
     expect(severityBand(5)).toBe("medium")
     expect(severityBand(4)).toBe("low")
     expect(severityBand(0)).toBe("low")
+  })
+})
+
+describe("UTC alert timestamps", () => {
+  it("renders and copies the same UTC instant regardless of browser timezone", () => {
+    const timestamp = "2026-09-25T10:00:02.000+0800"
+    expect(formatAlertTime(timestamp)).toContain("02:00:02")
+    expect(formatAlertTime(timestamp)).toContain("UTC")
+    expect(formatAlertTimestampUtc(timestamp)).toBe("2026-09-25T02:00:02Z")
   })
 })
 

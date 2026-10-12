@@ -235,6 +235,13 @@ export function ExercisePanel({
           </div>
         )}
 
+        {/* SIEM tasks are auto-scored from artifacts; keep instructor review reachable if scoring misses. */}
+        {isSiem && !milestonesLoading && !completed && !currentTask.unscored && (
+          <div className="pt-1" aria-label="Instructor review">
+            {renderInstructorReview()}
+          </div>
+        )}
+
         {/* Type-it-yourself hint (hidden on pure flag tasks; SIEM has no flag submit). */}
         {(!isFlag || isSiem) && (
           <div className="flex items-center gap-2 p-2.5 rounded-lg bg-chip/60 border border-border text-xs text-text-muted">
