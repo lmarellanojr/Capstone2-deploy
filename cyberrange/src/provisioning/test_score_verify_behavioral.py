@@ -1153,7 +1153,7 @@ class TestScoringChecksDirectBashExecution:
     def test_direct_bash_scenario_09_m2_triage_template_marked_tp_fails(self):
         """Only flipping classification in the unedited M1 template is not triage."""
         template = self._guide_heredoc("/home/msfadmin/alert_triage.json")
-        flipped = template.replace("needs_investigation", "true_positive")
+        flipped = template.replace('"<your assessment>"', '"true_positive"')
         assert flipped != template
         assert self._score_s09_m2({"alert_triage.json": flipped}) == "FAIL"
 
