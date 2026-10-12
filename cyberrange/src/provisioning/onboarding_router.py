@@ -41,7 +41,7 @@ def complete_orientation(claims: dict = Depends(require_app_role)):
                 """
                 INSERT INTO user_onboarding (subject, orientation_completed_at)
                 VALUES (?, ?)
-                ON CONFLICT(subject) DO UPDATE SET orientation_completed_at = excluded.orientation_completed_at
+                ON CONFLICT(subject) DO NOTHING
                 """,
                 (subject, completed_at),
             )

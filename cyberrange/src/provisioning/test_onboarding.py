@@ -1,3 +1,5 @@
+import sqlite3
+
 from fastapi.testclient import TestClient
 
 from auth import verify_token
@@ -30,6 +32,36 @@ def test_completion_is_persistent_and_idempotent():
     assert client.post("/users/me/orientation").json() == {"completed": True}
     assert client.get("/users/me/orientation").json() == {"completed": True}
     assert client.post("/users/me/orientation").json() == {"completed": True}
+
+
+def test_completion_timestamp_is_preserved_on_repeated_post(monkeypatch):
+    set_claims("subject-timestamp")
+    class FixedTimestamp:
+        def __init__(self, value):
+            self.value = value
+
+        def isoformat(self):
+            return self.value
+
+    timestamps = iter([
+        FixedTimestamp("2026-10-12T01:02:03+00:00"),
+        FixedTimestamp("2026-10-12T04:05:06+00:00"),
+    ])
+    monkeypatch.setattr("onboarding_router.datetime", type("FixedDateTime", (), {
+        "now": staticmethod(lambda _tz: next(timestamps)),
+    }))
+
+    assert client.post("/users/me/orientation").status_code == 200
+    assert client.post("/users/me/orientation").status_code == 200
+
+    import config
+    conn = sqlite3.connect(config.DB_PATH)
+    timestamp = conn.execute(
+        "SELECT orientation_completed_at FROM user_onboarding WHERE subject = ?",
+        ("subject-timestamp",),
+    ).fetchone()[0]
+    conn.close()
+    assert timestamp == "2026-10-12T01:02:03Z"
 
 
 def test_orientation_state_is_isolated_by_keycloak_subject():
