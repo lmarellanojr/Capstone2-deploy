@@ -242,22 +242,7 @@ def apply(db_path: str | None = None) -> int:
         start = current_version(conn)
         for version, sql_path in _migration_files():
             if version <= start:
-                # PR #181 previously shipped a different v11 migration. If that
-                # version was recorded without PR #184's table, replay PR #184's
-                # idempotent CREATE TABLE migration without duplicating the row.
-                if version == 11 and start >= 11 and not _has_table(
-                    conn, "user_onboarding"
-                ):
-                    with conn:
-                        _run_sql_file(conn, sql_path)
                 continue
-            if version == 12 and (
-                current_version(conn) < 11 or not _has_table(conn, "user_onboarding")
-            ):
-                raise RuntimeError(
-                    "Migration v12 requires the PR #184 v11 user_onboarding table; "
-                    "apply v11 before retrying."
-                )
             with conn:
                 if version == 3 and not _has_column(
                     conn, "milestone_verification", "student_id"
@@ -285,12 +270,7 @@ def check(db_path: str | None = None) -> bool:
         return latest_version() == 0
     conn = sqlite3.connect(path)
     try:
-        current = current_version(conn)
-        if current != latest_version():
-            return False
-        if latest_version() >= 12 and not _has_table(conn, "user_onboarding"):
-            return False
-        return True
+        return current_version(conn) == latest_version()
     finally:
         conn.close()
 

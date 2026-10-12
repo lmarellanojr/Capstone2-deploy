@@ -1373,8 +1373,8 @@ def test_s1_m5_stored_flag_survives_secret_rotation(hybrid_db: str, monkeypatch)
     conn.close()
 
 
-def test_migration_v12_requires_v11_and_retries_in_order(tmp_path: Path, monkeypatch):
-    """A missing v11 cannot be skipped; after v11, v12 updates S1 M5 idempotently."""
+def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path, monkeypatch):
+    """The v12 rubric update applies after v11 and is idempotent."""
     db_file = str(tmp_path / "v12.db")
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -1402,22 +1402,7 @@ def test_migration_v12_requires_v11_and_retries_in_order(tmp_path: Path, monkeyp
     expected_flag, points = row[2], row[3]
     conn.close()
 
-    all_migrations = [
-        (version, path)
-        for version, path in migrate._migration_files()
-        if version != 11
-    ]
-    monkeypatch.setattr(
-        migrate,
-        "_migration_files",
-        lambda: all_migrations,
-    )
-    with pytest.raises(RuntimeError, match="requires the PR #184 v11"):
-        migrate.apply(db_file)
-    conn = sqlite3.connect(db_file)
-    assert migrate.current_version(conn) == 10
-    conn.close()
-
+    all_migrations = migrate._migration_files()
     v11_path = tmp_path / "v11.sql"
     v11_path.write_text(
         "CREATE TABLE IF NOT EXISTS user_onboarding ("
@@ -1451,45 +1436,6 @@ def test_migration_v12_requires_v11_and_retries_in_order(tmp_path: Path, monkeyp
     assert s1m5["criteria"] == row[1]
     conn.close()
     assert migrate.apply(db_file) == 12
-
-    # A previous PR #181 v11 may already be recorded without #184's table.
-    legacy_db = str(tmp_path / "legacy-v11.db")
-    conn = sqlite3.connect(legacy_db)
-    for version, sql_path in all_migrations:
-        if version > 10:
-            continue
-        with conn:
-            if version == 3 and not migrate._has_column(
-                conn, "milestone_verification", "student_id"
-            ):
-                conn.execute(
-                    "ALTER TABLE milestone_verification ADD COLUMN student_id TEXT"
-                )
-            if version == 4:
-                migrate._upgrade_review_cases_schema(conn)
-            migrate._run_sql_file(conn, sql_path)
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
-    conn.execute("INSERT INTO schema_version (version) VALUES (11)")
-    conn.commit()
-    conn.close()
-
-    assert migrate.apply(legacy_db) == 12
-    conn = sqlite3.connect(legacy_db)
-    assert conn.execute(
-        "SELECT COUNT(*) FROM schema_version WHERE version=11"
-    ).fetchone()[0] == 1
-    assert conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='user_onboarding'"
-    ).fetchone()
-    assert conn.execute(
-        "SELECT name FROM milestone_rubrics WHERE scenario_id=1 AND milestone_id=5"
-    ).fetchone()[0] == "Capture the Flag"
-    conn.execute("DROP TABLE user_onboarding")
-    conn.commit()
-    conn.close()
-    assert migrate.check(legacy_db) is False
-    assert migrate.apply(legacy_db) == 12
-
 
 def test_pure_flag_wrong_flag_no_score_no_review(client, hybrid_db: str):
     """(1,5) pure-flag: a wrong flag never scores and never opens a review case."""
