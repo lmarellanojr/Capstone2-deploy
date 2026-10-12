@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { extractTaskSection } from './guideSections'
 
 describe('Scenario 1 Markdown Sanity', () => {
   const filePath = path.resolve(
@@ -87,15 +88,10 @@ describe('Scenario 2 Markdown Sanity', () => {
 
   it('keeps DVWA credentials visible in the first task walkthrough', () => {
     const content = fs.readFileSync(filePath, 'utf-8')
-    const taskOneStart = content.indexOf('### Task 1: Injection Point')
-    const taskTwoStart = content.indexOf('### Task 2: Database Extraction')
-    expect(taskOneStart).toBeGreaterThanOrEqual(0)
-    expect(taskTwoStart).toBeGreaterThan(taskOneStart)
-
-    const taskOne = content.slice(taskOneStart, taskTwoStart)
+    const taskOne = extractTaskSection(content, 1)
+    expect(taskOne).not.toBeNull()
     expect(taskOne).toContain('username `admin`')
     expect(taskOne).toContain('password `password`')
-    expect(taskOne).toContain('DVWA Security')
-    expect(taskOne).toContain('Low')
+    expect(taskOne).toContain('set **DVWA Security** to **Low**')
   })
 })
