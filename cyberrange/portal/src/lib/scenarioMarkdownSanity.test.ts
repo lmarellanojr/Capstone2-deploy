@@ -84,4 +84,18 @@ describe('Scenario 2 Markdown Sanity', () => {
     expect(matches).not.toBeNull()
     expect(matches!.length).toBeGreaterThanOrEqual(4)
   })
+
+  it('keeps DVWA credentials visible in the first task walkthrough', () => {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const taskOneStart = content.indexOf('### Task 1: Injection Point')
+    const taskTwoStart = content.indexOf('### Task 2: Database Extraction')
+    expect(taskOneStart).toBeGreaterThanOrEqual(0)
+    expect(taskTwoStart).toBeGreaterThan(taskOneStart)
+
+    const taskOne = content.slice(taskOneStart, taskTwoStart)
+    expect(taskOne).toContain('username `admin`')
+    expect(taskOne).toContain('password `password`')
+    expect(taskOne).toContain('DVWA Security')
+    expect(taskOne).toContain('Low')
+  })
 })

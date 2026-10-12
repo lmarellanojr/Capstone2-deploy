@@ -49,6 +49,8 @@ If pending, check **Low**, the correct module and field, and the actual result b
 
 **Where to work:** **SQL Injection**, **User ID** in the DVWA panel.
 
+> **DVWA sign-in:** username `admin`; password `password`. After signing in, set **DVWA Security** to **Low** before running this task.
+
 1. Enter normal ID `1`, select **Submit**, and note the single user's result as your baseline.
 2. In DVWA's **User ID** field, paste this payload and select **Submit**:
 
