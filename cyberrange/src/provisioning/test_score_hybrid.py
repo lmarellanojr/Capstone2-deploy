@@ -1373,7 +1373,7 @@ def test_s1_m5_stored_flag_survives_secret_rotation(hybrid_db: str, monkeypatch)
     conn.close()
 
 
-def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path, monkeypatch):
+def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path):
     """The v12 rubric update applies after v11 and is idempotent."""
     db_file = str(tmp_path / "v12.db")
     conn = sqlite3.connect(db_file)
@@ -1403,17 +1403,7 @@ def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path, monkeypa
     conn.close()
 
     all_migrations = migrate._migration_files()
-    v11_path = tmp_path / "v11.sql"
-    v11_path.write_text(
-        "CREATE TABLE IF NOT EXISTS user_onboarding ("
-        "subject TEXT PRIMARY KEY, orientation_completed_at TIMESTAMP);",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        migrate,
-        "_migration_files",
-        lambda: sorted([*all_migrations, (11, str(v11_path))]),
-    )
+    assert [version for version, _ in all_migrations][-2:] == [11, 12]
     applied = migrate.apply(db_file)
     assert applied == 12
     conn = sqlite3.connect(db_file)
