@@ -188,6 +188,13 @@ class KeycloakAdminClient:
         users = self._request("GET", "/users", params=params).json()
         return [u for u in users if not u.get("username", "").startswith(SERVICE_ACCOUNT_PREFIX)]
 
+    def find_users_by_email(self, email: str) -> list[dict]:
+        """Bounded exact-email lookup for booking account reuse and conflict recovery."""
+        users = self._request(
+            "GET", "/users", params={"email": email, "exact": "true", "first": 0, "max": 10, "briefRepresentation": "true"}
+        ).json()
+        return [u for u in users if not u.get("username", "").startswith(SERVICE_ACCOUNT_PREFIX)]
+
     def app_role_members(self) -> dict[str, list[str]]:
         """user id -> application roles held, via one call per app role (not N+1 per user)."""
         members: dict[str, list[str]] = {}
