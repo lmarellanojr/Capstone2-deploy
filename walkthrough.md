@@ -1,10 +1,36 @@
-# Temporary credential email walkthrough
+# Booking account provisioning walkthrough
 
-- Branch: `feature/email-user-invites`
-- Implementation commit: `d464641` (`Email temporary credentials for admin-created users`)
-- Requirement: Admin-created accounts with an email and a temporary password receive the username and temporary password; Keycloak requires a new password at first sign-in. The same delivery occurs on temporary password reset so an Admin can recover from a failed send.
-- Changed files: `cyberrange/src/provisioning/credential_email.py` provides authenticated TLS SMTP; `users_router.py` sends after Keycloak writes and outside the global lock; `test_admin_users.py` and `test_credential_email.py` cover delivery, failure, ordering, and transport; the portal API, hook, feedback helper, tests, and create/reset UI report mail status; `env/oci-12gib.env.example` and `docs/ADM-USER-contract.md` document configuration and response behavior.
-- Checks: `C:\Users\Windows\OneDrive\Capstone2-deploy\Capstone2-deploy\cyberrange\.venv\Scripts\python.exe -m pytest -q src/provisioning/test_admin_users.py src/provisioning/test_credential_email.py --disable-warnings` — 126 passed; `npm.cmd test -- --runInBand src/lib/adminUserValidation.test.ts src/lib/credentialEmailFeedback.test.ts` — 2 suites, 16 tests passed; `node <typescript>/bin/tsc --noEmit --project tsconfig.json` — passed; `git diff --check` — passed.
-- Independent Anti final review: `APPROVED FOR MERGE`, with all security and delivery checks passing. Nonblocking note: SMTP transport exception sanitization is implemented but not directly unit-tested.
-- Independent Codex final review: `APPROVED (ALL CHECKS PASS)`, including API compatibility, portal feedback, and deployment configuration.
-- Limitations: Real inbox delivery was not tested because this workspace has no SMTP account. Set the documented SMTP variables and `PORTAL_PUBLIC_URL` in the host's `env/.env`, then restart `cyberrange-provision-api.service`. `sent` means SMTP accepted the message; it does not guarantee inbox receipt. A concurrent reset may supersede a password while an email is in flight.
+Branch: `feature/booking-session-accounts`
+
+Implementation commit: `ae359c73d35c37994a5c30bf5830b1260dbbfced` (`feat: provision tester accounts for bookings`).
+
+## Resolved behavior
+
+After Apps Script accepts a booking, it calls the assigned domain using that domain's server-only secret. The API creates a student account only when no exact-email account exists, then emails a temporary password. Repeat bookings recheck that one enabled student account still exists and never reset its password. Disabled, privileged, duplicate, stale, or ambiguous accounts require organizer review. An accepted booking remains in the sheet even when account creation or email delivery fails; unsent organizer notices are retried by the 15-minute reconciliation trigger.
+
+## Changed files
+
+- `cyberrange/booking/Code.gs` is the repository copy of the updated Apps Script; the supplied `C:\Users\Windows\Downloads\Code.gs` was updated to match.
+- `cyberrange/src/provisioning/booking_router.py`, `keycloak_admin.py`, and `provision_api_fastapi.py` implement the secret-protected, student-only account workflow.
+- `cyberrange/src/provisioning/schema/v12.sql` stores durable per-email claims in SQLite so API workers cannot create concurrently.
+- `cyberrange/portal/src/app/api/booking/provision/route.ts` provides the server-side authenticated proxy.
+- `cyberrange/env/oci-12gib.env.example` and `cyberrange/portal/.env.local.example` document the server-side secret locations.
+- `docs/BOOKING-ACCOUNT-PROVISIONING.md` describes configuration, Apps Script installation, deployment, and recovery.
+- `test_booking_router.py`, `test_booking_script.cjs`, and `route.test.ts` cover backend, Apps Script, and portal behavior.
+
+## Validation
+
+- `uv run --offline --extra dev --python 3.11 --project . python -m pytest src/provisioning/test_booking_router.py -q` — 12 passed.
+- `cyberrange/.venv/Scripts/python.exe -m pytest cyberrange/src/provisioning/test_booking_router.py cyberrange/src/provisioning/test_admin_users.py -q` — 135 passed.
+- `node cyberrange/src/provisioning/test_booking_script.cjs` — passed.
+- `git diff --check` — passed.
+- Portal Jest tests were not run because `cyberrange/portal/node_modules` is not installed.
+
+## Independent reviews
+
+- Anti: `APPROVED FOR MERGE`.
+- Codex: `APPROVED (ALL CHECKS PASS)`.
+
+## Deployment notes
+
+The Apps Script file is updated locally but has not been published to the Google Apps Script deployment. Deploy the API and portal to all four assigned domains, configure a distinct matching `BOOKING_PROVISION_SECRET` in each domain's API and portal plus `BOOKING_PROVISION_SECRET_D1` through `_D4` in Apps Script, confirm SMTP settings, install the reconciliation trigger once, then publish a new Apps Script web app version. The exact steps are in `docs/BOOKING-ACCOUNT-PROVISIONING.md`.
