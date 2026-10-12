@@ -29,7 +29,7 @@ Save files on **Target: meta (lab)** as `msfadmin`. **JSON** is structured text 
 Files on meta score automatically; there is no flag submission. A score confirms a limited check, so still review your evidence.
 
 - Task 1 looks for `alert_id`, `severity`, or `rule` in the triage file. It does not validate JSON syntax, require all fields, or enforce severity/classification enums. Complete all fields accurately for the exercise.
-- Task 2 looks for a rule ID and clock time on the same line, matching a genuine invalid-user SSH event in meta's authentication log. The checker allows five minutes of tolerance and whole-hour timezone differences by comparing minutes past the hour. Use the actual timestamp and state its timezone; do not invent a time to satisfy this limited check.
+- Task 2 requires rule `5710` and the complete ISO-8601 UTC timestamp (ending in `Z`) for a genuine invalid-user SSH event in meta's authentication log. The checker allows five minutes of tolerance around that event; it does not accept a time from a different date or timezone. Use each observed event's own timestamp; do not invent or reuse a time. If you started a timeline in an earlier session using only `HH:MM`, replace it with the full timestamp copied from SIEM.
 - Task 3 requires **more than 200 bytes**, plus at least one of `system`, `attack`, `alert`, or `recommend` (case-insensitive). More than 200 English characters satisfies the size threshold. Response actions are choices justified by evidence, not mandatory keywords.
 
 ## 3. Set up your lab

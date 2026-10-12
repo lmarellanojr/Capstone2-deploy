@@ -718,9 +718,9 @@ check_scenario_9() {
             # M2: Timeline / true-positive classification.
             # The guide's template already has headings, "rule" and "phase" on
             # every line, so structure alone can't earn the points. One timeline
-            # line must carry a rule ID AND a clock time that matches a REAL
-            # rule-5710 SSH event from auth.log within +/-5 minutes (timezone
-            # tolerant). A fabricated/incorrect or placeholder time must not pass.
+            # line must carry rule 5710 AND a full ISO-8601 UTC timestamp within
+            # +/-5 minutes of a real invalid-user SSH event from auth.log. A
+            # fabricated/incorrect or placeholder time must not pass.
             # There is deliberately NO triage-file shortcut here: a prior branch
             # passed M2 when alert_triage.json merely contained "real"/"true_positive"
             # (the guide text "Replace with the real values" trips it), which let a

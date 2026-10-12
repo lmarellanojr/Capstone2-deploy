@@ -1080,10 +1080,29 @@ class TestScoringChecksDirectBashExecution:
 
     @classmethod
     def _guide_heredoc(cls, target: str) -> str:
-        """Body of the guide's `cat > <target> << 'EOF'` block, as a student would paste it."""
+        """Extract the quoted reference structure for a guide artifact."""
         text = cls._S09_GUIDE.read_text(encoding="utf-8")
-        start = text.index(f"cat > {target} << 'EOF'\n") + len(f"cat > {target} << 'EOF'\n")
-        return text[start:text.index("\nEOF", start)] + "\n"
+        target_name = Path(target).name
+        task_heading = {
+            "incident_timeline.md": "### Task 2:",
+            "alert_triage.json": "### Task 1:",
+        }[target_name]
+        task_start = text.index(task_heading)
+        section = text.index("reference structure", task_start)
+        reference_lines = []
+        for line in text[section:].splitlines()[1:]:
+            stripped = line.strip()
+            if not stripped.startswith("> "):
+                if reference_lines:
+                    break
+                continue
+            value = stripped[2:].rstrip("\\").strip()
+            if len(value) >= 2 and value[0] == "`" and value[-1] == "`":
+                value = value[1:-1]
+            reference_lines.append(value)
+        if not reference_lines:
+            raise ValueError(f"Could not extract {target_name} reference structure from the Scenario 3 guide")
+        return "\n".join(reference_lines) + "\n"
 
     def _score_s09_m2(self, files: Dict[str, str], authlog: str | None = None) -> str:
         # Write through bash, not pathlib: on Windows, Python's "/tmp" is C:\tmp

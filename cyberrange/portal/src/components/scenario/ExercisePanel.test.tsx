@@ -70,7 +70,7 @@ describe('ExercisePanel', () => {
       id: '09',
       labSurface: 'siem',
       milestones: [
-        { id: 2, name: 'Build the timeline', goal: 'Order the events', points: 75 },
+        { id: 2, name: 'Build the timeline', goal: 'Order the events', description: 'Order the events', points: 75 },
       ],
     }
     const props = {
