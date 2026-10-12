@@ -100,9 +100,9 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         id: 5,
-        name: 'Capture the Flag (whoami)',
-        goal: 'Run whoami in Kali and submit your username as the flag',
-        description: 'Return from Metasploit to the normal Kali shell, run whoami, and submit the printed Kali username as the flag.',
+        name: 'Capture the Flag',
+        goal: 'Read the FLAG file on Kali and submit the printed token',
+        description: 'Return from Metasploit to the normal Kali shell, run cat /opt/cyberrange/flags/scenario1.txt, and submit the printed FLAG token. Usernames are not valid flags.',
         points: 50,
       },
     ],

@@ -6,7 +6,7 @@ Offensive · 5 tasks · 275 points · Tasks 1–4 auto-score; Task 5 requires fl
 
 ## 0. Before you start: the big picture
 
-Work from **Kali Linux (CLI)** through five steps: discover responding hosts, enumerate meta's ports, identify its services, demonstrate default-credential access through Tomcat Manager, and submit your Kali username.
+Work from **Kali Linux (CLI)** through five steps: discover responding hosts, enumerate meta's ports, identify its services, demonstrate default-credential access through Tomcat Manager, and submit the FLAG token from `/opt/cyberrange/flags/scenario1.txt`.
 
 **Kali** is your machine with security tools. **meta** is the intentionally vulnerable target. The assigned lab network defines your authorized scope; a discovery scan produces a host list within that scope. DVWA is optional in this scenario.
 
@@ -30,7 +30,7 @@ Tomcat **Manager** can deploy web applications. In this lab, default credentials
 
 Tasks 1–3 check Nmap command history against your assigned subnet or target, with a working subnet route. The checker does not grade every output row, so read the output as learning evidence. Task 4 requires a **live, target-correlated Metasploit session**. Keep that session open until the task is credited. Exiting is cleanup, not a scoring prerequisite.
 
-Task 5 checks your submitted Kali username. Automatic checks can take a few seconds. If a command has returned to the Kali prompt, pressing Enter can trigger the shell's history-writing hook. Do not repeatedly use **Manual Check**: it is available once per task; an unsuccessful check moves the task to instructor review. Check the command context, address, and result first.
+Task 5 checks the FLAG token from `/opt/cyberrange/flags/scenario1.txt`. Automatic checks can take a few seconds. If a command has returned to the Kali prompt, pressing Enter can trigger the shell's history-writing hook. Do not repeatedly use **Manual Check**: it is available once per task; an unsuccessful check moves the task to instructor review. Check the command context, address, and result first.
 
 | Task | Existing navigation title | Points |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ Task 5 checks your submitted Kali username. Automatic checks can take a few seco
 | 2 | Port Enumeration | 50 |
 | 3 | Service Version Detection | 50 |
 | 4 | Tomcat Manager Exploitation | 75 |
-| 5 | Capture the Flag (whoami) | 50 |
+| 5 | Capture the Flag | 50 |
 
 ## 3. Set up your lab
 
@@ -64,8 +64,6 @@ nmap -sn $TARGET_SUBNET
 
 **Expected result — do not type this:** a responding host's report includes `Host is up`. Your `/24` contains 256 addresses (`.0` through `.255`); conventional IPv4 subnets reserve network and broadcast addresses, leaving 254 ordinary host addresses. A scan does not mean every address will respond.
 
-**Done when:** you identify meta in the responding-host list and **Host Discovery** is credited. Seeing DVWA is optional.
-
 > **Troubleshooting:** If no hosts respond, confirm **ACTIVE**, **Kali Linux (CLI)**, and the assigned subnet. Discovery may miss a host that does not answer its probes; do not assume that means the machine does not exist.
 
 ### Task 2: Port Enumeration
@@ -84,8 +82,6 @@ nmap -p 21,22,80,8180 $TARGET_META
 3. Record which ports are open. **Open** means a service accepts connections; **closed** means the host responds but no service listens there; **filtered** means probes do not establish whether the port is open, often because traffic is blocked.
 
 **Expected result:** this lab normally exposes 21, 22, 80, and 8180. Focus on meta's result, not another host's output.
-
-**Done when:** you can identify the open ports including 8180 and **Port Enumeration** is credited. Scoring checks the targeted scan command and network route, not each reported state.
 
 > **Troubleshooting:** If 8180 is missing, confirm you used `-p 21,22,80,8180` and meta's assigned address. Wait for startup and retry once. A fast scan may omit 8180; persistent missing services need an instructor check.
 
@@ -227,9 +223,9 @@ Check the prompt after each step; do not paste three exits blindly if you are al
 
 **Why it matters:** in this lab, known default credentials allowed code deployment as a service account. Scenario 4 addresses that credential weakness.
 
-### Task 5: Capture the Flag (whoami)
+### Task 5: Capture the Flag
 
-**Goal:** identify your Kali login account and submit that username.
+**Goal:** read the FLAG file on Kali and submit the printed token.
 
 **Where to work:** normal shell in **Kali Linux (CLI)**, then this task's **Status** area in the exercise panel.
 
@@ -237,14 +233,14 @@ Check the prompt after each step; do not paste three exits blindly if you are al
 2. In the **Kali shell**, run:
 
 ```bash
-whoami
+cat /opt/cyberrange/flags/scenario1.txt
 ```
 
-3. Select **Capture the Flag (whoami)** in task navigation. While it is incomplete, type the printed username into **Submit the flag you found** under **Status**, then select **Submit**.
+3. Select **Capture the Flag** in task navigation. While it is incomplete, type the printed `FLAG{...}` token into **Submit the flag you found** under **Status**, then select **Submit**.
 
-**Expected result — example only:** `student` is a possible Kali username, not a guaranteed answer. Use your actual output. The earlier remote `tomcat` identity is not this flag.
+**Expected result:** a per-student `FLAG{S01_M5_...}` token. Usernames such as `student` or `tomcat` are not valid flags. If the file is missing, ask an instructor to End Session and Start lab again so a new flag can be planted. The earlier remote `tomcat` identity is not this flag.
 
-**Done when:** the submitted Kali username is accepted and the task is credited. The field disappears after completion. This flag checks the Kali account; it does not prove the remote identity. All five tasks complete the scenario.
+**Done when:** the submitted FLAG token is accepted and the task is credited. The field disappears after completion. This flag is unique to your lab. All five tasks complete the scenario.
 
 ## 5. Recon playground (optional, not scored)
 

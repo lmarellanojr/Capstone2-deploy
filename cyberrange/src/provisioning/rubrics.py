@@ -51,12 +51,11 @@ DEFAULT_RUBRICS: List[Dict[str, Any]] = [
         "nist_phase": "Exploitation",
     },
     {
-        # Pure-flag final task: confirm the shell identity (whoami) and submit the
-        # flag planted in the tomcat user's home. Scores on the flag alone.
+        # Pure-flag final task: submit the per-student FLAG file on Kali.
         "scenario_id": 1,
         "milestone_id": 5,
-        "name": "Capture the Flag (whoami)",
-        "criteria": "In the Kali terminal, run whoami and submit the username it prints (the student's live Kali login, e.g. student) as the flag. Not a file or a hardcoded token.",
+        "name": "Capture the Flag",
+        "criteria": "Return to the normal Kali shell, run cat /opt/cyberrange/flags/scenario1.txt, and submit the printed FLAG token. Usernames such as student or tomcat are not valid flags.",
         "expected_flag": "FLAG{S01_M5_C3D5E7A9B1F2}",
         "points": 50,
         "mitre_technique": "T1083",
@@ -213,11 +212,8 @@ def list_rubrics(conn: sqlite3.Connection, scenario_id: int) -> List[dict]:
     return [dict(r) for r in rows]
 
 
-# Note: Scenario 1 Milestone 5's flag is the live `whoami` output of the student's
-# Kali terminal (their Kali login name). It is NOT hardcoded here — at provision
-# time the real account name is read from the Kali container and stored per-pod in
-# pod_milestone_flags (see flag_planting.read_kali_whoami + provision.py), so the
-# normal planted-flag path below validates it like any other per-pod flag.
+# Scenario 1 Milestone 5 is a per-student HMAC planted on Kali. Authenticated
+# S1 M5 validation requires the student's stored flag to have the expected format.
 
 _FLAG_TOKEN = re.compile(r"FLAG\{[^{}\s]+\}", re.IGNORECASE)
 
@@ -266,6 +262,15 @@ def validate_flag(
 
     if student_id and student_id.strip():
         clean_sid = student_id.strip()
+        if int(scenario_id) == 1 and int(milestone_id) == 5:
+            planted_expected = get_student_expected_flag(conn, clean_sid, 1, 5)
+            if not planted_expected:
+                return False, rubric
+            stored_norm = planted_expected.strip().upper()
+            if not re.fullmatch(r"FLAG\{S01_M5_[0-9A-F]{12}\}", stored_norm):
+                return False, rubric
+            return secrets.compare_digest(clean_submitted, stored_norm), rubric
+
         # 1. If student has a provisioned dynamic flag in pod_milestone_flags, that is authoritative.
         # Static v5.sql git answer keys MUST NOT pass for a provisioned student.
         planted_expected = get_student_expected_flag(conn, clean_sid, scenario_id, milestone_id)

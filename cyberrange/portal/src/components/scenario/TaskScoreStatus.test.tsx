@@ -24,7 +24,7 @@ describe('TaskScoreStatus', () => {
 
   const mockFlagMilestone: Milestone = {
     id: 5,
-    name: 'Capture the Flag (whoami)',
+    name: 'Capture the Flag',
     description: 'Submit flag',
     points: 50,
   }

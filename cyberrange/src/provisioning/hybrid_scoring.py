@@ -25,7 +25,7 @@ _INCOMPLETE_MESSAGE = (
 # Every other milestone keeps the flag+state hybrid anti-oracle behaviour.
 # Keyed by (scenario_id, milestone_id).
 PURE_FLAG_MILESTONES = {
-    (1, 5),  # Scenario 1 final task: submit the flag read from the tomcat shell (whoami)
+    (1, 5),  # Scenario 1 final task: submit the FLAG file planted on Kali
     (6, 5),  # Scenario 2 final task: submit the flag captured via SQL injection
 }
 
