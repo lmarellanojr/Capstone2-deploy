@@ -376,9 +376,11 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://<api>/pods/<pod_id>/alerts?rul
 | Stops at | Likely cause | Action |
 |---|---|---|
 | 1 | Task 0 never reached meta's sshd (wrong `$TARGET_META`, sshd down) or rsyslog not installed on the golden | Fix Task 0 target / add rsyslog to the meta golden |
-| 2 | Agent points at the wrong manager address (**seen live**, see root cause above); a legacy `meta-base` lacks the `auth.log` localfile; or the agent is not enrolled | Apply #112 / pin the manager's `eth0`; for a legacy image, destroy pods and rerun `bash deploy/oci_build_goldens_arm64.sh` so `meta-base` is rebaked and validated; see Issue 7 for enrolment |
+| 2 | Agent points at the wrong manager address (**seen live**, see root cause above); a legacy `meta-base` lacks the `auth.log` localfile; the agent is not enrolled; or the manager has no route back to the pod subnet | Apply #112 / pin the manager's `eth0`; for a legacy image, destroy pods and rerun `bash deploy/oci_build_goldens_arm64.sh` so `meta-base` is rebaked and validated; see Issue 7 for enrolment. If ping from meta reaches the manager's eth0 and nothing comes back, the return route is missing (below) |
 | 3 | Decoder/rule did not match this sshd's log line | Record the exact line; check it with `wazuh-logtest` on the manager |
 | 4 | Alert is older than the pod (expected after #112), or buried under more than 200 CIS/SCA rows | Tick **Rule 5710 only** (server-side filter) |
+
+**Return route (live, 2026-10-13).** Peering already delivers the pod packet to mon-net. The manager's default route is eth1 (`lxdbr0`), so the reply to `10.0.{50+pod_id}.0/24` is lost unless `ensure_manager_pod_route` has installed `via 10.0.40.1 dev eth0`. That is the gateway from Manual 02, not the address `wazuh_manager_ip()` reads. The route is replaced when the pod network is created and removed when it is deleted. After a manager restart the reaper puts it back on the next sweep (`REAP_INTERVAL_SECONDS`, default 600 seconds), not on the 60-second expiry tick.
 
 **Still to record:** a Scenario 09 run on a host with the #112 fix deployed,
 showing the meta agent enrolled and rule 5710 in the pane after Task 0.

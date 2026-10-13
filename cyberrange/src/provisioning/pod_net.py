@@ -29,6 +29,61 @@ def pod_subnet(pod_id: int) -> str:
     return f"10.0.{50 + pod_id}"
 
 
+# mon-net gateway. Manual 02 sets ipv4.address=10.0.40.1/24 and pins the
+# manager's own eth0 address at 10.0.40.10. The manager's default route is
+# lxdbr0 (eth1), so a pod packet arrives on eth0 and the reply is lost unless
+# this route exists inside the manager. wazuh_manager_ip() reads the .10
+# address; it is not this gateway.
+MON_NET_GATEWAY = "10.0.40.1"
+MON_NET_DEV = "eth0"
+
+
+def _manager_instance() -> str:
+    return os.getenv("WAZUH_MANAGER_INSTANCE", "wazuh-manager")
+
+
+def manager_pod_route(pod_id: int) -> str:
+    assert 1 <= pod_id <= 6, f"pod_id must be 1-6, got {pod_id}"
+    return f"{pod_subnet(pod_id)}.0/24"
+
+
+def ensure_manager_pod_route(pod_id: int):
+    """Install the return route. Raises on failure so provision can roll back."""
+    cidr = manager_pod_route(pod_id)
+    _lxc(
+        "exec",
+        _manager_instance(),
+        "--",
+        "ip",
+        "route",
+        "replace",
+        cidr,
+        "via",
+        MON_NET_GATEWAY,
+        "dev",
+        MON_NET_DEV,
+        check=True,
+    )
+
+
+def delete_manager_pod_route(pod_id: int):
+    """Drop the return route. A missing route or a timeout must not block teardown."""
+    try:
+        cidr = manager_pod_route(pod_id)
+        _lxc(
+            "exec",
+            _manager_instance(),
+            "--",
+            "ip",
+            "route",
+            "del",
+            cidr,
+            check=False,
+        )
+    except Exception as e:
+        logger.warning(f"manager route delete for pod {pod_id} ignored: {e}")
+
+
 def _lxc(*args, check=False, timeout=120):
     r = subprocess.run(
         ["lxc", "--project", LXD_PROJECT, *args],
@@ -97,6 +152,9 @@ def create_pod_network(pod_id: int):
 
             time.sleep(5)
 
+    # After the retry loop, not inside it. A route error must reach
+    # cleanup_after_failure rather than being retried as a peer failure.
+    ensure_manager_pod_route(pod_id)
     logger.info(f"Pod network {net} created and peered to mon-net")
 
 
@@ -104,6 +162,7 @@ def delete_pod_network(pod_id: int):
     net = pod_net_name(pod_id)
     acl = f"pod-{pod_id}-egress"
 
+    delete_manager_pod_route(pod_id)
     _lxc_peer("delete", net, "to-mon")
     _lxc_peer("delete", "mon-net", f"from-pod-{pod_id}")
     _lxc("network", "acl", "delete", acl)
@@ -162,7 +221,15 @@ def reconcile_pod_networks():
         for pid, _ in pod_peers:
             if pid not in live:
                 logger.info(f"[reconciler] orphaned mon-net peer from-pod-{pid} — deleting")
+                delete_manager_pod_route(pid)
                 _lxc_peer("delete", "mon-net", f"from-pod-{pid}")
+                continue
+            if not 1 <= pid <= 6:
+                continue
+            try:
+                ensure_manager_pod_route(pid)
+            except Exception as e:
+                logger.error(f"[reconciler] sweep error: manager route for pod {pid}: {e}")
 
         acls = _lxc_json("network", "acl", "list")
         pod_acls = [
