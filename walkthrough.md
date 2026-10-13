@@ -1,8 +1,8 @@
 # Admin credential email cleanup walkthrough
 
-- Branch: `feature/simplify-booking-credential-email`
-- Implementation commit: `29ad8351d207cd2b042255a81b7821a4dc74cba5` (`Remove admin credential email delivery`)
-- Pull request: #193 (update could not be verified because GitHub API network access is blocked in this environment)
+- Branch: `feature/admin-credential-email-security`
+- Implementation commit: `9a911ac` (`Remove admin credential email delivery`, rebased on the current `main`)
+- Pull request: follow-up to merged PR #193
 
 ## Resolved requirements
 
@@ -32,4 +32,4 @@ Contracts and handoff docs: `cyberrange/docs/ADM-USER-contract.md`, `cyberrange/
 - Anti security/privacy review: `APPROVED FOR MERGE`.
 - Codex contract/architecture review: `APPROVED (ALL CHECKS PASS)`.
 
-The portal and backend automated suites remain unverified in this environment. The local implementation commit is one commit ahead of its configured origin branch; push and PR update could not be completed here because GitHub API access is blocked.
+The portal and backend automated suites remain unverified in this environment. This follow-up branch contains the security cleanup after PR #193 was merged; PR #193 itself continues to describe the original booking change.
