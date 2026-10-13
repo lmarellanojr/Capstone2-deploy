@@ -33,6 +33,8 @@ def api(monkeypatch):
         return _Resp(200, {"data": {"token": f"tok-{auth[0]}"}})
 
     def get(url, headers=None, params=None, **kw):
+        if state.get("scoring_get_timeout") and (headers or {}).get("Authorization") == "Bearer tok-scoring":
+            raise wc.requests.Timeout("scoring read timed out")
         name = (params or {}).get("q", "").removeprefix("name=")
         items = [{"id": i, "name": n} for i, n in state["agents"].items() if n == name]
         return _Resp(200, {"data": {"affected_items": items}})
@@ -109,3 +111,128 @@ def test_unconfigured_provisioner_logs_and_never_raises(api, monkeypatch, caplog
 
 def test_unsafe_names_are_skipped(api):
     assert wc.find_agent_ids_by_name("tok", "pod-x; rm -rf /") == []
+
+
+def test_unset_provisioner_with_a_visible_name_refuses_the_lab(api, monkeypatch):
+    monkeypatch.setattr(wc, "WAZUH_PROVISION_USER", "")
+    with pytest.raises(wc.StaleWazuhAgent) as caught:
+        wc.abort_if_names_remain("alice")
+    assert caught.value.ids == ["008", "011", "012"]
+    assert str(caught.value) == "alice ['008', '011', '012']"
+    assert api["deleted"] == []
+
+
+def test_successful_purge_returns_the_removed_ids(api):
+    assert wc.abort_if_names_remain("alice") == ["008", "011", "012"]
+    assert not any(n.startswith("pod-alice-") for n in api["agents"].values())
+
+
+def test_a_name_held_only_by_agent_000_does_not_abort(api):
+    api["agents"].clear()
+    api["agents"]["000"] = "pod-carol-meta"
+    assert wc.abort_if_names_remain("carol") == []
+    assert api["deleted"] == []
+
+
+def test_scoring_auth_failure_is_not_a_stale_agent(api, monkeypatch, caplog):
+    monkeypatch.setattr(wc, "WAZUH_USER", "")
+    assert wc.abort_if_names_remain("alice") == ["008", "011", "012"]
+    assert "WAZUH_STALE_CHECK_SKIPPED" in caplog.text
+    assert "alice" in caplog.text
+
+
+def test_scoring_read_timeout_still_returns_removed_ids(api, caplog):
+    api["scoring_get_timeout"] = True
+    assert wc.abort_if_names_remain("alice") == ["008", "011", "012"]
+    assert sorted(api["deleted"]) == ["008", "011", "012"]
+    assert "WAZUH_STALE_CHECK_SKIPPED" in caplog.text
+    assert "scoring read timed out" in caplog.text
+
+
+def test_stale_name_does_not_start_the_agent_or_mark_active(monkeypatch):
+    import sys
+    from unittest.mock import MagicMock
+
+    sys.modules.setdefault("pylxd", MagicMock())
+    import provision
+
+    commands = []
+
+    class _Result:
+        exit_code = 0
+
+    class _Inst:
+        def start(self, wait=True):
+            return None
+
+        def execute(self, argv):
+            commands.append(list(argv))
+            return _Result()
+
+    class _Instances:
+        def create(self, cfg, wait=True):
+            return _Inst()
+
+        def get(self, name):
+            return _Inst()
+
+    class _Client:
+        def __init__(self, project=None):
+            self.instances = _Instances()
+
+    monkeypatch.setattr(provision.pylxd, "Client", _Client)
+    monkeypatch.setattr(provision, "delete_pod_network", lambda pod_id: None)
+    monkeypatch.setattr(provision, "create_pod_network", lambda pod_id: None)
+    monkeypatch.setattr(provision, "log_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(provision, "ensure_guest_nic_up", lambda *args, **kwargs: True)
+    monkeypatch.setattr(provision, "ensure_dvwa_compose", lambda inst: True)
+    monkeypatch.setattr(provision, "ensure_dvwa_ready", lambda inst: True)
+    monkeypatch.setattr(provision, "add_dvwa_http_proxy", lambda name, pod_id: 8080)
+    monkeypatch.setattr(provision, "wazuh_manager_ip", lambda client: "10.0.40.10")
+    monkeypatch.setattr(provision.os.path, "exists", lambda path: False)
+
+    def refuse(student_id):
+        raise wc.StaleWazuhAgent(student_id, ["008"])
+
+    monkeypatch.setattr(provision, "abort_if_names_remain", refuse)
+    cleaned = []
+    monkeypatch.setattr(
+        provision, "cleanup_after_failure", lambda *args: cleaned.append(args)
+    )
+
+    def fail_db():
+        raise AssertionError("pod row was updated")
+
+    monkeypatch.setattr(provision, "get_db_connection", fail_db)
+
+    provision.perform_provisioning(
+        "alice",
+        1,
+        {"kali": "pod-alice-kali", "meta": "pod-alice-meta", "dvwa": "pod-alice-dvwa"},
+        "09",
+    )
+
+    assert not any(cmd[:3] == ["systemctl", "start", "wazuh-agent"] for cmd in commands)
+    assert cleaned == [("alice", 1, None, None)]
+
+
+def test_enroll_handler_reraises_stale_and_swallows_other_errors():
+    events = []
+
+    def log_event(event_type, student_id=None, pod_id=None, **kwargs):
+        events.append((event_type, student_id, pod_id, kwargs.get("detail")))
+
+    def refuse():
+        raise wc.StaleWazuhAgent("alice", ["008"])
+
+    with pytest.raises(wc.StaleWazuhAgent):
+        wc.finish_enroll("alice", 1, refuse, log_event, lambda message: None)
+    assert events == [("WAZUH_STALE_AGENT", "alice", 1, "['008']")]
+
+    events.clear()
+
+    def other():
+        raise RuntimeError("scoring down")
+
+    assert wc.finish_enroll("alice", 1, other, log_event, lambda message: None) is None
+    assert events[0][0] == "WAZUH_ENROLL_FAIL"

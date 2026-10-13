@@ -14,7 +14,13 @@ from guest_nic import ensure_guest_nic_up
 import lab_history
 from lab_proxy import add_dvwa_http_proxy, remove_dvwa_http_proxy
 from pod_net import create_pod_network, delete_pod_network, pod_net_name, pod_subnet
-from wazuh_client import deregister_agents, get_agent_id_by_name, get_wazuh_token, remove_agents_named
+from wazuh_client import (
+    abort_if_names_remain,
+    deregister_agents,
+    finish_enroll,
+    get_agent_id_by_name,
+    get_wazuh_token,
+)
 
 logger = logging.getLogger("provision_api")
 
@@ -359,19 +365,19 @@ write_files:
             logger.warning(f"DVWA lab proxy skipped/failed: {e}")
             log_event("LAB_PROXY_FAIL", student_id, pod_id, detail=str(e))
 
-        agent_ids = {}
-        try:
+        def _enroll():
             manager_ip = wazuh_manager_ip(client)
-            # Free this student's agent names first: an agent left over from a
-            # previous lab (teardown couldn't remove it) makes the manager
-            # refuse the new same-name agent, so the lab got no SIEM data.
-            stale = remove_agents_named(student_id)
-            if stale:
-                logger.info(f"removed stale Wazuh agents {stale} for {student_id}")
+            # Free this student's agent names first. A name the delete could
+            # not purge makes authd reject the new key, so refuse the lab
+            # before wazuh-agent starts.
+            removed = abort_if_names_remain(student_id)
+            if removed:
+                logger.info(f"removed stale Wazuh agents {removed} for {student_id}")
             # Only machines whose image ships the agent. Waiting on one that
             # can't exist (dvwa-base had none) held every provision for the
             # full ~45s loop below.
             roles = []
+            agent_ids = {}
             for role, inst_name in (("meta", meta_name), ("dvwa", dvwa_name)):
                 inst = client.instances.get(inst_name)
                 if inst.execute(["test", "-f", "/var/ossec/etc/ossec.conf"]).exit_code != 0:
@@ -391,11 +397,13 @@ write_files:
                 if len(agent_ids) == len(roles):
                     break
                 time.sleep(5)
-            wazuh_agent_id = json.dumps(agent_ids) if agent_ids else None
+            enrolled = json.dumps(agent_ids) if agent_ids else None
             log_event("WAZUH_ENROLL_OK", student_id, pod_id, detail=f"manager={manager_ip} agents={agent_ids}")
-        except Exception as e:
-            logger.warning(f"Wazuh enroll skipped/failed: {e}")
-            log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))
+            return enrolled
+
+        wazuh_agent_id = finish_enroll(
+            student_id, pod_id, _enroll, log_event, logger.warning
+        )
 
         plant_flags_during_provision(client, student_id, pod_id, vmids, scenario_id)
 
