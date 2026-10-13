@@ -16,7 +16,7 @@ import java.util.Set;
 /** Immutable, local matcher. Candidate passwords are never retained or logged. */
 final class DictionaryMatcher {
     static final int MAX_PASSWORD_LENGTH = 128;
-    static final String DICTIONARY_SHA256 = "85bdeb119fa7f3a13853300147624e58de150cfbffd213d02bbc669ac2db9887";
+    static final String DICTIONARY_SHA256 = "83f553bafcd8fc9fb32561fc69af2cb48778f056c7748aa2308d7adfd36510b7";
     private final Set<String> words;
     private final int maxWordLength;
 
@@ -45,7 +45,7 @@ final class DictionaryMatcher {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                if (!line.matches("[a-z]{1,128}") || !words.add(line)) {
+                if (!line.matches("[a-z]{2,128}") || !words.add(line)) {
                     throw new IllegalStateException("Invalid dictionary resource");
                 }
             }

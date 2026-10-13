@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="${DICTIONARY_POLICY_JAR:-$ROOT/keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar}"
 DST=/opt/keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar
-PINNED_JAR_SHA256=7cdc29ef4fa8a8ded203ed60e1643ebbd4c12016369b0c307cdea4df65636ad4
+PINNED_JAR_SHA256=61c58ec6cc63f9b661ac4991d1c90820af6d53b59495ba8dcab72870197d4c24
 [[ -s "$SRC" ]] || { echo "missing dictionary provider artifact: $SRC (build with Maven first)"; exit 1; }
 if [[ -z "${DICTIONARY_POLICY_JAR:-}" ]]; then
   expected_sum=$PINNED_JAR_SHA256
@@ -38,7 +38,7 @@ try:
         if "edu.mmdc.cyberrange.policy.DictionaryPasswordPolicyProviderFactory" not in registration.split():
             raise ValueError("dictionary provider registration missing")
         dictionary = jar.read("dictionary/scowl-en-v1.txt")
-        if hashlib.sha256(dictionary).hexdigest() != "85bdeb119fa7f3a13853300147624e58de150cfbffd213d02bbc669ac2db9887":
+        if hashlib.sha256(dictionary).hexdigest() != "83f553bafcd8fc9fb32561fc69af2cb48778f056c7748aa2308d7adfd36510b7":
             raise ValueError("embedded dictionary checksum mismatch")
         metadata = dict(line.split("=", 1) for line in jar.read("META-INF/cyberrange-dictionary-policy.properties").decode().splitlines() if "=" in line and not line.startswith("#"))
         for key, value in {"keycloak.version": "25.0.6", "policy.id": "dictionaryWords", "dictionary.id": "scowl-en-v1"}.items():

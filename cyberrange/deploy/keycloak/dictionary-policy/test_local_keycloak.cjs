@@ -20,6 +20,7 @@ const realm = 'dictionary-test-' + crypto.randomBytes(6).toString('hex');
 const callback = 'http://127.0.0.1:18084/callback';
 const blocklist = process.env.LOCAL_KEYCLOAK_BLOCKLIST_NAME || 'cyberrange-common-passwords.txt';
 assert.match(blocklist, /^[A-Za-z0-9._-]+$/, 'Blocklist must be a local filename');
+// Keep the existing policy id so imported realms stay compatible after replacement.
 const policy = `length(8) and maxLength(128) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3) and passwordBlacklist(${blocklist}) and dictionaryWords(scowl-en-v1)`;
 const alphabet = '0123456789!@#$%^&*()-_=+[]{}:,.?';
 const strong = () => Array.from({ length: 24 }, () => alphabet[crypto.randomInt(alphabet.length)]).join('');
@@ -76,6 +77,15 @@ async function browserFlow(javaScriptEnabled) {
     fs.mkdirSync(shots, { recursive: true });
     // Initial/error screenshots contain no entered credential.
     if (javaScriptEnabled) await page.screenshot({ path: path.join(shots, 'update-password-initial.png'), fullPage: true });
+    if (javaScriptEnabled) {
+      for (const letter of ['a', 'i', 'o']) {
+        const candidate = '2!3@4#5$6%7^8*9=2+3!4@5#6$7^8' + letter;
+        await page.locator('#password-new').fill(candidate);
+        assert.equal(await page.locator('#cr-password-strength-label').innerText(), 'Password strength: Strong',
+          'The meter must not penalize single-letter word ' + letter);
+      }
+      await page.locator('#password-new').fill('');
+    }
     for (const candidate of [word, passphrase]) {
       await page.locator('#password-new').fill(candidate);
       await page.locator('#password-confirm').fill(candidate);
@@ -124,12 +134,19 @@ async function browserFlow(javaScriptEnabled) {
     madeRealm = true;
     const realmReadback = await (await admin('realms/' + realm)).json();
     assert(realmReadback.passwordPolicy.includes(`passwordBlacklist(${blocklist})`), 'Realm blacklist policy was not saved');
-    assert(realmReadback.passwordPolicy.includes('dictionaryWords(scowl-en-v1)'), 'Realm dictionary policy was not saved');
+    assert(realmReadback.passwordPolicy.includes('dictionaryWords(scowl-en-v1)'), 'Existing realm policy must remain loadable');
     assert.equal((await admin('realms/' + realm + '/clients', 'POST', { clientId: 'local-probe', enabled: true, publicClient: true, standardFlowEnabled: true, directAccessGrantsEnabled: true, redirectUris: [callback] })).status, 201);
     const rejected = await admin('realms/' + realm + '/users', 'POST', { username: 'bad-create', enabled: true, credentials: [{ type: 'password', value: word }] });
     assert.equal(rejected.status, 400, 'Create with dictionary credential must fail');
     assert.equal((await (await admin('realms/' + realm + '/users?username=bad-create&exact=true')).json()).length, 0, 'Failed create must not leave a user');
     console.log('PASS create-user dictionary rejection and rollback');
+    for (const letter of ['a', 'i', 'o']) {
+      const candidate = '928!' + letter + '#728';
+      await user('single-letter-' + letter, candidate);
+      assert.equal((await authenticate('single-letter-' + letter, candidate)).status, 200,
+        'Single-letter word should be accepted: ' + letter);
+      console.log('PASS single-letter password accepted (' + letter + ')');
+    }
     const old = strong();
     const id = await user('reset-probe', old);
     assert.equal((await admin('realms/' + realm + '/users/' + id + '/reset-password', 'PUT', { type: 'password', value: word, temporary: false })).status, 400);

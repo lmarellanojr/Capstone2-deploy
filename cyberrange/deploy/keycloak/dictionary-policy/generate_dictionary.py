@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 
-EXPECTED_SHA256 = "85bdeb119fa7f3a13853300147624e58de150cfbffd213d02bbc669ac2db9887"
+EXPECTED_SHA256 = "83f553bafcd8fc9fb32561fc69af2cb48778f056c7748aa2308d7adfd36510b7"
 
 
 def main():
@@ -20,12 +20,10 @@ def main():
                "--categories=", "--apostrophe=False"]
     result = subprocess.run(command, cwd=source, check=True, capture_output=True, text=True, encoding="utf-8")
     lines = result.stdout.splitlines()
-    # SCOWL includes the names of all 26 alphabet letters. Only the ordinary
-    # English words a, i and o are single-letter entries; discard alphabet
-    # labels so a password containing any ASCII letter is not automatically
-    # rejected. Keep every dictionary word of two or more letters.
+    # SCOWL includes the names of all 26 alphabet letters. Discard all
+    # single-letter entries so ordinary passwords can contain a, i, or o.
+    # Keep every lowercase English word of two or more letters.
     words = {word for word in lines if re.fullmatch("[a-z]+", word) and len(word) >= 2}
-    words.update(word.lower() for word in lines if word in {"a", "A", "i", "I", "o", "O"})
     data = ("\n".join(sorted(words)) + "\n").encode("ascii")
     if EXPECTED_SHA256 and hashlib.sha256(data).hexdigest() != EXPECTED_SHA256:
         raise SystemExit("Dictionary differs from pinned scowl-en-v1; refusing to replace it")

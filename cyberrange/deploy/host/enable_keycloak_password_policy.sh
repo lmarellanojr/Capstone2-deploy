@@ -6,7 +6,7 @@
 #
 # Why: without a realm passwordPolicy Keycloak accepts ANY password on its own
 # pages -- including the forced change after an Admin hands out a temporary
-# password (UPDATE_PASSWORD), where a student could pick "a" or their username.
+# password (UPDATE_PASSWORD), where a student could pick a common password or username.
 # The portal/API only enforce 8-128 characters on passwords an Admin types.
 #
 # Baseline rules follow NIST SP 800-63B-4 and OWASP ASVS. The additional

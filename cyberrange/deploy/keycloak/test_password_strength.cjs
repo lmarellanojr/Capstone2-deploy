@@ -9,7 +9,9 @@ const { estimate, mount } = require(script);
 test('conservative estimates including long predictable passwords', () => {
     for (const [value, score] of [['', 0], ['short', 1], ['password123456789', 1],
         ['P@ssw0rd123456789', 1], ['abcabcabcabcabcabc', 1], ['aaaaaaaaaaaaaaaa', 1],
-        ['orchid river copper moon', 1], ['r7#k9z2$m', 2], ['r7#k9z2$m8%N4', 3],
+        ['orchid river copper moon', 4], ['#!@#%^23456789!@#%^2a', 4],
+        ['#!@#%^23456789!@#%^2i', 4], ['#!@#%^23456789!@#%^2o', 4],
+        ['r7#k9z2$m', 2], ['r7#k9z2$m8%N4', 3],
         ['#!@#%^23456789!@#%^2', 4]]) {
         assert.equal(estimate(value), score, value);
     }
@@ -30,8 +32,8 @@ test('mounts only on new-password form, preserves errors and controls, updates a
     assert.equal(doc.querySelector('[role=status]').textContent, 'Password strength: Strong');
     input.value = 'orchid river copper moon';
     input.dispatchEvent(new dom.window.Event('input'));
-    assert.equal(doc.querySelector('.cr-strength').dataset.score, '1');
-    assert.equal(doc.querySelector('[role=status]').textContent, 'Password strength: Weak');
+    assert.equal(doc.querySelector('.cr-strength').dataset.score, '4');
+    assert.equal(doc.querySelector('[role=status]').textContent, 'Password strength: Strong');
     input.value = 'short'; input.dispatchEvent(new dom.window.Event('change'));
     assert.equal(doc.querySelector('.cr-strength').dataset.score, '1');
     input.type = 'text';

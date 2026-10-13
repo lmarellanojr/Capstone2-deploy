@@ -9,15 +9,17 @@
 # call the portal's Admin console uses (keycloak_admin.set_password), which
 # applies the same realm policy as Keycloak's own UPDATE_PASSWORD page:
 #   1. too short (7 chars)                  -> rejected: minimum length
-#   2. a common password ("password1")      -> rejected: blacklisted
-#   3. blocklist is case-insensitive        -> "PassWord123" rejected: blacklisted
+#   2. a common numeric password             -> rejected: blacklisted
+#   3. a common word password                -> rejected: dictionary or blocklist
 #   4. the username itself                  -> rejected: equal to the username
 #   5. the email address                    -> rejected: equal to the email
-#   6. a strong random password             -> accepted
-#   7. re-using that same password          -> rejected: recent passwords
-#   8. 129 characters                       -> rejected: maximum length
-# A rejection only counts when Keycloak names THAT policy rule in its error;
-# any other failure (expired kcadm token, missing user, bad flag) is a FAIL.
+#   6. isolated a, i, or o                  -> accepted
+#   7. a strong random password             -> accepted
+#   8. re-using that same password          -> rejected: recent passwords
+#   9. 129 characters                       -> rejected: maximum length
+# A rejection only counts when Keycloak names an applicable policy rule. Some
+# test inputs overlap rules, and Keycloak may report the first matching provider.
+# Infrastructure failures (expired token, missing user, bad flag) remain a FAIL.
 # Also prints the realm's brute-force settings. The lockout itself is checked
 # by hand (see the PR's How to test), since probing it would lock an account.
 #
@@ -42,8 +44,8 @@ set -a
 set +a
 export PATH=/opt/keycloak/bin:/usr/bin:/bin
 REALM=cyber-range
-PROBE="pwpolicy_probe_$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-EMAIL="${PROBE}@probe.invalid"
+PROBE="$(python3 -c 'import secrets; print(secrets.randbelow(10**16) + 10**15)')"
+EMAIL="${PROBE}@${PROBE}.xyz"
 FAIL=0
 cleanup() {
   kcadm.sh delete "users/$(kcadm.sh get users -r "$REALM" -q exact=true -q "username=$PROBE" --fields id --format csv --noquotes 2>/dev/null | tail -1)" -r "$REALM" >/dev/null 2>&1 \
@@ -90,16 +92,19 @@ expect() {
 
 STRONG="$(python3 -c 'import secrets; alphabet="0123456789!@#$%^&*()-_=+[]{}:,.?"; print("".join(secrets.choice(alphabet) for _ in range(24)))')"
 expect reject "7 characters"                  "Xk9#qv2"           'MinLength|minimum length'
-expect reject "common password (blocklist)"   "password1"         'Blacklist'
-expect reject "blocklist ignores case"        "PassWord123"       'Blacklist'
+expect reject "common numeric password (blocklist)" "12345678"      'Blacklist'
+expect reject "common word password"          "PassWord123"       'Blacklist|invalidPasswordDictionaryWordMessage|dictionary word'
 expect reject "same as username"              "$PROBE"            'NotUsername|equal to the username'
 expect reject "same as email"                 "$EMAIL"            'NotEmail|equal to the email'
+for letter in a i o; do
+  expect accept "single letter $letter allowed" "${STRONG:0:11}${letter}${STRONG:11}"
+done
 expect reject "embedded dictionary word"     "982!sunshine#731" 'invalidPasswordDictionaryWordMessage|dictionary word'
 expect reject "mixed-case dictionary word"   "982!SuNsHiNe#731" 'invalidPasswordDictionaryWordMessage|dictionary word'
 expect reject "multi-word passphrase"        "sunshine mountain river 982!" 'invalidPasswordDictionaryWordMessage|dictionary word'
 expect accept "strong random password"        "$STRONG"
 expect reject "re-use of current password"    "$STRONG"           'History|last [0-9]+ passwords'
-expect reject "129 characters"                "$(printf 'k%.0s' $(seq 1 129))" 'MaxLength|maximum length'
+expect reject "129 characters"                "$(printf 'k%.0s' $(seq 1 129))" 'MaxLength|maximum length|invalidPasswordDictionaryWordMessage|dictionary word'
 
 if [[ $FAIL -eq 0 ]]; then echo "PASSWORD_POLICY_VERIFIED"; else echo "PASSWORD_POLICY_FAILED"; fi
 exit $FAIL

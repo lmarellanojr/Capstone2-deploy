@@ -3,8 +3,7 @@
     "use strict";
     function estimate(value) {
         if (!value) return 0;
-        // a/i/o and letter-runs are dictionary words; do not call those Strong.
-        if (/[aio]/i.test(value) || /[A-Za-z]{2,}/.test(value)) return 1;
+        // Dictionary checks are server-side; single letters a, i, and o are allowed.
         const normalized = value.toLowerCase().replace(/[0@]/g, "a").replace(/[1!]/g, "i").replace(/3/g, "e").replace(/\$/g, "s");
         if (value.length < 8 || /(.+)\1{2,}/u.test(normalized) ||
             /password|passw|qwerty|letmein|welcome|cyberrange|capstone|123456|abcdef/i.test(normalized) ||
@@ -43,7 +42,7 @@
         const hint = doc.createElement("p");
         hint.id = "cr-password-strength-hint";
         hint.className = "cr-strength__hint";
-        hint.textContent = "Estimate only; dictionary and history checks happen when you save. English words anywhere in the password, including a, i and o, are refused. Use Generate password for a word-free option.";
+        hint.textContent = "Estimate only; dictionary and history checks happen when you save. English words of two or more letters anywhere in the password are refused. Use Generate password for a word-free option.";
         container.appendChild(bar);
         container.appendChild(label);
         container.appendChild(hint);

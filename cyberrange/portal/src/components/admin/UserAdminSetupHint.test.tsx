@@ -30,6 +30,12 @@ describe("UserAdminSetupHint", () => {
 })
 
 describe("CreateUserModal on a host without the user-admin client", () => {
+  it("explains that dictionary checks allow the single-letter words a, i, and o", () => {
+    render(<CreateUserModal isOpen onClose={jest.fn()} onCreate={jest.fn()} onCreated={jest.fn()} />)
+    expect(screen.getByText(/No English words of two or more letters/)).toBeInTheDocument()
+    expect(screen.queryByText(/including a, i and o/)).not.toBeInTheDocument()
+  })
+
   it("shows the setup hint under the error when creation answers not configured", async () => {
     const onCreate = jest.fn().mockRejectedValue(new Error("User management is not configured"))
     render(<CreateUserModal isOpen onClose={jest.fn()} onCreate={onCreate} onCreated={jest.fn()} />)
