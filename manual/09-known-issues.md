@@ -382,6 +382,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://<api>/pods/<pod_id>/alerts?rul
 
 **Return route (live, 2026-10-13).** Peering already delivers the pod packet to mon-net. The manager's default route is eth1 (`lxdbr0`), so the reply to `10.0.{50+pod_id}.0/24` is lost unless `ensure_manager_pod_route` has installed `via 10.0.40.1 dev eth0`. That is the gateway from Manual 02, not the address `wazuh_manager_ip()` reads. The route is replaced when the pod network is created and removed when it is deleted. After a manager restart the reaper puts it back on the next sweep (`REAP_INTERVAL_SECONDS`, default 600 seconds), not on the 60-second expiry tick.
 
+**Stale agent name (live, 2026-10-13).** A leftover `pod-<student>-meta` registration makes authd reject the new container's key even when the return route is in place. `abort_if_names_remain` runs before `wazuh-agent` starts. If that name is still registered after cleanup, provisioning logs `WAZUH_STALE_AGENT` and does not mark the pod `ACTIVE`. The host needs `WAZUH_PROVISION_USER` and `WAZUH_PROVISION_PW` so the delete can purge the name. The scoring user cannot delete agents.
+
 **Still to record:** a Scenario 09 run on a host with the #112 fix deployed,
 showing the meta agent enrolled and rule 5710 in the pane after Task 0.
 

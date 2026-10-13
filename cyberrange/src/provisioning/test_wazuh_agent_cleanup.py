@@ -109,3 +109,53 @@ def test_unconfigured_provisioner_logs_and_never_raises(api, monkeypatch, caplog
 
 def test_unsafe_names_are_skipped(api):
     assert wc.find_agent_ids_by_name("tok", "pod-x; rm -rf /") == []
+
+
+def test_unset_provisioner_with_a_visible_name_refuses_the_lab(api, monkeypatch):
+    monkeypatch.setattr(wc, "WAZUH_PROVISION_USER", "")
+    with pytest.raises(wc.StaleWazuhAgent) as caught:
+        wc.abort_if_names_remain("alice")
+    assert caught.value.ids == ["008", "011", "012"]
+    assert str(caught.value) == "alice ['008', '011', '012']"
+    assert api["deleted"] == []
+
+
+def test_successful_purge_returns_the_removed_ids(api):
+    assert wc.abort_if_names_remain("alice") == ["008", "011", "012"]
+    assert not any(n.startswith("pod-alice-") for n in api["agents"].values())
+
+
+def test_a_name_held_only_by_agent_000_does_not_abort(api):
+    api["agents"].clear()
+    api["agents"]["000"] = "pod-carol-meta"
+    assert wc.abort_if_names_remain("carol") == []
+    assert api["deleted"] == []
+
+
+def test_scoring_auth_failure_is_not_a_stale_agent(api, monkeypatch):
+    monkeypatch.setattr(wc, "WAZUH_USER", "")
+    with pytest.raises(RuntimeError) as caught:
+        wc.abort_if_names_remain("alice")
+    assert not isinstance(caught.value, wc.StaleWazuhAgent)
+
+
+def test_enroll_handler_reraises_stale_and_swallows_other_errors():
+    events = []
+
+    def log_event(event_type, student_id=None, pod_id=None, **kwargs):
+        events.append((event_type, student_id, pod_id, kwargs.get("detail")))
+
+    def refuse():
+        raise wc.StaleWazuhAgent("alice", ["008"])
+
+    with pytest.raises(wc.StaleWazuhAgent):
+        wc.finish_enroll("alice", 1, refuse, log_event, lambda message: None)
+    assert events == [("WAZUH_STALE_AGENT", "alice", 1, "['008']")]
+
+    events.clear()
+
+    def other():
+        raise RuntimeError("scoring down")
+
+    assert wc.finish_enroll("alice", 1, other, log_event, lambda message: None) is None
+    assert events[0][0] == "WAZUH_ENROLL_FAIL"

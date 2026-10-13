@@ -18,6 +18,16 @@ from config import (
 
 logger = logging.getLogger("provision_api")
 
+
+class StaleWazuhAgent(Exception):
+    """A lab name is still registered after cleanup. Subclass of Exception so
+    provisioning's outer handler still rolls the pod back."""
+
+    def __init__(self, student_id: str, ids: list):
+        self.student_id = student_id
+        self.ids = [str(i) for i in ids]
+        super().__init__(f"{student_id} {self.ids}")
+
 _tls_warning_logged = False
 
 
@@ -162,6 +172,50 @@ def find_agent_ids_by_name(token: str, name: str) -> list:
     items = r.json().get("data", {}).get("affected_items", [])
     # Never touch agent 000 (the manager itself), whatever the query returns.
     return [a["id"] for a in items if a.get("name") == name and a.get("id") != "000"]
+
+
+def remaining_agent_ids(student_id: str) -> list:
+    """Ids still registered under this student's lab names, read with the
+    scoring token. Agent 000 is dropped by find_agent_ids_by_name. A scoring
+    auth failure propagates; it is not a StaleWazuhAgent."""
+    if not student_id:
+        return []
+    token = get_wazuh_token()
+    ids = []
+    for name in pod_agent_names(student_id):
+        ids.extend(find_agent_ids_by_name(token, name))
+    return ids
+
+
+def finish_enroll(student_id: str, pod_id: int, enroll, log_event, log_warning):
+    """Run one enroll attempt.
+
+    except StaleWazuhAgent has to stay first. It is a subclass of Exception,
+    so a wider handler written above it would swallow the refusal and the pod
+    would still become ACTIVE.
+    """
+    try:
+        return enroll()
+    except StaleWazuhAgent as e:
+        log_event("WAZUH_STALE_AGENT", student_id, pod_id, detail=str(e.ids))
+        raise
+    except Exception as e:
+        log_warning(f"Wazuh enroll skipped/failed: {e}")
+        log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))
+        return None
+
+
+def abort_if_names_remain(student_id: str) -> list:
+    """Delete this student's leftover agents, then refuse the lab if any name
+    is still registered. Returns the ids remove_agents_named actually removed
+    (empty when there was nothing to purge). remove_agents_named stays
+    best-effort; a scoring-token failure from the follow-up read propagates
+    unchanged."""
+    removed = remove_agents_named(student_id)
+    leftover = remaining_agent_ids(student_id)
+    if leftover:
+        raise StaleWazuhAgent(student_id, leftover)
+    return removed
 
 
 def remove_agents_named(student_id: str) -> list:
