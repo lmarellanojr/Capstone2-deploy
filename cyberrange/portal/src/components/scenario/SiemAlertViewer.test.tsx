@@ -180,7 +180,7 @@ describe("SiemAlertViewer (SIEM-POLL)", () => {
     render(<SiemAlertViewer podId={7} />)
     await flush()
     expect(screen.getByText(/Manager unavailable/)).toBeInTheDocument()
-    expect(screen.getByText(/template files on meta/)).toBeInTheDocument()
+    expect(screen.getByText(/unedited templates do not score/i)).toBeInTheDocument()
   })
 
   it("states the manager-only / no Indexer-Dashboard constraint", async () => {

@@ -157,6 +157,157 @@ def test_s9_m3_short_report_fails(tmp_path):
         _bash_rm(f)
 
 
+def test_s9_m3_empty_heading_skeleton_fails(tmp_path):
+    body = (
+        "Summary:\n"
+        "Affected system:\n"
+        "Evidence:\n"
+        "Interpretation:\n"
+        "Recommended response:\n"
+    )
+    f = _report(body)
+    try:
+        assert run(tmp_path, 9, 3) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m3_guide_example_report_fails(tmp_path):
+    body = (
+        "At 06:32 UTC on 10 October 2026, rule 5710 on system pod-example-meta recorded a "
+        "nonexistent-user SSH attempt. This supports failed authentication; these records do "
+        "not establish successful access. I recommend checking adjacent authentication events "
+        "for repetition before choosing containment.\n"
+    )
+    assert len(body) > 200
+    f = _report(body)
+    try:
+        assert run(tmp_path, 9, 3) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m3_example_date_and_phrase_without_agent_fails(tmp_path):
+    body = (
+        "Summary: On 10 October 2026 the SIEM recorded a nonexistent-user SSH attempt against "
+        "our lab host. Affected system: pod-student-meta. Evidence: rule 5710. Interpretation: "
+        "failed authentication only. Recommended response: monitor for repetition; do not isolate "
+        "after a single intentional lab failure.\n"
+    )
+    assert len(body) > 200
+    f = _report(body)
+    try:
+        assert run(tmp_path, 9, 3) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def _triage(content: str) -> str:
+    return _bash_tmp_file("alert_triage.json", content)
+
+
+def test_s9_m1_unedited_paste_skeleton_fails(tmp_path):
+    body = (
+        '{\n'
+        '  "alert_id": "case-1",\n'
+        '  "severity": "medium",\n'
+        '  "rule": "5710",\n'
+        '  "description": "PASTE SIEM DESCRIPTION",\n'
+        '  "agent": "PASTE YOUR pod-…-meta NAME",\n'
+        '  "classification": "true_positive",\n'
+        '  "notes": "PASTE FULL SIEM TIMESTAMP ENDING IN Z — invalid-user SSH"\n'
+        '}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(tmp_path, 9, 1) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_filled_real_values_pass(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd: attempt to login using a non-existent user",'
+        '"agent":"pod-student-meta","classification":"true_positive",'
+        '"notes":"2026-10-01T14:32:05Z invalid-user SSH; I pasted the SIEM time"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-student-meta"}) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_example_agent_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd non-existent user","agent":"pod-example-meta",'
+        '"classification":"true_positive","notes":"2026-10-01T14:32:05Z lab attempt"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_junk_agent_without_substance_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"x","agent":"pod-adversary-meta",'
+        '"classification":"true_positive","notes":"short"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_ascii_dots_agent_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd non-existent user","agent":"pod-...-meta",'
+        '"classification":"true_positive","notes":"2026-10-01T14:32:05Z lab attempt"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_other_pod_agent_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd non-existent user","agent":"pod-bob-meta",'
+        '"classification":"true_positive","notes":"2026-10-01T14:32:05Z lab attempt"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_fqdn_expected_agent_still_passes(tmp_path):
+    """If hostname is an FQDN, strip the suffix before comparing."""
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd: attempt to login using a non-existent user",'
+        '"agent":"pod-alice-meta","classification":"true_positive",'
+        '"notes":"2026-10-01T14:32:05Z invalid-user SSH; I pasted the SIEM time"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(
+            tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta.lxd"}
+        ) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
 # ── Scenario 3 (id 9): M2 timeline must match a REAL rule-5710 event time ────
 # SCORE-FIX: the claimed HH:MM is validated against auth.log, so a fabricated or
 # placeholder time fails while a time near a real "Invalid user" event passes.
@@ -263,6 +414,28 @@ def test_s9_m2_new_year_rollover_passes(tmp_path):
 def test_s9_m2_placeholder_time_fails(tmp_path):
     env = _authlog(tmp_path, _AUTHLOG_5710)
     f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: <actual timestamp>, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_paste_timestamp_token_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline(
+        "1. phase: initial_access_attempt, rule: 5710, timestamp: PASTE_SIEM_TIMESTAMP_Z, true_positive\n"
+    )
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_guide_example_timestamp_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline(
+        "1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-10T06:32:00Z, true_positive\n"
+    )
     try:
         assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
     finally:

@@ -177,25 +177,25 @@ export const SCENARIOS: Scenario[] = [
     prepTask: {
       id: 0, name: 'Generate the alerts', description: 'Prepare the evidence you will investigate.', points: 0,
       unscored: true, guideTaskNumber: 0,
-      instructions: ['On Kali, generate a failed SSH login against meta; scanning is optional.', 'Open SIEM, find your meta agent’s individual rule 5710 event, and note its timestamp and timezone for Task 2.'],
-      cue: 'Open the SIEM now and note the rule 5710 time — you need it for Task 2.',
+      instructions: ['On Kali, generate one failed SSH login against meta.', 'Open SIEM, select your meta agent and rule 5710, then click the individual event to copy its …Z timestamp for Task 2.'],
+      cue: 'Click the rule 5710 event once to copy its timestamp — paste that …Z value into Task 2.',
       cueVariant: 'info',
     },
     milestones: [
       {
         id: 1, name: 'Open a triage record', description: 'Capture the alert as a structured case record.', points: 50, guideTaskNumber: 1,
-        instructions: ['Switch to Target: meta (lab) and confirm the prompt identifies the meta host.', 'Save /home/msfadmin/alert_triage.json with all seven fields describing your observed alert; replace every placeholder before saving.'],
+        instructions: ['Switch to Target: meta (lab) and confirm the prompt identifies the meta host.', 'Paste the guide JSON skeleton into /home/msfadmin/alert_triage.json and replace every PASTE… line with your observed alert.'],
         cue: 'Write on the meta tab — files created on Kali never score. Confirm the prompt reads msfadmin@pod-…-meta.', cueVariant: 'warning',
       },
       {
         id: 2, name: 'Build the timeline', description: 'Classify observed events and put them in time order.', points: 100, guideTaskNumber: 2,
-        instructions: ['On meta, save /home/msfadmin/incident_timeline.md with observed events in time order, including the failed login.', 'Give each event its own actual timestamp and timezone. Replace all placeholders and remove events you did not observe.'],
-        cue: 'Use the actual rule 5710 event time for the failed-login line. Other events need their own timestamps; do not reuse one time for every row.', cueVariant: 'warning',
+        instructions: ['On meta, paste the guide timeline skeleton into /home/msfadmin/incident_timeline.md.', 'Replace PASTE_SIEM_TIMESTAMP_Z with the copied rule 5710 …Z time. Other events need their own timestamps.'],
+        cue: 'Paste the copied rule 5710 …Z timestamp into the timeline line. Do not leave HH:MM or PASTE… text.', cueVariant: 'warning',
       },
       {
         id: 3, name: 'Write the incident report', description: 'Turn your findings into actions for a supervisor.', points: 75, guideTaskNumber: 3,
-        instructions: ['On meta, save /home/msfadmin/incident_report.txt with summary, affected system, evidence, interpretation, and recommended response.', 'Explain whether successful access is supported by the evidence. Exceed 200 bytes and justify response choices.'],
-        cue: 'Summarize the affected system, the alert, and your recommended response. The report must exceed 200 bytes; blocking, rotation, isolation, and tuning remain choices to justify.', cueVariant: 'info',
+        instructions: ['On meta, paste the guide report skeleton into /home/msfadmin/incident_report.txt and fill Summary, Affected system, Evidence, Interpretation, and Recommended response.', 'Explain whether successful access is supported by the evidence. Exceed 200 bytes; one lab failure does not require blocking or isolation.'],
+        cue: 'Fill the five headings with your agent, rule 5710, and timestamp. The report must exceed 200 bytes.', cueVariant: 'info',
       },
     ],
   },

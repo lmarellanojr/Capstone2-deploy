@@ -142,8 +142,10 @@ export function SiemAlertViewer({
 
   const status = fetchedAt && (
     <span className="text-xs text-text-muted" data-testid="siem-status">
-      Updated {fetchedAt.toLocaleTimeString()} ·{' '}
+      Updated {fetchedAt.toLocaleTimeString()} (your local time) ·{' '}
       {paused ? 'auto-refresh paused (tab hidden)' : `auto-refresh every ${POLL_MS / 1000}s`}
+      {' · '}
+      Times are UTC (…Z). Click an event to copy that exact timestamp for Task 2.
     </span>
   )
 
@@ -157,7 +159,8 @@ export function SiemAlertViewer({
           {status}
         </div>
         <p className="text-text-secondary">
-          Manager unavailable. Continue using the template files on meta; scoring accepts them.
+          Manager unavailable. You can still write the meta files from the guide, but replace every
+          PASTE… value with evidence from a later successful SIEM load — unedited templates do not score.
         </p>
       </div>
     )

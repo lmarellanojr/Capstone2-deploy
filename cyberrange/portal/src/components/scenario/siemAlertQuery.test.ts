@@ -51,11 +51,19 @@ describe("severityBand", () => {
 })
 
 describe("UTC alert timestamps", () => {
-  it("renders and copies the same UTC instant regardless of browser timezone", () => {
-    const timestamp = "2026-09-25T10:00:02.000+0800"
-    expect(formatAlertTime(timestamp)).toContain("02:00:02")
-    expect(formatAlertTime(timestamp)).toContain("UTC")
-    expect(formatAlertTimestampUtc(timestamp)).toBe("2026-09-25T02:00:02Z")
+  it("renders and copies the same whole-second …Z string for every Wazuh offset form", () => {
+    const cases: Array<[string, string]> = [
+      ["2026-09-25T10:00:02.000+0800", "2026-09-25T02:00:02Z"],
+      ["2026-10-13T18:39:25.000+0000", "2026-10-13T18:39:25Z"],
+      ["2026-10-13T18:39:25.000Z", "2026-10-13T18:39:25Z"],
+      ["2026-10-13T18:39:25+0000", "2026-10-13T18:39:25Z"],
+      ["2026-10-13T18:39:25.123+0000", "2026-10-13T18:39:25Z"],
+    ]
+    for (const [input, expected] of cases) {
+      expect(formatAlertTimestampUtc(input)).toBe(expected)
+      expect(formatAlertTime(input)).toBe(expected)
+      expect(formatAlertTime(input)).toBe(formatAlertTimestampUtc(input))
+    }
   })
 })
 
