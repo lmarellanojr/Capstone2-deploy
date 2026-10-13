@@ -214,6 +214,10 @@ function setAccountStatusNotified_(r, status) {
   if (row) sheet_().getRange(row, HEADERS.indexOf('Account status notified') + 1).setValue(status || '');
 }
 
+function sameBooking_(a, b) {
+  return a.token === b.token && a.email === b.email && a.domainId === b.domainId && a.slotId === b.slotId;
+}
+
 function installProvisioningReconciliationTrigger() {
   const handler = 'reconcilePendingProvisioning';
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === handler).forEach(t => ScriptApp.deleteTrigger(t));
@@ -245,7 +249,7 @@ function reconcilePendingProvisioning() {
     if (!lock.tryLock(10000)) return;
     try {
       const current = rows_().find(r => r.row === candidate.row);
-      if (!current || current.status !== 'booked') return;
+      if (!current || current.status !== 'booked' || !sameBooking_(current, candidate)) return;
 
       // Older rows already had their current status included in the sent notice.
       if (current.organizerNoticeSent && !current.accountStatusNotified) {
