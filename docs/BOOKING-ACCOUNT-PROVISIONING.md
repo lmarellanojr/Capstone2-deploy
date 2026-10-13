@@ -1,24 +1,23 @@
-# Booking account provisioning
+# Booking and tester credentials
 
-When a booking is accepted, Apps Script calls the assigned domain's server route. The server route forwards the email to that domain's provision API. A new enabled student account receives a randomly generated temporary password by authenticated TLS SMTP. A repeat booking reuses one enabled student account and never resets its password. Disabled, privileged, ambiguous, partial, or uncertain accounts are flagged for organizer review.
+The booking page records a reservation and emails the tester a confirmation. It does not create a Cyber Range account. The assigned domain owner creates the student account after the booking; the existing Admin → Users flow then automatically sends a separate email with the tester's username and temporary password.
 
-## Configure each domain
+## Domain owner workflow
 
-For each range domain, generate a different high-entropy secret (for example, `openssl rand -hex 32`) and set it in that domain's provision API and server-only portal environment. Keep it out of client code and source control. The API's existing SMTP settings (`CREDENTIAL_SMTP_HOST`, `CREDENTIAL_SMTP_PORT`, `CREDENTIAL_SMTP_SECURITY`, `CREDENTIAL_SMTP_FROM`, `CREDENTIAL_SMTP_USERNAME`, and `CREDENTIAL_SMTP_PASSWORD`) must be configured, along with the HTTPS `PORTAL_PUBLIC_URL`. Keycloak's existing dedicated user-admin service account needs user query/manage permissions in that domain's realm.
+1. Read the new booking notice and use its assigned domain and tester email.
+2. Sign in to that domain's Admin → Users page.
+3. Create an enabled **Student** account using the tester's email and a temporary password. The range sends the credential email automatically when the account is created.
+4. If the tester already has an account or the email fails, use the existing user-management workflow to resolve it before the session.
 
-In the Apps Script project attached to the booking sheet, open **Project Settings → Script properties** and add `BOOKING_PROVISION_SECRET_D1`, `_D2`, `_D3`, and `_D4`, each with the matching domain's secret. The script selects the property using its fixed `DOMAINS` mapping. Never add these properties to the public booking page.
+This process does not need `BOOKING_PROVISION_SECRET` or booking-specific API settings. SMTP credential email settings already used by Admin → Users must be configured on each domain's provision API. A small Apps Script trigger retries organizer notices only when email delivery fails; it does not create accounts or send tester credentials.
 
-The provisioning claim table is added by the existing API startup migration. Back up `pod_mgmt.db` before deploying the new API as usual. Deploy the portal and API on all assigned domains before updating the Apps Script project.
+## Update the booking Apps Script
 
-## Update and deploy Apps Script
+After deploying the updated script (including when replacing an older version that installed account reconciliation):
 
-1. Replace the booking project's `Code.gs` with the updated file supplied alongside this change.
-2. Set the script property above. Run `installProvisioningReconciliationTrigger` once in the Apps Script editor and authorize the requested spreadsheet, URL fetch, and email permissions. This creates a 15-minute trigger that rechecks booked rows left `pending` or `unknown` for more than five minutes, records the new account status, emails organizers when that status becomes terminal, and retries any unsent booking or account-status notices.
-3. Deploy a new version of the web app, keeping its existing **Execute as: Me** and public access settings. The booking page keeps the same `doPost` request and response shape.
-4. Make one controlled test booking using an approved MMDC address. Confirm the row records `created`, the user receives a temporary credential email, and the organizer notice reports the outcome. Repeat a booking using the same address and confirm the existing password is unchanged. Do not use a real tester's mailbox for a credential test without their consent.
+1. In the booking spreadsheet, open **Extensions → Apps Script** and replace `Code.gs` with this repository's `cyberrange/booking/Code.gs`.
+2. In the Apps Script editor, run `installOrganizerNoticeRetry` once and authorize it. This removes the old account-reconciliation trigger and installs a five-minute retry for unsent organizer notices without changing booking rows.
+3. Deploy a new version of the web app, keeping its existing execute-as and access settings.
+4. Make a test booking and verify the tester receives the confirmation, the domain owner receives the action notice, and the assigned domain's Admin → Users sends a separate credential email after account creation.
 
-## Status and recovery
-
-`pending` means Apps Script could not verify completion yet. `unknown` means the portal call timed out or failed ambiguously. The 15-minute reconciliation trigger retries only those two states through the assigned domain's idempotent API, then writes the resulting status to the booking sheet. A terminal status update is emailed to organizers; failed update emails are retried without another provisioning request. The sheet tracks the last account status successfully included in an organizer email, so concurrent runs do not send duplicate updates. Legacy rows with an already-sent booking notice are backfilled from their current status and do not receive duplicate email. Check the per-domain claim row and Keycloak account before manual recovery. A stale claim or `needs_review` must be reconciled by an administrator; do not retry by resetting an existing account. `email_failed` means the account exists but SMTP did not accept the message; use the authenticated Admin → Users reset-password workflow to issue a new temporary password and email it. The booking remains confirmed throughout.
-
-Apps Script applies a limit of four active bookings per email. The shared secret authenticates the server-to-server request; it does not prove that the person booking controls the submitted mailbox. Keep booking organizer notifications monitored for suspicious reservations.
+Old account-status columns in the booking sheet are renamed as legacy fields and left intact; historical rows and claim-table data are preserved. New bookings leave those fields blank. The v13 SQLite migration remains in the migration history because deployed domains have already applied it, but the API no longer uses the table.

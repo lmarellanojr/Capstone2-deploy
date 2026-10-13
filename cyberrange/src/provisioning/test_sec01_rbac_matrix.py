@@ -78,12 +78,6 @@ ROUTE_POLICY = {
             "label": "browser:sqli-m1",
         },
     ),
-    # Booking Apps Script callback is authenticated by a dedicated shared secret.
-    ("POST", "/internal/booking/user"): (
-        PUBLIC,
-        "/internal/booking/user",
-        {"email": "matrix-probe@mmdc.mcl.edu.ph"},
-    ),
     ("GET", "/users/me/orientation"): (ANY_APP_ROLE, "/users/me/orientation", None),
     ("POST", "/users/me/orientation"): (ANY_APP_ROLE, "/users/me/orientation", None),
     ("POST", "/pods/provision"): (ANY_APP_ROLE, "/pods/provision", {"student_id": "ignored", "scenario_id": "01"}),
@@ -151,7 +145,6 @@ def client(monkeypatch):
     monkeypatch.setattr("pods_router.perform_provisioning", lambda *a, **k: None)
     monkeypatch.setattr("pods_router.perform_destruction", lambda *a, **k: None)
     monkeypatch.setenv("BROWSER_SCORE_SECRET", "sec01-matrix-secret")
-    monkeypatch.setenv("BOOKING_PROVISION_SECRET", "sec01-booking-secret")
     monkeypatch.setattr(
         "credential_email.send_temporary_credentials",
         lambda **kwargs: None,
@@ -195,8 +188,6 @@ def _request(client, method, url, body):
                 "BROWSER_SCORE_SECRET", "sec01-matrix-secret"
             )
         }
-    elif url == "/internal/booking/user":
-        kwargs["headers"] = {"X-Booking-Provision-Secret": "sec01-booking-secret"}
     return client.request(method, url, **kwargs)
 
 

@@ -1430,6 +1430,36 @@ def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path):
     conn.close()
     assert migrate.apply(db_file) == versions[-1]
 
+
+def test_booking_claim_schema_v13_remains_compatible_but_inert(tmp_path: Path):
+    """Keep shipped v13 in migration history while booking no longer uses its table."""
+    db_file = str(tmp_path / "booking-claims-v13.db")
+    assert migrate.apply(db_file) == 13
+    assert migrate.check(db_file)
+
+    conn = sqlite3.connect(db_file)
+    assert conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='booking_account_claims'"
+    ).fetchone()
+    conn.execute(
+        "INSERT INTO booking_account_claims(email, owner_token, status) VALUES (?, ?, ?)",
+        ("legacy@mmdc.mcl.edu.ph", "test-claim", "created"),
+    )
+    conn.commit()
+    conn.close()
+
+    # A deployed database already at v13 remains current and its historical
+    # claim row is preserved; no rollback migration is introduced.
+    assert migrate.check(db_file)
+    assert migrate.apply(db_file) == 13
+    conn = sqlite3.connect(db_file)
+    assert conn.execute(
+        "SELECT status FROM booking_account_claims WHERE email=?",
+        ("legacy@mmdc.mcl.edu.ph",),
+    ).fetchone() == ("created",)
+    conn.close()
+    assert migrate.check(db_file)
+
 def test_pure_flag_wrong_flag_no_score_no_review(client, hybrid_db: str):
     """(1,5) pure-flag: a wrong flag never scores and never opens a review case."""
     student = "student_pureflag2"
