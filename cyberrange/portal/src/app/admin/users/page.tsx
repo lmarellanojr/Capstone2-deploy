@@ -6,6 +6,7 @@ import { KeyRound, RefreshCw, Search, ShieldOff, UserPlus, Users } from "lucide-
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, Button, LoadingSpinner, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { CreateUserModal } from "@/components/admin/CreateUserModal";
+import { CredentialHandoffModal, type CredentialHandoff } from "@/components/admin/CredentialHandoffModal";
 import { ResetPasswordModal } from "@/components/admin/ResetPasswordModal";
 import { UserAdminSetupHint } from "@/components/admin/UserAdminSetupHint";
 import { adminNavItems } from "@/lib/navigation";
@@ -13,7 +14,7 @@ import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { useToastContext } from "@/context/ToastContext";
 import { formatSqliteDate } from "@/lib/sqliteTime";
 import { APP_ROLES } from "@/lib/adminUserValidation";
-import { createCredentialFeedback, resetCredentialFeedback } from "@/lib/credentialEmailFeedback";
+import { createCredentialFeedback, resetCredentialFeedback } from "@/lib/adminCredentialFeedback";
 import type { AdminUser, AppRole } from "@/lib/api";
 
 const ROLE_BADGE: Record<AppRole, "brand" | "info" | "default"> = {
@@ -46,6 +47,7 @@ export default function AdminUsersPage() {
   const [creating, setCreating] = useState(false);
   const [resetting, setResetting] = useState<AdminUser | null>(null);
   const [confirm, setConfirm] = useState<PendingChange | null>(null);
+  const [credentialHandoff, setCredentialHandoff] = useState<CredentialHandoff | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const firstRun = useRef(true);
 
@@ -279,9 +281,9 @@ export default function AdminUsersPage() {
         onClose={() => setResetting(null)}
         onReset={async (u, password, temporary) => {
           const updated = await resetPassword(u.id, password, temporary);
+          setCredentialHandoff({ username: u.username ?? "", password, temporary });
           const feedback = resetCredentialFeedback(updated, temporary);
-          if (feedback.kind === "error") toastError(feedback.message);
-          else success(feedback.message);
+          success(feedback.message);
         }}
       />
 
@@ -289,12 +291,14 @@ export default function AdminUsersPage() {
         isOpen={creating}
         onClose={() => setCreating(false)}
         onCreate={createUser}
-        onCreated={(u) => {
+        onCreated={(u, password, temporary) => {
+          setCredentialHandoff({ username: u.username ?? "", password, temporary });
           const feedback = createCredentialFeedback(u, u.role ? ROLE_LABEL[u.role] : "no role");
-          if (feedback.kind === "error") toastError(feedback.message);
-          else success(feedback.message);
+          success(feedback.message);
         }}
       />
+
+      <CredentialHandoffModal credentials={credentialHandoff} onClose={() => setCredentialHandoff(null)} />
 
       <Modal isOpen={confirm !== null} onClose={() => (confirmBusy ? undefined : setConfirm(null))}>
         {confirm && (

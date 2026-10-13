@@ -82,7 +82,7 @@ All five routes use `verify_token` followed by `require_role(["admin"])`.
 - `temporary_password` defaults to `true`, which means Keycloak forces a new password at first sign-in.
 - **Unknown fields are rejected with 422.** You can't pass `realmRoles`, `enabled`, `credentials` or `attributes`.
 - The password is never returned, logged or audited.
-- When `email` is present and `temporary_password` is true, the provision API attempts to email the username, temporary password, and portal sign-in URL after creating the account. Keycloak requires a new password at first sign-in. Permanent passwords and accounts without an email are not emailed. The response adds `credential_email_status`: `sent` (SMTP accepted the message), `failed`, or `skipped`. A mail failure leaves the created account intact and returns 201; the Admin should check mail settings and issue a fresh temporary password through Reset password. SMTP acceptance does not prove inbox delivery.
+- The provision API never emails passwords. After creating the account, the Admin must share the username, temporary password, and portal sign-in URL through an approved secure channel. When `temporary_password` is true, Keycloak requires a new password at first sign-in. The response contains no password or email-delivery status.
 
 ---
 
@@ -99,7 +99,7 @@ All five routes use `verify_token` followed by `require_role(["admin"])`.
 | 409 | An Admin tries to reset their own password through this API | `Admins can't reset their own password here; use your Keycloak account page` |
 | 409 | An Admin tries to reset their own authenticator through this API | `Admins can't reset their own authenticator here; ask another Admin` |
 | 409 | Disabling or demoting the last enabled Admin (backstop; not reachable through the normal flow) | `Cannot disable or demote the last enabled Admin` |
-| 422 | Validation: bad username/email/role, short password, unknown field, `{id}` not a UUID, `max` > 200 | FastAPI validation body |
+| 422 | Validation: bad username/email/role, short password, unknown field, `{id}` not a UUID, `max` > 200 | Validation details; password create/reset responses omit submitted values |
 | 422 | Keycloak's password policy rejected the password (create: the user isn't created; reset: nothing changes) | `Password does not meet the Keycloak password policy` |
 | 503 | User management isn't configured on this host | `User management is not configured` |
 | 503 | Keycloak unreachable or answered unexpectedly | `User management service unavailable` |
@@ -114,7 +114,8 @@ Create is all-or-nothing. If setting the password or the role fails after the Ke
 - **Role change** also ends the user's sessions, whenever the role actually changes, so the new role applies at their next sign-in. Their cached tokens are evicted too, so a demoted Admin's existing token stops working on the next request. Re-sending the same role is a no-op and doesn't sign them out.
 - **Enable** doesn't end any session.
 - **Password reset** ends all of the user's sessions and evicts their cached tokens, so the old password and any live session stop working at once. `temporary` defaults to `true` (Keycloak forces a new password at next sign-in). The password is never returned, logged or audited.
-- A successful reset of a temporary password for an account with email also attempts credential email and returns `credential_email_status`. It sends only after session revocation and the final Keycloak read succeed. A mail failure leaves the reset in effect and reports `failed`; reset again with a fresh temporary password to retry.
+- The provision API never emails a reset password. An Admin must share the new password through an approved secure channel. Temporary resets force a password change at next sign-in; the password is not returned by the API.
+- After a successful create or reset, the portal displays the username and password in a transient Admin-only handoff dialog for up to two minutes. Copying is an explicit action. Closing or timing out clears the dialog state; the portal does not persist or email these credentials. After an ambiguous request failure, the open form warns the Admin to verify account/reset state before sharing; closing clears the password.
 - **MFA reset** deletes the user's OTP (authenticator) credentials only; the password and roles are untouched. It ends all of the user's sessions and evicts their cached tokens. Because SEC-03 makes the OTP step REQUIRED, the user is shown the QR enrolment page at their next sign-in. It is idempotent: a user with no authenticator returns 200 and is audited with `removed=0`. If Keycloak fails part-way through deleting several authenticators, the route still tries to end the user's sessions, always evicts their cached tokens, returns 503, and audits `FAILED` with `removed=<n> sessions=ended|not_ended reason=keycloak_partial_remove`; retrying the reset finishes the job.
 - **Self-protection:** hide or disable the Disable and Change-role controls on the signed-in Admin's own row (`User.username === session.user` username). The API enforces this regardless with a 409.
 - **Writes re-check the caller against Keycloak.** A token that still says `admin` is not trusted for create, enable/disable or role changes: the caller must currently be an enabled Admin in Keycloak, or the call returns 403. Writes are also serialized. Together with self-protection, this means the realm can't be left without an enabled Admin through this API, even with several Admins acting at once.
@@ -131,7 +132,6 @@ Every write, including denied attempts (`reason=self`, `reason=actor_not_admin`,
 | `ADMIN_USER_DISABLE` / `ADMIN_USER_ENABLE` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo` |
 | `ADMIN_USER_ROLE_SET` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo role=instructor previous=student` |
 | `ADMIN_USER_PASSWORD_RESET` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo temporary=True` |
-| `ADMIN_USER_CREDENTIAL_EMAIL` | target username | `OK` / `FAILED` | `actor=admin_demo` (no address, password, or SMTP error) |
 | `ADMIN_USER_MFA_RESET` | target username | `OK` / `FAILED` / `DENIED` | `actor=admin_demo removed=1` |
 
 Admins can read the trail in the portal at `/admin/audit`, backed by the read-only `GET /admin/audit-log` (`audit_router.py`; filters `event_type`, `student_id`, `result`; keyset paging with `before_id`). Admin force-destroys are audited too, as `ADMIN_POD_FORCE_DESTROY` (`student_id` = pod owner, `detail` = `actor=… previous_status=…`).
@@ -157,6 +157,6 @@ This creates a confidential, service-account-only client, `cyberrange-user-admin
 
 Until this script has run, `/admin/users*` answers 503 and every other endpoint behaves as before.
 
-To enable temporary-credential email, set `CREDENTIAL_SMTP_HOST`, `CREDENTIAL_SMTP_PORT`, `CREDENTIAL_SMTP_SECURITY` (`starttls` or `ssl`), `CREDENTIAL_SMTP_FROM`, `CREDENTIAL_SMTP_USERNAME`, `CREDENTIAL_SMTP_PASSWORD`, and the HTTPS `PORTAL_PUBLIC_URL` in `~/cyberrange/env/.env` (mode 600). The nonsecret template is `env/oci-12gib.env.example`. The provision API service reads that file as its systemd `EnvironmentFile`; run `systemctl --user restart cyberrange-provision-api.service` after editing it. The SMTP account must be permitted to send from the configured address. Missing settings leave user management available but return `credential_email_status=failed` for a temporary-password account with email. Mail transport has a 5-second network timeout and requires TLS certificate validation. No credentials or SMTP errors are written to the audit trail.
+Admin user creation and password resets do not send email and require no SMTP configuration. Share login details only through an approved secure channel. Passwords are excluded from API responses, audit rows, and application logs.
 
 **Live verification:** `bash ~/cyberrange/deploy/host/verify_adm_user.sh | tee ~/adm-user-evidence.txt`. It checks the authorization boundary, create, role assignment (including rejection of old tokens), disable/enable, Admin self-protection and the audit trail. Output is sanitized: no tokens, passwords or secrets. Each run creates one throwaway `adm_user_test_*` user and leaves it disabled.

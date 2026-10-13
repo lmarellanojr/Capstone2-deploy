@@ -145,10 +145,6 @@ def client(monkeypatch):
     monkeypatch.setattr("pods_router.perform_provisioning", lambda *a, **k: None)
     monkeypatch.setattr("pods_router.perform_destruction", lambda *a, **k: None)
     monkeypatch.setenv("BROWSER_SCORE_SECRET", "sec01-matrix-secret")
-    monkeypatch.setattr(
-        "credential_email.send_temporary_credentials",
-        lambda **kwargs: None,
-    )
     kc = FakeKeycloak()
     kc.add("admin_demo", "admin")
     app.dependency_overrides[keycloak_admin.get_client] = lambda: kc

@@ -100,18 +100,18 @@ assert.equal(sheet.cells[1][15], "", "failed organizer notice remains pending fo
 
 const ownerAction = "Admin → Users and create an enabled Student account"
 assert.match(sent[0].body, /A domain owner will create your account after booking/)
-assert.match(sent[0].body, /separate email with your username and temporary password/)
+assert.match(sent[0].body, /share the login details separately/)
 assert.doesNotMatch(sent[0].body, /credentials were sent|password was emailed/i)
 assert.ok(sent[0].htmlBody.includes(ownerAction) === false, "tester message does not ask tester to use the admin page")
 
 const details = ctx.eventDetails_(created.token)
 const calendarUrl = new URL(ctx.gcalUrl_({ date: "2026-10-19", start: "09:00", end: "11:00" }, created.token))
 assert.match(decodeURIComponent(calendarUrl.searchParams.get("details")), /A domain owner will create your account after booking/)
-assert.match(decodeURIComponent(calendarUrl.searchParams.get("details")), /separate email with your username and temporary password/)
+assert.match(decodeURIComponent(calendarUrl.searchParams.get("details")), /share the login details separately/)
 assert.doesNotMatch(decodeURIComponent(calendarUrl.searchParams.get("details")), /credentials will be emailed/i)
 const ics = ctx.ics_({ date: "2026-10-19", start: "09:00", end: "11:00" }, created.token).replace(/\r\n /g, "")
 assert.match(ics, /A domain owner will create your account after booking/)
-assert.match(ics, /separate email with your username and temporary password/)
+assert.match(ics, /share the login details separately/)
 assert.doesNotMatch(ics, /credentials will be emailed/i)
 assert.match(details, /A domain owner will create your account after booking/)
 
@@ -125,7 +125,7 @@ assert.equal(sheet.cells[1][15], "yes", "successful retry marks the organizer no
 assert.equal(sent.length, 2, "retry delivers the previously failed organizer notice")
 assert.match(sent[1].body, /Action required/)
 assert.match(sent[1].body, /Admin.*Users and create an enabled Student account/)
-assert.match(sent[1].body, /temporary password automatically when you create the account/)
+assert.match(sent[1].body, /they are not emailed automatically/)
 assert.doesNotMatch(sent[1].body, /credential email was sent|password was emailed/i)
 ctx.retryPendingOrganizerNotices()
 assert.equal(sent.length, 2, "sent organizer notices are not duplicated")

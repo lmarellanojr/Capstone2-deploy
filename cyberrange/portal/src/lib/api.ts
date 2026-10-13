@@ -212,8 +212,6 @@ export interface AdminUser {
   role: AppRole | null
   roles: string[]
   created_at: string | null
-  // Present on create/password-reset responses only; "sent" means SMTP accepted it.
-  credential_email_status?: 'sent' | 'failed' | 'skipped'
 }
 
 // users_router.CreateUserRequest (extra="forbid": send exactly these keys).

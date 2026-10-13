@@ -104,10 +104,10 @@ export async function proxyToApi(
     const data = await res.json().catch(() => ({}))
     return NextResponse.json(data, { status: res.status })
   } catch (err) {
-    // Log the real failure (upstream unreachable, DNS, refused, etc.) so a 503
-    // is diagnosable instead of silent. The fallbacks below keep the UI degraded
-    // rather than crashed.
-    console.error(`apiProxy: upstream fetch failed for ${API_URL}${path} (${method}):`, err)
+    // Log only the error type. Exception messages can contain request details,
+    // so never send them to server logs from an authenticated proxy route.
+    const errorType = err instanceof Error ? err.name : "UnknownError"
+    console.error(`apiProxy: upstream fetch failed for ${API_URL}${path} (${method}): ${errorType}`)
     // Fallback mock data when provisioning API is unavailable
     if (path === "/pods" && method === "GET") {
       return NextResponse.json({ pods: [], count: 0 }, { status: 200 })
