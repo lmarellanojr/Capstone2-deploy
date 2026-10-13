@@ -27,7 +27,6 @@ import keycloak_admin
 from infra_health import router as infra_health_router
 from audit_router import router as audit_router
 from onboarding_router import router as onboarding_router
-from booking_router import router as booking_router
 from reaper import pod_ttl_reaper
 from score_poller import score_poller
 from scoring_imports import load_scoring_modules
@@ -59,7 +58,6 @@ app.include_router(users_router)
 app.include_router(infra_health_router)
 app.include_router(audit_router)
 app.include_router(onboarding_router, dependencies=[Depends(require_app_role)])
-app.include_router(booking_router)
 # alerts_endpoint.py keeps its own stub-friendly verify_token_dep, so the
 # app-role guard (SEC-01 #36) is attached here rather than in that module.
 app.include_router(ae.alerts_router, dependencies=[Depends(require_app_role)])

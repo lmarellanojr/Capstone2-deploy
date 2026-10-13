@@ -28,7 +28,7 @@ const DOMAINS = {
 };
 
 const HEADERS = ['Booked at', 'Domain', 'Range URL', 'Slot', 'Date', 'Start', 'End',
-  'Name', 'Email', 'Student/Employee ID', 'Section', 'Notes', 'Status', 'Cancel code', 'Account status', 'Organizer notice sent', 'Account status notified'];
+  'Name', 'Email', 'Student/Employee ID', 'Section', 'Notes', 'Status', 'Cancel code', 'Legacy account setup status', 'Organizer notice sent', 'Legacy account notice status'];
 
 // Only these addresses may book.
 const ALLOWED_EMAIL_DOMAIN = '@mmdc.mcl.edu.ph';
@@ -67,16 +67,11 @@ function doPost(e) {
   // Email after releasing the lock so a slow send doesn't hold up other bookings.
   const notice = result._notice;
   delete result._notice;
-  if (notice && notice.kind === 'New booking') {
-    notice.row.accountStatus = provision_(notice.row);
-    setAccountStatus_(notice.row, notice.row.accountStatus);
-  }
   if (notice) {
     try {
       lock.waitLock(10000);
       if (notify_(notice) && notice.kind === 'New booking') {
         setOrganizerNoticeSent_(notice.row, true);
-        setAccountStatusNotified_(notice.row, notice.row.accountStatus);
       }
     } catch (err) {
       console.error('Booking notification deferred: ' + err);
@@ -123,10 +118,9 @@ function book_(b) {
   };
   sheet_().appendRow([
     new Date().toISOString(), row.domainId, row.url, row.slotId, row.date, row.start, row.end,
-    row.name, row.email, row.sid, row.section, row.notes, 'booked', token, 'pending', '', '',
+    row.name, row.email, row.sid, row.section, row.notes, 'booked', token, '', '', '',
   ]);
   row.sheetRow = sheet_().getLastRow();
-  row.accountStatus = 'pending';
   row.token = token;
   return { ok: true, token, domainId, _notice: { kind: 'New booking', row } };
 }
@@ -152,7 +146,8 @@ function sheet_() {
   } else if (sh.getMaxColumns() < HEADERS.length) {
     sh.insertColumnsAfter(sh.getMaxColumns(), HEADERS.length - sh.getMaxColumns());
   }
-  if (sh.getLastColumn() < HEADERS.length || String(sh.getRange(1, HEADERS.length).getDisplayValue()).trim() === '') {
+  const currentHeaders = sh.getRange(1, 1, 1, HEADERS.length).getDisplayValues()[0];
+  if (JSON.stringify(currentHeaders) !== JSON.stringify(HEADERS)) {
     sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
   }
   return sh;
@@ -165,43 +160,9 @@ function rows_() {
   return sh.getRange(2, 1, n - 1, HEADERS.length).getDisplayValues().map((r, i) => ({
     row: i + 2, bookedAt: r[0], domainId: r[1], url: r[2], slotId: r[3], date: r[4], start: r[5], end: r[6],
     name: r[7], email: r[8], sid: r[9], section: r[10], notes: r[11],
-    status: String(r[12]).trim().toLowerCase(), token: r[13], accountStatus: String(r[14] || '').trim().toLowerCase(),
+    status: String(r[12]).trim().toLowerCase(), token: r[13],
     organizerNoticeSent: String(r[15] || '').trim().toLowerCase() === 'yes',
-    accountStatusNotified: String(r[16] || '').trim().toLowerCase(),
   }));
-}
-
-function provision_(r) {
-  const propertyName = 'BOOKING_PROVISION_SECRET_' + String(r.domainId || '').toUpperCase();
-  const secret = PropertiesService.getScriptProperties().getProperty(propertyName);
-  if (!secret) return 'failed';
-  try {
-    const endpoint = hostOrigin_(r.url) + '/api/booking/provision';
-    const response = UrlFetchApp.fetch(endpoint, {
-      method: 'post', contentType: 'application/json',
-      headers: { 'X-Booking-Provision-Secret': secret },
-      payload: JSON.stringify({ email: r.email }), muteHttpExceptions: true,
-    });
-    if (response.getResponseCode() === 504) return 'unknown';
-    if (response.getResponseCode() !== 200) return 'failed';
-    const data = JSON.parse(response.getContentText());
-    const status = ['created', 'existing', 'pending', 'email_failed', 'needs_review', 'failed'].indexOf(data.status) >= 0 ? data.status : 'unknown';
-    return status === 'created' && data.credential_email_status !== 'sent' ? 'email_failed' : status;
-  } catch (err) {
-    console.error('Booking account provisioning failed: ' + err);
-    return 'unknown';
-  }
-}
-
-function hostOrigin_(url) {
-  const match = String(url || '').match(/^(https:\/\/[^/]+)/i);
-  if (!match) throw new Error('Invalid configured range URL');
-  return match[1];
-}
-
-function setAccountStatus_(r, value) {
-  const row = r.sheetRow || r.row;
-  if (row) sheet_().getRange(row, HEADERS.indexOf('Account status') + 1).setValue(value);
 }
 
 function setOrganizerNoticeSent_(r, sent) {
@@ -209,72 +170,30 @@ function setOrganizerNoticeSent_(r, sent) {
   if (row) sheet_().getRange(row, HEADERS.indexOf('Organizer notice sent') + 1).setValue(sent ? 'yes' : '');
 }
 
-function setAccountStatusNotified_(r, status) {
-  const row = r.sheetRow || r.row;
-  if (row) sheet_().getRange(row, HEADERS.indexOf('Account status notified') + 1).setValue(status || '');
+// Run once after deploying an older version that installed the account
+// reconciliation trigger. Replace it with an email-only retry for organizer
+// notices that could not be delivered during the original booking request.
+function installOrganizerNoticeRetry() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => ['reconcilePendingProvisioning', 'retryPendingOrganizerNotices'].includes(t.getHandlerFunction()))
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('retryPendingOrganizerNotices').timeBased().everyMinutes(5).create();
 }
 
-function installProvisioningReconciliationTrigger() {
-  const handler = 'reconcilePendingProvisioning';
-  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === handler).forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger(handler).timeBased().everyMinutes(15).create();
-}
-
-function reconcilePendingProvisioning() {
+// Re-send only unsent organizer notices; never provisions accounts or repeats
+// tester confirmations. The script lock prevents a retry racing a live booking.
+function retryPendingOrganizerNotices() {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) return;
-  let candidates;
   try {
-    const cutoff = Date.now() - 5 * 60 * 1000;
-    candidates = rows_().filter(r => {
-      if (r.status !== 'booked' || Date.parse(r.bookedAt) >= cutoff) return false;
-      const retryProvisioning = r.accountStatus === 'pending' || r.accountStatus === 'unknown';
-      const retryInitialNotice = !r.organizerNoticeSent;
-      const retryStatusNotice = r.organizerNoticeSent && r.accountStatus &&
-        r.accountStatus !== 'pending' && r.accountStatus !== 'unknown' &&
-        r.accountStatusNotified !== r.accountStatus;
-      return retryProvisioning || retryInitialNotice || retryStatusNotice;
+    lock.waitLock(10000);
+    rows_().filter(r => r.status === 'booked' && !r.organizerNoticeSent).forEach(r => {
+      if (notify_({ kind: 'New booking', row: r })) setOrganizerNoticeSent_(r, true);
     });
+  } catch (err) {
+    console.error('Organizer notice retry deferred: ' + err);
   } finally {
-    lock.releaseLock();
+    try { lock.releaseLock(); } catch (err) {}
   }
-
-  candidates.forEach(candidate => {
-    const retryProvisioning = candidate.accountStatus === 'pending' || candidate.accountStatus === 'unknown';
-    const reconciledStatus = retryProvisioning ? provision_(candidate) : candidate.accountStatus;
-    if (!lock.tryLock(10000)) return;
-    try {
-      const current = rows_().find(r => r.row === candidate.row);
-      if (!current || current.status !== 'booked') return;
-
-      // Older rows already had their current status included in the sent notice.
-      if (current.organizerNoticeSent && !current.accountStatusNotified) {
-        setAccountStatusNotified_(current, current.accountStatus);
-        current.accountStatusNotified = current.accountStatus;
-      }
-
-      if (retryProvisioning && (current.accountStatus === 'pending' || current.accountStatus === 'unknown')) {
-        if (reconciledStatus !== current.accountStatus) {
-          setAccountStatus_(current, reconciledStatus);
-          current.accountStatus = reconciledStatus;
-        }
-      }
-
-      if (!current.organizerNoticeSent) {
-        if (notify_({ kind: 'New booking', row: current })) {
-          setOrganizerNoticeSent_(current, true);
-          setAccountStatusNotified_(current, current.accountStatus);
-        }
-      } else if (current.accountStatus && current.accountStatus !== 'pending' && current.accountStatus !== 'unknown' &&
-          current.accountStatusNotified !== current.accountStatus) {
-        if (notify_({ kind: 'Provisioning update', row: current })) {
-          setAccountStatusNotified_(current, current.accountStatus);
-        }
-      }
-    } finally {
-      lock.releaseLock();
-    }
-  });
 }
 
 // Emails the organizers. A failed email never fails the booking itself.
@@ -282,8 +201,7 @@ function notify_(n) {
   const r = n.row;
   const to = NOTIFY_EMAIL || Session.getEffectiveUser().getEmail();
   if (!to) return false;
-  const update = n.kind === 'Provisioning update';
-  const booked = n.kind === 'New booking' || update;
+  const booked = n.kind === 'New booking';
   const host = host_(r.url);
   const domain = domainLabel_(r.domainId) + ' · ' + host;
   const sheetUrl = SpreadsheetApp.getActiveSpreadsheet().getUrl();
@@ -292,7 +210,9 @@ function notify_(n) {
     ['Session', when_(r)],
     ['Assigned domain', domain],
     ['Login URL', r.url],
-    ['Account setup', accountStatusLabel_(r.accountStatus)],
+    ['Account setup', booked
+      ? 'Domain owner will create the student account and trigger a separate credential email.'
+      : 'Reservation cancelled; no account setup is needed.'],
     ['Cancellation code', r.token || '-'],
     ['Notes', r.notes || '-'],
   ];
@@ -301,23 +221,23 @@ function notify_(n) {
     : 'This seat on ' + domainLabel_(r.domainId) + ' is open again. No action is needed.';
 
   const text = [
-    (update ? 'BOOKING ACCOUNT STATUS UPDATED' : booked ? 'NEW BOOKING' : 'BOOKING CANCELLED'),
+    (booked ? 'NEW BOOKING' : 'BOOKING CANCELLED'),
     '',
     rows.map(x => pad_(x[0] + ':', 19) + x[1]).join('\n'),
     '',
-    (booked ? (r.accountStatus === 'created' || r.accountStatus === 'existing' ? 'Provisioning result: ' : 'Action required: ') : '') + next,
+    (booked ? 'Action required: ' : '') + next,
     '',
     'Booking sheet: ' + sheetUrl,
   ].join('\n');
 
   const html = layout_({
-    badge: update ? ['Account updated', '#0969da', '#ddf4ff'] : booked ? ['New booking', '#1a7f37', '#dafbe1'] : ['Cancelled', '#cf222e', '#ffebe9'],
-    title: update ? 'Tester account status updated' : booked ? 'New session booked' : 'Session cancelled',
+    badge: booked ? ['New booking', '#1a7f37', '#dafbe1'] : ['Cancelled', '#cf222e', '#ffebe9'],
+    title: booked ? 'New session booked' : 'Session cancelled',
     intro: booked
-      ? update ? 'The account status for ' + esc_(r.email) + ' was rechecked.' : esc_(r.email) + ' reserved a seat on the cyber range.'
+      ? esc_(r.email) + ' reserved a seat on the cyber range.'
       : esc_(r.email) + ' cancelled their reservation.',
     rows,
-    callout: booked ? [r.accountStatus === 'created' || r.accountStatus === 'existing' ? 'Provisioning result' : 'Action required', next] : ['Seat released', next],
+    callout: booked ? ['Action required', next] : ['Seat released', next],
     button: ['Open booking sheet', sheetUrl],
     footer: 'Sent automatically by the MMDC Cyber Range booking system. Reply to this email to contact the tester.',
   });
@@ -325,7 +245,7 @@ function notify_(n) {
   try {
     MailApp.sendEmail({
       to,
-      subject: (update ? 'Account status updated: ' : booked ? 'New booking: ' : 'Cancelled: ') + r.email + ' · ' + whenShort_(r) + ' · ' + domainLabel_(r.domainId),
+      subject: (booked ? 'New booking: ' : 'Cancelled: ') + r.email + ' · ' + whenShort_(r) + ' · ' + domainLabel_(r.domainId),
       body: text,
       htmlBody: html,
       name: 'MMDC Cyber Range Booking',
@@ -338,7 +258,7 @@ function notify_(n) {
   }
 }
 
-// Confirmation to the tester after the assigned domain account workflow runs.
+// Confirmation to the tester. The domain owner creates the account after booking.
 function confirm_(r, token) {
   const rows = [
     ['Date', dateLong_(r)],
@@ -365,7 +285,7 @@ function confirm_(r, token) {
     'Using Outlook or Apple Calendar? Open the attached invite.ics file.',
     '',
     'WHAT HAPPENS NEXT',
-    '1. ' + testerAccountStep_(r.accountStatus),
+    '1. ' + testerAccountStep_(),
     '2. Sign in to your assigned domain at your reserved time.',
     '',
     'Because of limited resources, the cyber range runs on four separate domains, and testers are spread across them.',
@@ -388,7 +308,7 @@ function confirm_(r, token) {
     rows,
     calendar: gcalUrl_(r, token),
     steps: [
-      esc_(testerAccountStep_(r.accountStatus)),
+      esc_(testerAccountStep_()),
       'Sign in to your assigned domain at your reserved time.',
     ],
     note: 'Because of limited resources, the cyber range runs on four separate domains, and testers are spread across them.',
@@ -457,35 +377,17 @@ function utcStamp_(r, hm) {
 }
 
 function eventDetails_(token) {
-  return 'Thank you for helping test our capstone project. Your assigned range domain and login credentials will be emailed to you before the session.\n\n' +
+  return 'Thank you for helping test our capstone project. A domain owner will create your account after booking. When it is ready, you will receive a separate email with your username and temporary password.\n\n' +
     'Cancellation code: ' + token + (BOOKING_PAGE_URL ? '\nManage your booking: ' + BOOKING_PAGE_URL : '');
 }
 
-function accountStatusLabel_(status) {
-  const labels = {
-    created: 'New student account created; temporary credential email sent',
-    existing: 'Existing student account reused; password unchanged',
-    email_failed: 'Account created; credential email failed and needs follow-up',
-    needs_review: 'Account needs organizer review',
-    pending: 'Account setup is still processing',
-    unknown: 'Account setup status is unknown; organizer follow-up needed',
-    failed: 'Account setup failed; organizer follow-up needed',
-  };
-  return labels[status] || 'Account setup status unavailable; organizer follow-up needed';
-}
-
 function organizerAction_(r) {
-  if (r.accountStatus === 'created') return 'A temporary password was emailed to ' + r.email + '. No manual credential email is needed.';
-  if (r.accountStatus === 'existing') return 'The existing student account was reused without changing its password. Confirm the tester can sign in.';
-  if (r.accountStatus === 'pending' || r.accountStatus === 'unknown') return 'Account setup is pending or uncertain. Check the Account status cell and follow up with the tester.';
-  return 'Account setup needs follow-up before the session: ' + accountStatusLabel_(r.accountStatus) + '.';
+  return 'Before the session, open Admin → Users and create an enabled Student account for ' + r.email +
+    ' using a temporary password. The range will email the username and temporary password automatically when you create the account.';
 }
 
-function testerAccountStep_(status) {
-  if (status === 'created') return 'A separate email with your username and temporary password was sent to this address. Change it when you first sign in.';
-  if (status === 'existing') return 'Use your existing MMDC Cyber Range account and password. Your password was not changed.';
-  if (status === 'pending' || status === 'unknown') return 'Your account setup is still being checked. The organizers will follow up by email.';
-  return 'The organizers will follow up by email with account access details before your session.';
+function testerAccountStep_() {
+  return 'A domain owner will create your account after booking. When it is ready, you will receive a separate email with your username and temporary password. Change the password when you first sign in.';
 }
 
 function gcalUrl_(r, token) {
