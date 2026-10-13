@@ -606,6 +606,83 @@ check_scenario_8() {
     esac
 }
 
+# Scenario 9: guide fiction fingerprints (section 5 example). Fixed strings only.
+_s9_contains_guide_fiction() {
+    local f="$1"
+    [[ -f "$f" ]] || return 1
+    grep -qiF 'pod-example-meta' "$f" 2>/dev/null && return 0
+    grep -qiF 'case-example' "$f" 2>/dev/null && return 0
+    grep -qF '2026-10-10T06:32:00Z' "$f" 2>/dev/null && return 0
+    return 1
+}
+
+# Scenario 9: unfilled guide skeleton tokens. Case-sensitive uppercase PASTE_* only
+# so English "paste" / "pasted" in honest notes does not false-fail.
+_s9_contains_unfilled_tokens() {
+    local f="$1"
+    [[ -f "$f" ]] || return 1
+    grep -qF 'PASTE_SIEM_TIMESTAMP_Z' "$f" 2>/dev/null && return 0
+    grep -qF 'PASTE SIEM DESCRIPTION' "$f" 2>/dev/null && return 0
+    grep -qF 'PASTE YOUR pod-' "$f" 2>/dev/null && return 0
+    grep -qF 'PASTE FULL SIEM TIMESTAMP' "$f" 2>/dev/null && return 0
+    grep -qF 'PASTE…' "$f" 2>/dev/null && return 0
+    grep -qF 'PASTE...' "$f" 2>/dev/null && return 0
+    grep -qF 'HH:MM' "$f" 2>/dev/null && return 0
+    grep -qE '<(your|actual|observed|SIEM|failed)[^>]*>' "$f" 2>/dev/null && return 0
+    return 1
+}
+
+# Scenario 9 M1: anchored pod-…-meta agent (excludes pod-example-meta).
+_s9_has_lab_meta_agent() {
+    local f="$1" line agent lower
+    [[ -f "$f" ]] || return 1
+    while IFS= read -r line; do
+        [[ "$line" =~ [Aa]gent[^[:alnum:]]+\"?(pod-[A-Za-z0-9._-]+-meta)\"? ]] || continue
+        agent="${BASH_REMATCH[1]}"
+        lower=$(printf '%s' "$agent" | tr '[:upper:]' '[:lower:]')
+        [[ "$lower" == "pod-example-meta" ]] && continue
+        return 0
+    done < "$f"
+    return 1
+}
+
+# Scenario 9 M1 substance: copied …Z timestamp or notes value >= 40 chars.
+_s9_has_triage_substance() {
+    local f="$1" notes
+    [[ -f "$f" ]] || return 1
+    grep -qE '20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z' "$f" 2>/dev/null && return 0
+    # Extract only the "notes":"…" value (not everything after the first colon).
+    notes=$(grep -oiE '"notes"[[:space:]]*:[[:space:]]*"[^"]*"' "$f" 2>/dev/null | head -n1)
+    [[ -n "$notes" ]] || return 1
+    notes=${notes#*\"notes\"}
+    notes=${notes#*:}
+    notes=${notes#*\"}
+    notes=${notes%\"*}
+    notes=${notes//PASTE/}
+    [[ ${#notes} -ge 40 ]] && return 0
+    return 1
+}
+
+# Scenario 9 M3: leftover body after the five guide headings must be >= 120 bytes.
+_s9_report_body_bytes() {
+    local f="$1"
+    [[ -f "$f" ]] || { echo 0; return; }
+    # Strip common heading lines, then count remaining non-whitespace bytes loosely via wc -c on filtered text
+    local body
+    body=$(grep -viE '^[[:space:]]*(Summary|Affected system|Evidence|Interpretation|Recommended response)[[:space:]]*:[[:space:]]*$' "$f" 2>/dev/null | tr -d '[:space:]')
+    echo "${#body}"
+}
+
+# Scenario 9 M3: lightly edited §5 example (need ≥2 of 3 fingerprints).
+_s9_looks_like_example_report() {
+    local f="$1" hits=0
+    [[ -f "$f" ]] || return 1
+    grep -qiF 'pod-example-meta' "$f" 2>/dev/null && hits=$((hits + 1))
+    grep -qiF '10 October 2026' "$f" 2>/dev/null && hits=$((hits + 1))
+    grep -qiF 'nonexistent-user SSH attempt' "$f" 2>/dev/null && hits=$((hits + 1))
+    (( hits >= 2 ))
+}
+
 # Scenario 9 M2 helper: is a full UTC timestamp claimed alongside Rule 5710 in
 # the timeline within +/- $2 minutes of a real sshd invalid-user event?
 #
@@ -707,34 +784,38 @@ check_scenario_9() {
     done
     case $milestone in
         1)
-            # M1: Started triage — structured file with rule/severity fields
-            if [[ -n "$triage" ]] && grep -qiE "alert_id|severity|rule" "$triage" 2>/dev/null; then
+            # M1: field names + real pod-…-meta agent + substance; reject PASTE/fiction.
+            if [[ -n "$triage" ]] \
+                && grep -qiE "alert_id|severity|rule" "$triage" 2>/dev/null \
+                && ! _s9_contains_unfilled_tokens "$triage" \
+                && ! _s9_contains_guide_fiction "$triage" \
+                && _s9_has_lab_meta_agent "$triage" \
+                && _s9_has_triage_substance "$triage"; then
                 echo "PASS"
             else
                 echo "FAIL"
             fi
             ;;
         2)
-            # M2: Timeline / true-positive classification.
-            # The guide's template already has headings, "rule" and "phase" on
-            # every line, so structure alone can't earn the points. One timeline
-            # line must carry rule 5710 AND a full ISO-8601 UTC timestamp within
-            # +/-5 minutes of a real invalid-user SSH event from auth.log. A
-            # fabricated/incorrect or placeholder time must not pass.
-            # There is deliberately NO triage-file shortcut here: a prior branch
-            # passed M2 when alert_triage.json merely contained "real"/"true_positive"
-            # (the guide text "Replace with the real values" trips it), which let a
-            # wrong/placeholder timeline time score. The timeline time check is the
-            # only path.
-            if [[ -n "$timeline" ]] && _s9_timeline_time_is_real "$timeline" 5; then
+            # M2: reject unfilled/fiction tokens first; then real …Z vs auth.log.
+            # No triage-file shortcut (prior branch scored true_positive alone).
+            if [[ -n "$timeline" ]] \
+                && ! _s9_contains_unfilled_tokens "$timeline" \
+                && ! _s9_contains_guide_fiction "$timeline" \
+                && _s9_timeline_time_is_real "$timeline" 5; then
                 echo "PASS"
                 return
             fi
             echo "FAIL"
             ;;
         3)
-            # M3: Incident summary (structured, >200 bytes, key terms)
-            if [[ -n "$report" ]] && [[ $(wc -c < "$report") -gt 200 ]] && grep -qiE "system|attack|alert|recommend" "$report"; then
+            # M3: size + keywords + body substance; reject guide §5 fingerprints.
+            if [[ -n "$report" ]] \
+                && [[ $(wc -c < "$report") -gt 200 ]] \
+                && grep -qiE "system|attack|alert|recommend" "$report" \
+                && ! _s9_contains_guide_fiction "$report" \
+                && ! _s9_looks_like_example_report "$report" \
+                && [[ $(_s9_report_body_bytes "$report") -ge 120 ]]; then
                 echo "PASS"
             else
                 echo "FAIL"

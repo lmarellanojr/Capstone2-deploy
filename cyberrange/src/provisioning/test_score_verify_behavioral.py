@@ -1033,16 +1033,31 @@ class TestScoringChecksDirectBashExecution:
         assert token == "FAIL"
 
     def test_direct_bash_scenario_09_m1_artifact_pass(self):
-        """Scenario 09 M1: alert_triage.json with required fields produces PASS."""
+        """Scenario 09 M1: filled triage with lab agent + …Z substance produces PASS."""
         import subprocess
-        # Create triage artifact in bash /tmp
-        setup_cmd = 'mkdir -p /tmp && printf \'{"alert_id": 1, "severity": "high", "rule": 5710}\' > /tmp/alert_triage.json'
-        cleanup_cmd = 'rm -f /tmp/alert_triage.json'
+        body = (
+            '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+            '"description":"sshd: attempt to login using a non-existent user",'
+            '"agent":"pod-alice-meta","classification":"true_positive",'
+            '"notes":"2026-10-01T14:32:05Z invalid-user SSH; no successful access"}\n'
+        )
+        cleanup_cmd = 'rm -f /tmp/alert_triage.json /home/msfadmin/alert_triage.json /home/student/alert_triage.json'
         try:
-            subprocess.run([_BASH_EXE, "-c", setup_cmd], check=True)
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd], check=False)
+            subprocess.run(
+                [_BASH_EXE, "-c", "mkdir -p /tmp && cat > /tmp/alert_triage.json"],
+                input=body.encode("utf-8"),
+                check=True,
+            )
+            # Confirm Git Bash /tmp received the filled artifact before scoring.
+            shown = subprocess.run(
+                [_BASH_EXE, "-c", "wc -c /tmp/alert_triage.json; grep -F pod-alice-meta /tmp/alert_triage.json"],
+                capture_output=True, text=True, check=True,
+            )
+            assert "pod-alice-meta" in shown.stdout
             rc, token, stderr = self._run_script(9, 1)
-            assert rc == 0
-            assert token == "PASS"
+            assert rc == 0, stderr
+            assert token == "PASS", f"token={token!r} stderr={stderr!r} file={shown.stdout!r}"
         finally:
             subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
 
@@ -1080,29 +1095,25 @@ class TestScoringChecksDirectBashExecution:
 
     @classmethod
     def _guide_heredoc(cls, target: str) -> str:
-        """Extract the quoted reference structure for a guide artifact."""
+        """Extract the pasteable fenced skeleton for a guide artifact."""
         text = cls._S09_GUIDE.read_text(encoding="utf-8")
         target_name = Path(target).name
         task_heading = {
             "incident_timeline.md": "### Task 2:",
             "alert_triage.json": "### Task 1:",
         }[target_name]
+        fence_lang = {
+            "incident_timeline.md": "```text",
+            "alert_triage.json": "```json",
+        }[target_name]
         task_start = text.index(task_heading)
-        section = text.index("reference structure", task_start)
-        reference_lines = []
-        for line in text[section:].splitlines()[1:]:
-            stripped = line.strip()
-            if not stripped.startswith("> "):
-                if reference_lines:
-                    break
-                continue
-            value = stripped[2:].rstrip("\\").strip()
-            if len(value) >= 2 and value[0] == "`" and value[-1] == "`":
-                value = value[1:-1]
-            reference_lines.append(value)
-        if not reference_lines:
-            raise ValueError(f"Could not extract {target_name} reference structure from the Scenario 3 guide")
-        return "\n".join(reference_lines) + "\n"
+        fence_start = text.index(fence_lang, task_start)
+        body_start = fence_start + len(fence_lang)
+        fence_end = text.index("```", body_start)
+        body = text[body_start:fence_end].strip("\n")
+        if not body:
+            raise ValueError(f"Could not extract {target_name} paste skeleton from the Scenario 3 guide")
+        return body + "\n"
 
     def _score_s09_m2(self, files: Dict[str, str], authlog: str | None = None) -> str:
         # Write through bash, not pathlib: on Windows, Python's "/tmp" is C:\tmp
@@ -1130,18 +1141,22 @@ class TestScoringChecksDirectBashExecution:
 
     def test_direct_bash_scenario_09_m2_guide_timeline_template_fails(self):
         template = self._guide_heredoc("/home/msfadmin/incident_timeline.md")
-        assert "<actual YYYY-MM-DDTHH:MM:SSZ>" in template  # guard: the test reads the real template
+        assert "PASTE_SIEM_TIMESTAMP_Z" in template  # guard: the test reads the real template
         assert self._score_s09_m2({"incident_timeline.md": template}) == "FAIL"
 
     def test_direct_bash_scenario_09_m2_filled_in_guide_timeline_passes(self):
-        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("<actual YYYY-MM-DDTHH:MM:SSZ>", "2026-10-01T14:32:05Z")
+        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace(
+            "PASTE_SIEM_TIMESTAMP_Z", "2026-10-01T14:32:05Z"
+        )
         assert self._score_s09_m2(
             {"incident_timeline.md": filled}, authlog=self._S09_AUTHLOG_1432
         ) == "PASS"
 
     def test_direct_bash_scenario_09_m2_wrong_time_fails(self):
         """A well-formed but incorrect time (no matching 5710 event) must FAIL."""
-        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace("<actual YYYY-MM-DDTHH:MM:SSZ>", "2026-10-01T00:00:00Z")
+        filled = self._guide_heredoc("/home/msfadmin/incident_timeline.md").replace(
+            "PASTE_SIEM_TIMESTAMP_Z", "2026-10-01T00:00:00Z"
+        )
         assert self._score_s09_m2(
             {"incident_timeline.md": filled}, authlog=self._S09_AUTHLOG_1432
         ) == "FAIL"
@@ -1151,11 +1166,10 @@ class TestScoringChecksDirectBashExecution:
         assert self._score_s09_m2({"incident_timeline.md": body}) == "FAIL"
 
     def test_direct_bash_scenario_09_m2_triage_template_marked_tp_fails(self):
-        """Only flipping classification in the unedited M1 template is not triage."""
+        """Unedited M1 PASTE skeleton alone must not score M2."""
         template = self._guide_heredoc("/home/msfadmin/alert_triage.json")
-        flipped = template.replace('"<your assessment>"', '"true_positive"')
-        assert flipped != template
-        assert self._score_s09_m2({"alert_triage.json": flipped}) == "FAIL"
+        assert "PASTE SIEM DESCRIPTION" in template
+        assert self._score_s09_m2({"alert_triage.json": template}) == "FAIL"
 
     def test_direct_bash_scenario_09_m2_triage_tp_alone_no_longer_passes(self):
         # Reviewer fix (PR #141): a triage file alone -- even a real-looking
@@ -1177,7 +1191,7 @@ class TestScoringChecksDirectBashExecution:
         # Even with a real-looking triage file present, a placeholder/fabricated
         # timeline time must FAIL -- there is no triage shortcut around the time check.
         triage = json.dumps({"rule": "5710", "classification": "true_positive", "notes": "real event"})
-        for bad_time in ("<actual YYYY-MM-DDTHH:MM:SSZ>", "2026-10-02T14:32:05Z"):
+        for bad_time in ("PASTE_SIEM_TIMESTAMP_Z", "2026-10-02T14:32:05Z", "2026-10-10T06:32:00Z"):
             body = (
                 "# Incident timeline\n"
                 f"1. phase: initial_access_attempt, timestamp: {bad_time}, rule: 5710, true_positive\n"

@@ -38,11 +38,11 @@ Save files on **Target: meta (lab)** as `msfadmin`. **JSON** is structured text 
 
 Files on meta score automatically; there is no flag submission. A score confirms a limited check, so still review your evidence.
 
-- **Task 1:** Needs the field names (`alert_id`, `severity`, or `rule`). Still fill all seven fields with real values from your alert.
-- **Task 2:** Needs rule **5710** and the full SIEM timestamp ending in `Z` on the same timeline line, matching your invalid-user SSH event (±5 minutes). Do not invent or reuse a time. Literal `HH:MM` placeholders fail.
-- **Task 3:** Needs more than **200 bytes** plus a real response. Headings such as **Affected system** or **Recommended response** also supply a recognized checker term.
+- **Task 1:** Needs the field names, a real `pod-…-meta` agent name (not the fictional example), and either the copied `…Z` timestamp in your notes or substantial notes. Unedited `PASTE…` text does **not** score.
+- **Task 2:** Needs rule **5710** and the same full `…Z` timestamp shown in the SIEM Time column (click the event to copy), matching your invalid-user SSH event (±5 minutes). Do not invent or reuse a time. `PASTE_SIEM_TIMESTAMP_Z`, literal `HH:MM`, and the fictional Example timestamp do **not** score.
+- **Task 3:** Needs more than **200 bytes** of your own findings plus a real response. Empty heading-only skeletons and the fictional Example report do **not** score.
 
-Timezone and ISO detail live in Task 2 Troubleshooting if you need them.
+The SIEM Time column shows the exact `YYYY-MM-DDTHH:MM:SSZ` value you paste — type or copy that string, not a locale clock like `10/13/2026, 18:39:25`.
 
 ## 3. Set up your lab
 
@@ -205,7 +205,7 @@ wc -c /home/msfadmin/incident_report.txt
 
 ## 5. Example only: how evidence moves between files
 
-**Example only — do not submit unchanged.** This entire chain is fictional; use your own observed event and host.
+**Example only — do not submit unchanged.** This entire chain is fictional (`pod-example-meta`, `case-example`, `2026-10-10T06:32:00Z`). Scorers reject those fingerprints. Use your own observed event and host.
 
 1. Fictional alert: `2026-10-10T06:32:00Z`, rule `5710`, level `5`, agent `pod-example-meta`, description `sshd: attempt to login using a non-existent user`.
 2. Matching JSON excerpt: `"alert_id": "case-example", "severity": "medium", "rule": "5710", "agent": "pod-example-meta", "classification": "true_positive", "notes": "2026-10-10T06:32:00Z: invalid-user login attempt; no successful access established."`

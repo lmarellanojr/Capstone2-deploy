@@ -70,22 +70,20 @@ export const SIEM_TD = {
   desc: 'px-2 py-1.5 whitespace-normal min-w-[12rem]',
 }
 
-export function formatAlertTime(timestamp: string): string {
-  const normalized = timestamp.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
-  const d = new Date(normalized)
-  return Number.isNaN(d.getTime())
-    ? timestamp
-    : `${d.toLocaleString(undefined, {
-        year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
-        timeZone: 'UTC', hourCycle: 'h23',
-      })} UTC`
-}
-
-/** Canonical timestamp students can paste into the Scenario 3 timeline. */
+/**
+ * Canonical UTC timestamp for Scenario 3: display, click-to-copy, and Task 2
+ * scoring all use this same YYYY-MM-DDTHH:MM:SSZ shape (whole seconds).
+ */
 export function formatAlertTimestampUtc(timestamp: string): string {
   const normalized = timestamp.replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
   const date = new Date(normalized)
-  return Number.isNaN(date.getTime()) ? timestamp : date.toISOString().replace(/\.000Z$/, 'Z')
+  if (Number.isNaN(date.getTime())) return timestamp
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
+/** Same string as formatAlertTimestampUtc so learners can type what they see. */
+export function formatAlertTime(timestamp: string): string {
+  return formatAlertTimestampUtc(timestamp)
 }
 
 export function alertsQuery(only5710: boolean): { limit: number; rule_id?: string } {
