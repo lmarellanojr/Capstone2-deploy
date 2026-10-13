@@ -53,7 +53,9 @@ export function useAdminUsers() {
   const runWrite = async (userId: string, kind: 'enabled' | 'role' | 'password' | 'mfa', call: () => Promise<AdminUser>) => {
     setPending((p) => ({ ...p, [userId]: kind }))
     try {
-      replace(await call())
+      const updated = await call()
+      replace(updated)
+      return updated
     } catch (err) {
       throw new Error(backendDetail(err))
     } finally {
