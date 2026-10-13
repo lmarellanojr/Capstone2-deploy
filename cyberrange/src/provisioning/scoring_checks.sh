@@ -632,15 +632,20 @@ _s9_contains_unfilled_tokens() {
     return 1
 }
 
-# Scenario 9 M1: anchored pod-…-meta agent (excludes pod-example-meta).
+# Scenario 9 M1: agent must match this pod (hostname / Wazuh name).
+# SCORING_S9_EXPECTED_AGENT is a test seam only (same idea as S9_AUTHLOG / S9_NOW).
 _s9_has_lab_meta_agent() {
-    local f="$1" line agent lower
+    local f="$1" line agent lower expected expected_lower
     [[ -f "$f" ]] || return 1
+    expected="${SCORING_S9_EXPECTED_AGENT:-$(hostname 2>/dev/null)}"
+    [[ -n "$expected" ]] || return 1
+    expected_lower=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
     while IFS= read -r line; do
-        [[ "$line" =~ [Aa]gent[^[:alnum:]]+\"?(pod-[A-Za-z0-9._-]+-meta)\"? ]] || continue
+        # LXD names: letters, digits, hyphens only — no '.' / '_' (blocks pod-...-meta).
+        [[ "$line" =~ [Aa]gent[^[:alnum:]]+\"?(pod-[A-Za-z0-9][A-Za-z0-9-]*-meta)\"? ]] || continue
         agent="${BASH_REMATCH[1]}"
         lower=$(printf '%s' "$agent" | tr '[:upper:]' '[:lower:]')
-        [[ "$lower" == "pod-example-meta" ]] && continue
+        [[ "$lower" == "$expected_lower" ]] || continue
         return 0
     done < "$f"
     return 1

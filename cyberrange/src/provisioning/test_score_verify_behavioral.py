@@ -1055,7 +1055,9 @@ class TestScoringChecksDirectBashExecution:
                 capture_output=True, text=True, check=True,
             )
             assert "pod-alice-meta" in shown.stdout
-            rc, token, stderr = self._run_script(9, 1)
+            rc, token, stderr = self._run_script(
+                9, 1, env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}
+            )
             assert rc == 0, stderr
             assert token == "PASS", f"token={token!r} stderr={stderr!r} file={shown.stdout!r}"
         finally:

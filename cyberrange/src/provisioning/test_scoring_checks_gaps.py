@@ -234,7 +234,7 @@ def test_s9_m1_filled_real_values_pass(tmp_path):
     )
     f = _triage(body)
     try:
-        assert run(tmp_path, 9, 1) == "PASS"
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-student-meta"}) == "PASS"
     finally:
         _bash_rm(f)
 
@@ -247,7 +247,7 @@ def test_s9_m1_example_agent_fails(tmp_path):
     )
     f = _triage(body)
     try:
-        assert run(tmp_path, 9, 1) == "FAIL"
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
     finally:
         _bash_rm(f)
 
@@ -260,7 +260,33 @@ def test_s9_m1_junk_agent_without_substance_fails(tmp_path):
     )
     f = _triage(body)
     try:
-        assert run(tmp_path, 9, 1) == "FAIL"
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_ascii_dots_agent_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd non-existent user","agent":"pod-...-meta",'
+        '"classification":"true_positive","notes":"2026-10-01T14:32:05Z lab attempt"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_other_pod_agent_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd non-existent user","agent":"pod-bob-meta",'
+        '"classification":"true_positive","notes":"2026-10-01T14:32:05Z lab attempt"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
     finally:
         _bash_rm(f)
 

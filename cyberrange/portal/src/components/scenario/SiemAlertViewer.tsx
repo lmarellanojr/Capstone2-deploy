@@ -142,7 +142,7 @@ export function SiemAlertViewer({
 
   const status = fetchedAt && (
     <span className="text-xs text-text-muted" data-testid="siem-status">
-      Updated {fetchedAt.toLocaleTimeString()} ·{' '}
+      Updated {fetchedAt.toLocaleTimeString()} (your local time) ·{' '}
       {paused ? 'auto-refresh paused (tab hidden)' : `auto-refresh every ${POLL_MS / 1000}s`}
       {' · '}
       Times are UTC (…Z). Click an event to copy that exact timestamp for Task 2.
