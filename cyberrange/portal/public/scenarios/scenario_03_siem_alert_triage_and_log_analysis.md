@@ -4,6 +4,16 @@
 
 Defensive · 3 scored tasks · 225 points · required preparation is not scored.
 
+## Fast path (do this first)
+
+1. Start the lab and wait until status is **ACTIVE**.
+2. On **Kali Linux (CLI)**, run one failed SSH login (Task 0).
+3. Select **Open SIEM** → your `pod-…-meta` agent → **Rule 5710 only**. Click the individual event to copy its timestamp and rule.
+4. On **Target: meta (lab)**, paste and edit the three file skeletons (Tasks 1–3). Replace every `PASTE…` value with what you observed.
+5. Confirm the three scored tasks are credited, then **End Session** when finished.
+
+> **Session and score:** This lab runs for **45 minutes**. When time ends, progress is saved. Start the lab again (or **Start a new attempt**) for a fresh session. Credit already earned for this scenario stays unless you use **Reset score**. Reset score clears this scenario's checks only; it does not rebuild SIEM. If the SIEM pane is empty after a reset, start a new lab.
+
 ## 0. Before you start: the big picture
 
 Follow **Kali Linux (CLI): generate activity → Open SIEM: inspect alerts → Target: meta (lab): save findings**. No earlier scenario is required.
@@ -28,9 +38,11 @@ Save files on **Target: meta (lab)** as `msfadmin`. **JSON** is structured text 
 
 Files on meta score automatically; there is no flag submission. A score confirms a limited check, so still review your evidence.
 
-- Task 1 looks for `alert_id`, `severity`, or `rule` in the triage file. It does not validate JSON syntax, require all fields, or enforce severity/classification enums. Complete all fields accurately for the exercise.
-- Task 2 requires rule `5710` and the complete ISO-8601 UTC timestamp (ending in `Z`) for a genuine invalid-user SSH event in meta's authentication log. The checker allows five minutes of tolerance around that event; it does not accept a time from a different date or timezone. Use each observed event's own timestamp; do not invent or reuse a time. If you started a timeline in an earlier session using only `HH:MM`, replace it with the full timestamp copied from SIEM.
-- Task 3 requires **more than 200 bytes**, plus at least one of `system`, `attack`, `alert`, or `recommend` (case-insensitive). More than 200 English characters satisfies the size threshold. Response actions are choices justified by evidence, not mandatory keywords.
+- **Task 1:** Needs the field names (`alert_id`, `severity`, or `rule`). Still fill all seven fields with real values from your alert.
+- **Task 2:** Needs rule **5710** and the full SIEM timestamp ending in `Z` on the same timeline line, matching your invalid-user SSH event (±5 minutes). Do not invent or reuse a time. Literal `HH:MM` placeholders fail.
+- **Task 3:** Needs more than **200 bytes** plus a real response. Headings such as **Affected system** or **Recommended response** also supply a recognized checker term.
+
+Timezone and ISO detail live in Task 2 Troubleshooting if you need them.
 
 ## 3. Set up your lab
 
@@ -53,21 +65,22 @@ ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 nosuchuser@$TARGET_META exit
 ```
 
 2. If asked for a password, type a deliberately incorrect practice value such as `not-a-real-password` and press Enter. Nothing appears as you type. Do not enter a personal password. If asked again, press **Ctrl+C**; you are generating an invalid-user attempt, not trying to log in successfully.
-3. Select **Open SIEM**, your meta **Agent**, and **Rule 5710 only**. If no row appears, check again after a minute or two. This is a troubleshooting interval, not a guaranteed delivery time.
-4. Expand the rule group and record an individual event's timestamp, rule, agent, level, and description. Clicking an event copies its timestamp and rule ID.
+3. Select **Open SIEM**, your meta **Agent**, and **Rule 5710 only**.
+4. Expand the rule group and click the individual event once to copy its timestamp and rule ID. Also note agent, level, and description.
 
 **Expected result:** the SSH login is denied; rule `5710` describes an attempt to log in using a nonexistent user. Connection refused or a timeout is a connectivity problem, not the required authentication evidence.
 
 **Done when:** you have an observed invalid-user event for your own meta host and its real timestamp. Continue to Task 1; preparation has no points.
 
-> **Troubleshooting:** Confirm **ACTIVE**, the assigned meta address, and your filters. Use **Clear filters** if needed, then select your agent again. On the meta shell, `sudo grep "Invalid user" /var/log/auth.log` can show the underlying event. Use your attempt's line, not a planted `flag-m1-…` line. Current provisioning grants passwordless sudo; if it unexpectedly asks for a password, ask your instructor to check the lab access configuration.
-
-**Optional scan activity — Kali shell:** these scans are not required for the primary alert. Nmap often creates no Wazuh row. Include a scan in your deliverables only if you observed and recorded it separately.
-
-```bash
-nmap -sn $TARGET_META
-nmap -F $TARGET_META
-```
+> **If SIEM is empty:**
+> 1. Confirm status is **ACTIVE** and your meta agent filter is selected (use **Clear filters**, then select your agent again).
+> 2. Wait for one 15-second refresh.
+> 3. If still empty, **End Session** and start the lab again (new agent).
+> 4. If still empty after a fresh lab, ask your facilitator — treat that as a platform issue, not a content hint.
+>
+> Do **not** spam SSH. One invalid-user attempt can produce rule **5710**; many repeats can produce **5712**, which a 5710-only filter hides.
+>
+> On the meta shell, `sudo grep "Invalid user" /var/log/auth.log` can show the underlying event. Use your attempt's line, not a planted `flag-m1-…` line. Current provisioning grants passwordless sudo; if it unexpectedly asks for a password, ask your instructor to check the lab access configuration.
 
 ### Task 1: Open a triage record
 
@@ -93,17 +106,19 @@ nmap -F $TARGET_META
 vi /home/msfadmin/alert_triage.json
 ```
 
-3. Press **i** for insert mode. Type your record using the reference structure below. **Replace every angle-bracket placeholder before saving.** Keep quotes around text, commas between fields, and no comma after the last field. This is reference text, not a command or completed answer:
+3. Press **i** for insert mode. Paste the skeleton below, then change only the `PASTE…` lines to your observed values. Keep quotes around text, commas between fields, and no comma after the last field:
 
-> `{`\
-> `"alert_id": "<your case reference>",`\
-> `"severity": "<observed level or portal band>",`\
-> `"rule": "<observed rule>",`\
-> `"description": "<observed description>",`\
-> `"agent": "<actual agent>",`\
-> `"classification": "<your assessment>",`\
-> `"notes": "<timestamp, timezone, evidence and uncertainty>"`\
-> `}`
+```json
+{
+  "alert_id": "case-1",
+  "severity": "medium",
+  "rule": "5710",
+  "description": "PASTE SIEM DESCRIPTION",
+  "agent": "PASTE YOUR pod-…-meta NAME",
+  "classification": "true_positive",
+  "notes": "PASTE FULL SIEM TIMESTAMP ENDING IN Z — invalid-user SSH; no successful access established"
+}
+```
 
 4. Press **Esc**, type **`:wq`**, and press Enter to save and return to the shell. To edit again, rerun the opening command; use arrow keys to move, **i** to insert, and **Esc** then **`:wq`** to save. To abandon unsaved edits, use **Esc** then **`:q!`**.
 5. In the meta shell, inspect the saved file:
@@ -112,7 +127,7 @@ vi /home/msfadmin/alert_triage.json
 cat /home/msfadmin/alert_triage.json
 ```
 
-**Expected result:** your event's values appear with no placeholders. Check matching braces and quotes and correct commas. If `python3` is installed, optional meta-shell command `python3 -m json.tool /home/msfadmin/alert_triage.json` checks syntax; it does not validate your evidence.
+**Expected result:** your event's values appear with no `PASTE…` text left. Check matching braces and quotes and correct commas. If `python3` is installed, optional meta-shell command `python3 -m json.tool /home/msfadmin/alert_triage.json` checks syntax; it does not validate your evidence.
 
 **Done when:** all seven fields describe your actual alert and **Open a triage record** is credited. The checker is less strict than this learning requirement.
 
@@ -126,30 +141,32 @@ cat /home/msfadmin/alert_triage.json
 
 **Where to work:** **Open SIEM** for evidence; **Target: meta (lab)** for `/home/msfadmin/incident_timeline.md`.
 
-1. Expand Rule 5710 and click the individual failed-login event to copy its timestamp and rule. SIEM timestamps are shown in UTC; use the copied full ISO-8601 UTC timestamp ending in `Z`. **Each additional event needs its own observed timestamp.**
+1. Expand Rule 5710 and click the individual failed-login event once. Paste that full `…Z` timestamp into the timeline line below. Do not type `HH:MM` by hand.
 2. In the meta shell, open:
 
 ```bash
 vi /home/msfadmin/incident_timeline.md
 ```
 
-3. Press **i**. Write a heading and one line per observed event, earliest first. Include phase, rule, the copied UTC timestamp, classification, and a brief evidence statement. Replace all placeholders in this reference structure and remove unused rows:
+3. Press **i**. Paste this skeleton, then replace only `PASTE_SIEM_TIMESTAMP_Z`:
 
-> `# Incident timeline`\
-> `1. phase: initial_access_attempt, rule: 5710, timestamp: <actual YYYY-MM-DDTHH:MM:SSZ>, classification: true_positive — <failed-login evidence>`
+```text
+# Incident timeline
+1. phase: initial_access_attempt, rule: 5710, timestamp: PASTE_SIEM_TIMESTAMP_Z, classification: true_positive — invalid-user SSH from Kali
+```
 
-4. Include the failed-login event even if it is the only observed event. Do not reuse its time for unrelated events. An accurate configuration alert may be unrelated; call it a false positive only if evidence shows the detection is incorrect. A failed login does not prove compromise.
+4. Include the failed-login event even if it is the only observed event. **Each additional event needs its own observed timestamp** — do not reuse the 5710 time for unrelated events. An accurate configuration alert may be unrelated; call it a false positive only if evidence shows the detection is incorrect. A failed login does not prove compromise.
 5. Press **Esc**, type **`:wq`**, and press Enter. In the meta shell, inspect:
 
 ```bash
 cat /home/msfadmin/incident_timeline.md
 ```
 
-**Expected result:** every line has a real UTC timestamp and supported interpretation. No angle-bracket placeholders, unused phases, or invented events remain.
+**Expected result:** every line has a real UTC timestamp and supported interpretation. No `PASTE…` text, literal `HH:MM`, unused phases, or invented events remain.
 
 **Done when:** the timeline includes your observed failed-login event with its real rule and time, events are ordered correctly, and **Build the timeline** is credited.
 
-> **Troubleshooting:** Copy the individual rule-5710 event timestamp and check the meta path. SIEM displays UTC, and scoring checks the complete date and time against the failed-login event.
+> **Troubleshooting:** Copy the individual rule-5710 event timestamp and check the meta path. SIEM displays UTC (`…Z`). Scoring matches the claimed clock time to a genuine invalid-user line in meta's auth log (±5 minutes, with whole-hour timezone tolerance). Prefer the copied SIEM timestamp.
 
 ### Task 3: Write the incident report
 
@@ -164,8 +181,17 @@ cat /home/msfadmin/incident_timeline.md
 vi /home/msfadmin/incident_report.txt
 ```
 
-3. Press **i**. Write **Summary**, **Affected system**, **Evidence**, **Interpretation**, and **Recommended response** headings, filling each with your own findings. Cite real agent, rule, timestamp, and timezone. State whether successful access was observed, unknown, or unsupported by the evidence.
-4. Justify recommendations. Repeated hostile attempts may support blocking a source; exposed credentials may support rotation; evidence of compromise may support isolation. Tune noisy detections after checking accuracy. A single intentional lab login failure does not automatically justify all these actions.
+3. Press **i**. Paste this skeleton and fill each heading with your own findings (agent, rule **5710**, and the same timestamp). State whether successful access was observed, unknown, or unsupported by the evidence:
+
+```text
+Summary:
+Affected system:
+Evidence:
+Interpretation:
+Recommended response:
+```
+
+4. Justify recommendations briefly. Repeated hostile attempts may support blocking a source; exposed credentials may support rotation; evidence of compromise may support isolation. A single intentional lab login failure does **not** automatically justify blocking, rotation, or isolation — keep 5710 enabled and monitor for repetition.
 5. Press **Esc**, type **`:wq`**, and press Enter. In the meta shell, read and measure the report:
 
 ```bash
@@ -173,9 +199,9 @@ cat /home/msfadmin/incident_report.txt
 wc -c /home/msfadmin/incident_report.txt
 ```
 
-**Expected result:** a clear report connects facts to interpretation and response. `wc -c` prints byte count and path; the count must exceed 200. An informative heading such as **Affected system** or **Recommended response** also supplies a recognized checker term.
+**Expected result:** a clear report connects facts to interpretation and response. `wc -c` prints byte count and path; the count must exceed 200. Leave no unfinished `PASTE…` or empty headings.
 
-**Done when:** the report is accurate, has no unfinished template text, exceeds 200 bytes, and **Write the incident report** is credited. All three scored tasks complete the scenario.
+**Done when:** the report is accurate, exceeds 200 bytes, and **Write the incident report** is credited. All three scored tasks complete the scenario.
 
 ## 5. Example only: how evidence moves between files
 
@@ -189,3 +215,10 @@ wc -c /home/msfadmin/incident_report.txt
 ## 6. SOC playground (optional, not scored)
 
 After the required work, expand other groups and inspect **Raw events**. Compare configuration detections with authentication events, explaining whether each is accurate, related, suspicious, or evidence of compromise. Repeating your practice SSH attempt can show changes in **Count**. Keep each event's own timestamp; do not call every unrelated alert a false positive.
+
+**Optional scan activity — Kali shell only after Tasks 0–3:** these scans are not required and often create no Wazuh row. Include a scan in your deliverables only if you observed and recorded it separately.
+
+```bash
+nmap -sn $TARGET_META
+nmap -F $TARGET_META
+```

@@ -33,10 +33,11 @@ const TIPS: Record<string, { title: string; body: ReactNode }> = {
     title: "Generate activity first, then triage",
     body: (
       <>
-        Generate a failed SSH login from <strong>Kali</strong>, then click <strong>Open SIEM</strong>
-        and inspect your own meta agent's event. Write your scored files on the <strong>meta</strong> tab (
-        <code className="bg-white/70 px-1 rounded">alert_triage.json</code>, timeline, report) as the
-        guide describes.
+        Follow the guide <strong>Fast path</strong>: one failed SSH from <strong>Kali</strong>, click{" "}
+        <strong>Open SIEM</strong> and your meta agent&apos;s rule 5710 event, then paste the guide
+        skeletons on the <strong>meta</strong> tab (
+        <code className="bg-white/70 px-1 rounded">alert_triage.json</code>, timeline, report). Replace
+        every <code className="bg-white/70 px-1 rounded">PASTE…</code> value with what you observed.
       </>
     ),
   },
