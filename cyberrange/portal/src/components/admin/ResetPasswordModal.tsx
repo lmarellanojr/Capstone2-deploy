@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { Copy, Eye, EyeOff, KeyRound, Wand2 } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Wand2 } from "lucide-react";
 import { Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
-import { copyToClipboard } from "@/lib/copyToClipboard";
 import { generatePassword } from "@/lib/generatePassword";
 import { PASSWORD_MAX, PASSWORD_MIN } from "@/lib/adminUserValidation";
 import type { AdminUser } from "@/lib/api";
@@ -23,7 +22,6 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -33,7 +31,6 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
     setSaving(false);
     setError(null);
     setTouched(false);
-    setCopied(false);
   }, [user]);
 
   const lengthError =
@@ -50,15 +47,23 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
     setError(null);
     try {
       await onReset(user, password, temporary);
+      setPassword("");
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't reset the password.");
+      const message = err instanceof Error ? err.message : "Couldn't reset the password.";
+      setError(`${message} Verify whether the reset completed before sharing this password. For uncertain results, verify the account or issue a fresh reset first. It stays here until you close this form.`);
       setSaving(false);
     }
   };
 
+  const closeModal = () => {
+    setPassword("");
+    setError(null);
+    onClose();
+  };
+
   return (
-    <Modal isOpen={user !== null} onClose={saving ? () => {} : onClose}>
+    <Modal isOpen={user !== null} onClose={saving ? () => {} : closeModal}>
       {user && (
         <>
           <ModalHeader title={`Reset password for ${user.username}`} />
@@ -78,11 +83,10 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                     id={`${uid}-pw`}
                     data-autofocus
                     type={show ? "text" : "password"}
-                    autoComplete="new-password"
+                    autoComplete="off"
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value);
-                      setCopied(false);
                     }}
                     onBlur={() => setTouched(true)}
                     aria-invalid={touched && !!lengthError}
@@ -106,7 +110,6 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                     setPassword(generatePassword());
                     setShow(true);
                     setTouched(false);
-                    setCopied(false);
                   }}
                 >
                   <Wand2 size={15} aria-hidden="true" />
@@ -116,16 +119,6 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
               <p id={`${uid}-pw-msg`} className={`mt-1 text-xs ${touched && lengthError ? "text-danger" : "text-text-muted"}`}>
                 {touched && lengthError ? lengthError : "8–128 characters. No English words anywhere in the password, including a, i and o. Not a common password, the username, the email, or one of the last 3 passwords."}
               </p>
-              {password && !lengthError && (
-                <button
-                  type="button"
-                  onClick={async () => setCopied(await copyToClipboard(password))}
-                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline rounded focus-ring"
-                >
-                  <Copy size={12} aria-hidden="true" />
-                  {copied ? "Copied" : "Copy password to give to the user"}
-                </button>
-              )}
             </div>
 
             <label className="flex items-start gap-2 text-sm text-text-secondary cursor-pointer">
@@ -140,11 +133,9 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                 <span className="text-text-muted">(recommended)</span>
               </span>
             </label>
-            {user.email && (
-              <p className="text-xs text-text-muted">
-                A temporary password will be emailed to {user.email} when mail is configured.
-              </p>
-            )}
+            <p className="text-xs text-text-muted">
+              Passwords are never emailed. Share the new login details through your approved secure channel.
+            </p>
 
             {error && (
               <div role="alert" className="alert-error p-3 text-sm">
@@ -153,7 +144,7 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
             )}
           </ModalBody>
           <ModalFooter>
-            <Button variant="secondary" onClick={onClose} disabled={saving}>
+            <Button variant="secondary" onClick={closeModal} disabled={saving}>
               Cancel
             </Button>
             <Button variant="primary" onClick={() => void submit()} loading={saving}>

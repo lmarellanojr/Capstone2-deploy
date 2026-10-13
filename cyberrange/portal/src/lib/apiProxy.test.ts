@@ -61,9 +61,13 @@ describe("proxyToApi", () => {
 
   it("does not invent success when the backend is unreachable on a protected write", async () => {
     mockedSession.mockResolvedValue({ accessToken: "t" } as never)
-    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"))
+    const log = jest.spyOn(console, "error").mockImplementation(() => {})
+    fetchMock.mockRejectedValueOnce(new Error("request password must stay secret"))
     const res = await proxyToApi(req("/api/admin/pods/1/force-destroy"), "/admin/pods/1/force-destroy", "DELETE")
     expect(res.status).toBe(503)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Error"))
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("request password must stay secret"))
+    log.mockRestore()
   })
 
   it("raw mode passes a CSV body and its download headers through untouched", async () => {

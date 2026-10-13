@@ -30,7 +30,7 @@ interface CreateUserModalProps {
   onClose: () => void;
   /** Rejects with a user-safe Error (e.g. "Username or email already exists"). */
   onCreate: (input: CreateUserInput) => Promise<AdminUser>;
-  onCreated: (user: AdminUser) => void;
+  onCreated: (user: AdminUser, password: string, temporary: boolean) => void;
 }
 
 export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: CreateUserModalProps) {
@@ -64,12 +64,22 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
     setServerError(null);
     try {
       const created = await onCreate(toCreateUserInput(form));
-      onCreated(created);
-      onClose();
+      onCreated(created, form.password, form.temporary_password);
+      setForm(EMPTY);
+      closeModal();
     } catch (err) {
-      setServerError(err instanceof Error ? err.message : "Couldn't create the user.");
+      const message = err instanceof Error ? err.message : "Couldn't create the user.";
+      setServerError(`${message} Verify whether the account was created before sharing credentials. The password stays here until you close this form.`);
       setSaving(false);
     }
+  };
+
+  const closeModal = () => {
+    setForm(EMPTY);
+    setErrors({});
+    setServerError(null);
+    setShowPassword(false);
+    onClose();
   };
 
   const input = (bad?: string) =>
@@ -95,7 +105,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
     ) : null;
 
   return (
-    <Modal isOpen={isOpen} onClose={saving ? () => {} : onClose} size="lg">
+    <Modal isOpen={isOpen} onClose={saving ? () => {} : closeModal} size="lg">
       <ModalHeader title="Create user" />
       <ModalBody>
         <form
@@ -158,7 +168,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
               aria-describedby={`${uid}-email-msg`}
               className={input(errors.email)}
             />
-            {errorText("email", "With a temporary password, the username and password are emailed automatically when mail is configured.")}
+            {errorText("email", "Email is used for account identification only. Login details must be shared separately through your approved secure channel.")}
           </div>
 
           <fieldset>
@@ -194,7 +204,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
               <input
                 id={`${uid}-password`}
                 type={showPassword ? "text" : "password"}
-                autoComplete="new-password"
+                autoComplete="off"
                 value={form.password}
                 onChange={(e) => set("password", e.target.value)}
                 aria-invalid={!!errors.password}
@@ -236,7 +246,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
         </form>
       </ModalBody>
       <ModalFooter>
-        <Button variant="secondary" onClick={onClose} disabled={saving}>
+        <Button variant="secondary" onClick={closeModal} disabled={saving}>
           Cancel
         </Button>
         <Button variant="primary" onClick={() => void handleSubmit()} loading={saving}>

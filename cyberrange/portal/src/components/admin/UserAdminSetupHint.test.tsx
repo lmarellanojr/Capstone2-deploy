@@ -42,6 +42,8 @@ describe("CreateUserModal on a host without the user-admin client", () => {
     const alert = await screen.findByRole("alert")
     expect(alert).toHaveTextContent("User management is not configured")
     expect(alert).toHaveTextContent("setup_user_admin_client.sh")
+    expect(alert).toHaveTextContent("Verify whether the account was created before sharing credentials")
+    expect(screen.getByLabelText(/^Initial password/)).toHaveValue("Tmp!pass-1234")
   })
 
   it("shows other errors without the setup hint", async () => {
@@ -55,5 +57,34 @@ describe("CreateUserModal on a host without the user-admin client", () => {
     const alert = await screen.findByRole("alert")
     expect(alert).toHaveTextContent("already exists")
     expect(alert).not.toHaveTextContent("setup_user_admin_client.sh")
+  })
+
+  it("clears the password when an Admin closes and reopens the form", () => {
+    const onClose = jest.fn()
+    const props = { onClose, onCreate: jest.fn(), onCreated: jest.fn() }
+    const { rerender } = render(<CreateUserModal isOpen {...props} />)
+    const password = screen.getByLabelText(/^Initial password/)
+    fireEvent.change(password, { target: { value: "Tmp!pass-1234" } })
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(onClose).toHaveBeenCalled()
+    expect(password).toHaveValue("")
+    rerender(<CreateUserModal isOpen={false} {...props} />)
+    rerender(<CreateUserModal isOpen {...props} />)
+    expect(screen.getByLabelText(/^Initial password/)).toHaveValue("")
+  })
+
+  it("hands the password to the one-time flow only after successful creation", async () => {
+    const created = {
+      id: "u1", username: "new_student", email: null, first_name: null, last_name: null,
+      enabled: true, role: "student" as const, roles: ["student"], created_at: null,
+    }
+    const onCreate = jest.fn().mockResolvedValue(created)
+    const onCreated = jest.fn()
+    render(<CreateUserModal isOpen onClose={jest.fn()} onCreate={onCreate} onCreated={onCreated} />)
+    fireEvent.change(screen.getByLabelText(/^Username/), { target: { value: "new_student" } })
+    fireEvent.change(screen.getByLabelText(/^Initial password/), { target: { value: "Tmp!pass-1234" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create user" }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created, "Tmp!pass-1234", true))
+    expect(screen.getByLabelText(/^Initial password/)).toHaveValue("")
   })
 })
