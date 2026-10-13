@@ -209,10 +209,15 @@ def abort_if_names_remain(student_id: str) -> list:
     """Delete this student's leftover agents, then refuse the lab if any name
     is still registered. Returns the ids remove_agents_named actually removed
     (empty when there was nothing to purge). remove_agents_named stays
-    best-effort; a scoring-token failure from the follow-up read propagates
-    unchanged."""
+    best-effort. A failure of the follow-up scoring read is logged and
+    swallowed so the agents still start. StaleWazuhAgent is raised only after
+    that read returns a non-empty list."""
     removed = remove_agents_named(student_id)
-    leftover = remaining_agent_ids(student_id)
+    try:
+        leftover = remaining_agent_ids(student_id)
+    except Exception as e:
+        logger.warning(f"WAZUH_STALE_CHECK_SKIPPED {student_id}: {e}")
+        return removed
     if leftover:
         raise StaleWazuhAgent(student_id, leftover)
     return removed

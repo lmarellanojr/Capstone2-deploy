@@ -33,6 +33,8 @@ def api(monkeypatch):
         return _Resp(200, {"data": {"token": f"tok-{auth[0]}"}})
 
     def get(url, headers=None, params=None, **kw):
+        if state.get("scoring_get_timeout") and (headers or {}).get("Authorization") == "Bearer tok-scoring":
+            raise wc.requests.Timeout("scoring read timed out")
         name = (params or {}).get("q", "").removeprefix("name=")
         items = [{"id": i, "name": n} for i, n in state["agents"].items() if n == name]
         return _Resp(200, {"data": {"affected_items": items}})
@@ -132,11 +134,19 @@ def test_a_name_held_only_by_agent_000_does_not_abort(api):
     assert api["deleted"] == []
 
 
-def test_scoring_auth_failure_is_not_a_stale_agent(api, monkeypatch):
+def test_scoring_auth_failure_is_not_a_stale_agent(api, monkeypatch, caplog):
     monkeypatch.setattr(wc, "WAZUH_USER", "")
-    with pytest.raises(RuntimeError) as caught:
-        wc.abort_if_names_remain("alice")
-    assert not isinstance(caught.value, wc.StaleWazuhAgent)
+    assert wc.abort_if_names_remain("alice") == ["008", "011", "012"]
+    assert "WAZUH_STALE_CHECK_SKIPPED" in caplog.text
+    assert "alice" in caplog.text
+
+
+def test_scoring_read_timeout_still_returns_removed_ids(api, caplog):
+    api["scoring_get_timeout"] = True
+    assert wc.abort_if_names_remain("alice") == ["008", "011", "012"]
+    assert sorted(api["deleted"]) == ["008", "011", "012"]
+    assert "WAZUH_STALE_CHECK_SKIPPED" in caplog.text
+    assert "scoring read timed out" in caplog.text
 
 
 def test_enroll_handler_reraises_stale_and_swallows_other_errors():
