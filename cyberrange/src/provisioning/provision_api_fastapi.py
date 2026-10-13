@@ -5,7 +5,10 @@ import os
 import sys
 
 import urllib3
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from auth import require_owner as real_require_owner
 from auth import require_app_role, require_role, validate_auth_config
@@ -52,6 +55,51 @@ if _score_mod is None or _wazuh_mod is None:
     logger.warning("S2 detection scoring disabled: score_verifier or wazuh_rule_map not loadable")
 
 app = FastAPI(title="Cyber Range Pod Provisioning API (LXD Version)", version="1.2.0")
+
+_SAFE_VALIDATION_ERROR_TYPES = {
+    "missing",
+    "string_type",
+    "string_too_short",
+    "string_too_long",
+    "string_pattern_mismatch",
+    "value_error",
+}
+
+_SAFE_VALIDATION_MESSAGES = {
+    "missing": "Required value is missing",
+    "string_too_short": "Value is too short",
+    "string_too_long": "Value is too long",
+    "string_pattern_mismatch": "Value has an invalid format",
+}
+
+
+@app.exception_handler(RequestValidationError)
+async def sanitized_validation_error(_request: Request, exc: RequestValidationError):
+    # Pydantic errors may include rejected inputs in `input` and `ctx`. On the
+    # password-management routes, retain actionable validation fields only.
+    parts = _request.url.path.strip("/").split("/")
+    admin_password_request = (
+        _request.method == "POST" and parts == ["admin", "users"]
+    ) or (
+        _request.method == "PUT" and len(parts) == 4
+        and parts[:2] == ["admin", "users"] and parts[3] == "password"
+    )
+    if not admin_password_request:
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+    detail = []
+    for error in exc.errors():
+        # Never forward Pydantic `msg`: custom validators can interpolate rejected values.
+        error_type = error.get("type")
+        if error_type not in _SAFE_VALIDATION_ERROR_TYPES:
+            error_type = "value_error"
+        detail.append({
+            "loc": error.get("loc", []),
+            "msg": _SAFE_VALIDATION_MESSAGES.get(error_type, "Invalid request"),
+            "type": error_type,
+        })
+    return JSONResponse(status_code=422, content={"detail": detail})
+
+
 app.include_router(pods_router)
 app.include_router(browser_score_router)
 app.include_router(users_router)

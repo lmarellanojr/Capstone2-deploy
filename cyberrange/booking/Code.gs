@@ -236,7 +236,7 @@ function notify_(n) {
     ['Assigned domain', domain],
     ['Login URL', r.url],
     ['Account setup', booked
-      ? 'Domain owner will create the student account and trigger a separate credential email.'
+      ? 'Domain owner will create the student account and share login details separately through an approved secure channel.'
       : 'Reservation cancelled; no account setup is needed.'],
     ['Cancellation code', r.token || '-'],
     ['Notes', r.notes || '-'],
@@ -402,17 +402,17 @@ function utcStamp_(r, hm) {
 }
 
 function eventDetails_(token) {
-  return 'Thank you for helping test our capstone project. A domain owner will create your account after booking. When it is ready, you will receive a separate email with your username and temporary password.\n\n' +
+  return 'Thank you for helping test our capstone project. A domain owner will create your account after booking and share the login details separately.\n\n' +
     'Cancellation code: ' + token + (BOOKING_PAGE_URL ? '\nManage your booking: ' + BOOKING_PAGE_URL : '');
 }
 
 function organizerAction_(r) {
   return 'Before the session, open Admin → Users and create an enabled Student account for ' + r.email +
-    ' using a temporary password. The range will email the username and temporary password automatically when you create the account.';
+    ' using a temporary password. Share the login details through your approved secure channel; they are not emailed automatically.';
 }
 
 function testerAccountStep_() {
-  return 'A domain owner will create your account after booking. When it is ready, you will receive a separate email with your username and temporary password. Change the password when you first sign in.';
+  return 'A domain owner will create your account after booking and share the login details separately. Change your password when you first sign in.';
 }
 
 function gcalUrl_(r, token) {

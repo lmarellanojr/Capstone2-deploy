@@ -15,7 +15,6 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 import auth
-import credential_email
 import introspect_cache
 from auth import caller_identity, verify_token
 from db import log_event
@@ -186,26 +185,6 @@ def _revoke_cached_tokens(user_id: str, username: Optional[str]) -> None:
     introspect_cache.invalidate_user(sub=user_id, username=username)
 
 
-def _deliver_credentials(user: dict, password: str, temporary: bool, actor: str) -> dict:
-    """Run after the global write lock; use only the Keycloak-returned recipient."""
-    result = dict(user)
-    result["credential_email_status"] = "skipped"
-    if not temporary or not user.get("email"):
-        return result
-    try:
-        credential_email.send_temporary_credentials(
-            recipient=user["email"], username=user["username"], password=password
-        )
-        result["credential_email_status"] = "sent"
-        _audit("ADMIN_USER_CREDENTIAL_EMAIL", user.get("username"), "OK", actor)
-    except Exception as exc:
-        # SMTP exceptions can contain server text. Never log the message or password.
-        logger.warning("ADM-USER credential email failed: %s", type(exc).__name__)
-        result["credential_email_status"] = "failed"
-        _audit("ADMIN_USER_CREDENTIAL_EMAIL", user.get("username"), "FAILED", actor)
-    return result
-
-
 @router.get("/admin/users")
 def admin_list_users(
     search: Optional[str] = Query(None, max_length=64),
@@ -234,7 +213,7 @@ def admin_create_user(
     with _write_lock:
         _confirm_actor_still_admin(kc, actor, "ADMIN_USER_CREATE", body.username, detail)
         user = _create_user_locked(body, actor, detail, kc)
-    return _deliver_credentials(user, body.password, body.temporary_password, actor)
+    return user
 
 
 def _create_user_locked(body: CreateUserRequest, actor: str, detail: str, kc: KeycloakAdminClient) -> dict:
@@ -398,7 +377,7 @@ def admin_reset_user_password(
         finally:
             _revoke_cached_tokens(user_id, username)
     _audit(event, username, "OK", actor, detail)
-    return _deliver_credentials(serialize_user(target, roles), body.password, body.temporary, actor)
+    return serialize_user(target, roles)
 
 
 @router.delete("/admin/users/{user_id}/mfa")

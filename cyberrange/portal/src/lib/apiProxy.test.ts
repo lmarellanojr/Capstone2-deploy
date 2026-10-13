@@ -59,11 +59,28 @@ describe("proxyToApi", () => {
     expect(await res.json()).toEqual({ detail: "denied" })
   })
 
-  it("does not invent success when the backend is unreachable on a protected write", async () => {
+  it("logs a safe network code without exposing the thrown error message", async () => {
     mockedSession.mockResolvedValue({ accessToken: "t" } as never)
-    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"))
+    const log = jest.spyOn(console, "error").mockImplementation(() => {})
+    const cause = Object.assign(new Error("request password must stay secret"), { code: "ECONNREFUSED" })
+    fetchMock.mockRejectedValueOnce(Object.assign(new TypeError("request password must stay secret"), { cause }))
     const res = await proxyToApi(req("/api/admin/pods/1/force-destroy"), "/admin/pods/1/force-destroy", "DELETE")
     expect(res.status).toBe(503)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("ECONNREFUSED"))
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("request password must stay secret"))
+    log.mockRestore()
+  })
+
+  it("does not log arbitrary cause codes", async () => {
+    mockedSession.mockResolvedValue({ accessToken: "t" } as never)
+    const log = jest.spyOn(console, "error").mockImplementation(() => {})
+    const cause = Object.assign(new Error("private detail"), { code: "S3CRET-PASS-123" })
+    fetchMock.mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause }))
+    const res = await proxyToApi(req("/api/admin/pods/1/force-destroy"), "/admin/pods/1/force-destroy", "DELETE")
+    expect(res.status).toBe(503)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("UPSTREAM_FETCH_ERROR"))
+    expect(log.mock.calls.flat().join(" ")).not.toContain("S3CRET-PASS-123")
+    log.mockRestore()
   })
 
   it("raw mode passes a CSV body and its download headers through untouched", async () => {

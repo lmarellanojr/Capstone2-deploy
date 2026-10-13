@@ -7,14 +7,14 @@ fake requests session. Every test gets a temporary SQLite DB from conftest.py's
 temp_db fixture -- never the shared pod_mgmt.db.
 """
 import uuid
-import threading
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field, field_validator
 
 import db
-import credential_email
 import introspect_cache
 import keycloak_admin
 import users_router
@@ -29,9 +29,18 @@ from keycloak_admin import (
     KeycloakOtpRemovalIncomplete,
     KeycloakRejected,
 )
-from provision_api_fastapi import app
+from provision_api_fastapi import app, sanitized_validation_error
 
 NOISE_ROLES = ["offline_access", "uma_authorization", "default-roles-cyber-range"]
+
+
+class EchoingPasswordValidatorRequest(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def reject_password_with_value_in_message(cls, value: str) -> str:
+        raise ValueError(f"Rejected password: {value}")
 
 
 def claims(username, *roles):
@@ -255,77 +264,64 @@ def test_create_user_happy_path(client, kc):
     assert kc.passwords[uid] == ("Tmp!pass-1234", True)  # temporary by default
 
 
-def test_create_emails_temporary_credentials_after_account_is_ready(client, kc, monkeypatch):
+def test_create_never_emails_or_exposes_credentials(client, kc, monkeypatch, caplog):
     as_caller(ADMIN)
-    sent = []
-
-    def send(**kwargs):
-        assert users_router._write_lock.acquire(blocking=False)
-        users_router._write_lock.release()
-        uid = next(uid for uid, u in kc.users.items() if u["username"] == kwargs["username"])
-        assert kc.user_app_roles(uid) == ["student"]
-        assert kc.passwords[uid] == (kwargs["password"], True)
-        sent.append(kwargs)
-
-    monkeypatch.setattr(credential_email, "send_temporary_credentials", send)
+    monkeypatch.setattr("smtplib.SMTP", lambda *a, **kw: pytest.fail("Admin create must not send email"))
+    monkeypatch.setattr("smtplib.SMTP_SSL", lambda *a, **kw: pytest.fail("Admin create must not send email"))
     response = client.post("/admin/users", json=NEW_USER)
     assert response.status_code == 201
-    assert response.json()["credential_email_status"] == "sent"
-    assert sent == [{"recipient": NEW_USER["email"], "username": NEW_USER["username"], "password": NEW_USER["password"]}]
+    assert "credential_email_status" not in response.json()
+    assert "password" not in response.json()
     assert NEW_USER["password"] not in str(response.json())
     assert NEW_USER["password"] not in str(audit_rows())
-
-
-def test_create_mail_failure_keeps_account_and_reports_failure(client, kc, monkeypatch):
-    as_caller(ADMIN)
-    monkeypatch.setattr(credential_email, "send_temporary_credentials", lambda **kwargs: (_ for _ in ()).throw(credential_email.CredentialEmailError()))
-    response = client.post("/admin/users", json=NEW_USER)
-    assert response.status_code == 201
-    assert response.json()["credential_email_status"] == "failed"
+    assert NEW_USER["password"] not in caplog.text
     assert NEW_USER["username"] in kc.usernames()
-    assert audit_rows("ADMIN_USER_CREDENTIAL_EMAIL")[-1]["result"] == "FAILED"
 
 
-def test_create_without_email_does_not_send(client, kc, monkeypatch):
+def test_create_and_reset_validation_errors_do_not_echo_passwords(client, kc, caplog):
     as_caller(ADMIN)
-    monkeypatch.setattr(credential_email, "send_temporary_credentials", lambda **kwargs: pytest.fail("unexpected email"))
-    response = client.post("/admin/users", json={**NEW_USER, "email": None})
-    assert response.status_code == 201
-    assert response.json()["credential_email_status"] == "skipped"
+    rejected = "S3CRET!"
+    create = client.post("/admin/users", json={**NEW_USER, "password": rejected})
+    assert create.status_code == 422
+    assert rejected not in create.text
+    assert all("input" not in error and "ctx" not in error for error in create.json()["detail"])
+    assert rejected not in caplog.text
+    assert create.json()["detail"][0]["type"] == "string_too_short"
+    uid = kc.add("student_demo", "student")
+    reset = client.put(f"/admin/users/{uid}/password", json={"password": rejected})
+    assert reset.status_code == 422
+    assert rejected not in reset.text
+    assert all("input" not in error and "ctx" not in error for error in reset.json()["detail"])
+    assert rejected not in caplog.text
+    assert reset.json()["detail"][0]["type"] == "string_too_short"
 
 
-def test_mail_delivery_does_not_hold_global_write_lock(client, kc, monkeypatch):
-    as_caller(ADMIN)
-    sending = threading.Event()
-    finish = threading.Event()
-    results = []
+def test_password_validation_does_not_echo_custom_validator_message():
+    test_app = FastAPI()
+    test_app.add_exception_handler(RequestValidationError, sanitized_validation_error)
 
-    def send(**kwargs):
-        sending.set()
-        assert finish.wait(2)
+    @test_app.post("/admin/users")
+    def create_user(body: EchoingPasswordValidatorRequest):
+        return {"ok": True}
 
-    monkeypatch.setattr(credential_email, "send_temporary_credentials", send)
-    worker = threading.Thread(target=lambda: results.append(client.post("/admin/users", json=NEW_USER)))
-    worker.start()
-    try:
-        assert sending.wait(2)
-        # A second Admin write can take the lock while mail is stalled.
-        response = client.patch(f"/admin/users/{kc.admin_id}/enabled", json={"enabled": True})
-        assert response.status_code == 409  # self-protection ran, so it obtained the lock
-    finally:
-        finish.set()
-        worker.join(2)
-    assert not worker.is_alive()
-    assert results[0].status_code == 201
+    rejected = "S3CRETPASS-987!"
+    response = TestClient(test_app).post("/admin/users", json={"password": rejected})
+    assert response.status_code == 422
+    assert rejected not in response.text
+    assert "Rejected password" not in response.text
+    assert response.json()["detail"] == [{
+        "loc": ["body", "password"],
+        "msg": "Invalid request",
+        "type": "value_error",
+    }]
 
 
 def test_create_user_can_set_permanent_password(client, kc, monkeypatch):
     as_caller(ADMIN)
-    monkeypatch.setattr(credential_email, "send_temporary_credentials", lambda **kwargs: pytest.fail("permanent password was emailed"))
     r = client.post("/admin/users", json={**NEW_USER, "temporary_password": False})
     assert r.status_code == 201
     assert kc.passwords[r.json()["id"]][1] is False
-    assert r.json()["credential_email_status"] == "skipped"
+    assert "credential_email_status" not in r.json()
 
 
 @pytest.mark.parametrize("role", ["student", "instructor", "admin"])
@@ -694,44 +690,30 @@ def test_reset_password_can_be_permanent(client, kc):
     assert kc.passwords[uid] == ("New!pass-5678", False)
 
 
-def test_reset_emails_only_after_sessions_ended(client, kc, monkeypatch):
+def test_reset_never_emails_or_exposes_password(client, kc, monkeypatch, caplog):
     as_caller(ADMIN)
     uid = kc.add("student_demo", "student")
     kc.users[uid]["email"] = "student@example.test"
-    sent = []
-
-    def send(**kwargs):
-        assert kc.logged_out == [uid]
-        assert users_router._write_lock.acquire(blocking=False)
-        users_router._write_lock.release()
-        sent.append(kwargs)
-
-    monkeypatch.setattr(credential_email, "send_temporary_credentials", send)
+    monkeypatch.setattr("smtplib.SMTP", lambda *a, **kw: pytest.fail("Admin reset must not send email"))
+    monkeypatch.setattr("smtplib.SMTP_SSL", lambda *a, **kw: pytest.fail("Admin reset must not send email"))
     response = client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"})
     assert response.status_code == 200
-    assert response.json()["credential_email_status"] == "sent"
-    assert sent == [{"recipient": "student@example.test", "username": "student_demo", "password": "New!pass-5678"}]
+    assert "credential_email_status" not in response.json()
+    assert "password" not in response.json()
+    assert "New!pass-5678" not in str(response.json())
+    assert "New!pass-5678" not in str(audit_rows())
+    assert "New!pass-5678" not in caplog.text
+    assert kc.logged_out == [uid]
 
 
-def test_reset_after_password_keycloak_failure_never_emails(client, kc, monkeypatch):
+def test_reset_keycloak_failure_reports_failure_without_sending_email(client, kc, monkeypatch):
     as_caller(ADMIN)
     uid = kc.add("student_demo", "student")
     kc.users[uid]["email"] = "student@example.test"
     kc.fail_on.add("logout_user")
-    monkeypatch.setattr(credential_email, "send_temporary_credentials", lambda **kwargs: pytest.fail("unexpected email"))
+    monkeypatch.setattr("smtplib.SMTP", lambda *a, **kw: pytest.fail("Admin reset must not send email"))
     response = client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"})
     assert response.status_code == 503
-    assert kc.passwords[uid] == ("New!pass-5678", True)
-
-
-def test_reset_mail_failure_is_visible_without_undoing_password(client, kc, monkeypatch):
-    as_caller(ADMIN)
-    uid = kc.add("student_demo", "student")
-    kc.users[uid]["email"] = "student@example.test"
-    monkeypatch.setattr(credential_email, "send_temporary_credentials", lambda **kwargs: (_ for _ in ()).throw(credential_email.CredentialEmailError()))
-    response = client.put(f"/admin/users/{uid}/password", json={"password": "New!pass-5678"})
-    assert response.status_code == 200
-    assert response.json()["credential_email_status"] == "failed"
     assert kc.passwords[uid] == ("New!pass-5678", True)
 
 
