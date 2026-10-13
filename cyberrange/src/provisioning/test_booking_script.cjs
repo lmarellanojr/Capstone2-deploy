@@ -167,6 +167,19 @@ ctx.reconcilePendingProvisioning()
 assert.equal(sheet.cells[cancelledDuringFetchRow - 1][14], "pending", "cancelled row is not updated after the outbound request")
 assert.equal(sent.length, cancelDuringFetchMailBefore, "cancelled row receives no reconciliation notice")
 
+const replacedDuringFetchRow = addBookingRow("unknown", true, "unknown", "2026-10-26_0900-1100")
+const replacedOriginal = [...sheet.cells[replacedDuringFetchRow - 1]]
+const replacedMailBefore = sent.length
+fetchHook = () => {
+  sheet.cells[replacedDuringFetchRow - 1][8] = "different-tester@mmdc.mcl.edu.ph"
+  sheet.cells[replacedDuringFetchRow - 1][13] = "different-token"
+}
+ctx.reconcilePendingProvisioning()
+assert.equal(sheet.cells[replacedDuringFetchRow - 1][14], "unknown", "a row replaced during the request is not updated")
+assert.equal(sheet.cells[replacedDuringFetchRow - 1][8], "different-tester@mmdc.mcl.edu.ph")
+assert.equal(sent.length, replacedMailBefore, "a replacement booking does not receive the previous booking's notice")
+sheet.cells[replacedDuringFetchRow - 1] = replacedOriginal
+
 fetchCode = 504
 assert.equal(ctx.provision_({ domainId: "d1", email: "tester@mmdc.mcl.edu.ph", url: "https://cyberrange.bubble-express.win/login" }), "unknown", "timeout remains an ambiguous status")
 
