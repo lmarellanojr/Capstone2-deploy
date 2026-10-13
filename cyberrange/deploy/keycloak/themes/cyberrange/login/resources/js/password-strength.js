@@ -4,11 +4,13 @@
     function estimate(value) {
         if (!value) return 0;
         // Dictionary checks are server-side; single letters a, i, and o are allowed.
-        const normalized = value.toLowerCase().replace(/[0@]/g, "a").replace(/[1!]/g, "i").replace(/3/g, "e").replace(/\$/g, "s");
+        const nfkc = value.normalize("NFKC").toLowerCase();
+        const normalized = nfkc.replace(/[0@]/g, "a").replace(/[1!]/g, "i").replace(/3/g, "e").replace(/\$/g, "s");
         if (value.length < 8 || /(.+)\1{2,}/u.test(normalized) ||
             /password|passw|qwerty|letmein|welcome|cyberrange|capstone|123456|abcdef/i.test(normalized) ||
             new Set(normalized).size < 5) return 1;
-        return value.length < 12 ? 2 : value.length < 16 ? 3 : 4;
+        const score = value.length < 12 ? 2 : value.length < 16 ? 3 : 4;
+        return /[a-z]{2,}/.test(nfkc) ? Math.min(score, 2) : score;
     }
     function passwordToggle(input) {
         const group = input.closest(".pf-c-input-group, .pf-v5-c-input-group");
