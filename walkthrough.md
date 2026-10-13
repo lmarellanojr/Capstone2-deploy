@@ -2,7 +2,7 @@
 
 - Branch: `feature/admin-credential-email-security`
 - Implementation commit: `9a911ac` (`Remove admin credential email delivery`, rebased on the current `main`)
-- Pull request: follow-up to merged PR #193
+- Pull request: [#198](https://github.com/lmarellanojr/Capstone2-deploy/pull/198), follow-up to merged PR #193
 
 ## Resolved requirements
 
