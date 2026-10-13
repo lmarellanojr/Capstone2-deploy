@@ -263,7 +263,7 @@ export function ExercisePanel({
               aria-expanded={guideOpen}
               className="flex items-center gap-2 text-xs font-bold text-text-main hover:text-brand transition focus-ring"
             >
-              <span>{isSiem ? 'Guide for this task' : 'Walkthrough for this task'}</span>
+              <span>Walkthrough for this task</span>
               {guideOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
             </button>
             <button
@@ -279,7 +279,8 @@ export function ExercisePanel({
           </div>
 
           {/* CRITICAL: Keep GuideView mounted so #guide-print-root portal stays active! */}
-          <div className={guideOpen ? 'p-3 block max-h-96 overflow-y-auto' : 'hidden'}>
+          {/* No inner max-height: the pane's own scroll area is the only scrollbar. */}
+          <div className={guideOpen ? 'p-3 block' : 'hidden'}>
             <GuideView
               pod={pod}
               scenario={scenario}
