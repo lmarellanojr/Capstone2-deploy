@@ -291,6 +291,23 @@ def test_s9_m1_other_pod_agent_fails(tmp_path):
         _bash_rm(f)
 
 
+def test_s9_m1_fqdn_expected_agent_still_passes(tmp_path):
+    """If hostname is an FQDN, strip the suffix before comparing."""
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd: attempt to login using a non-existent user",'
+        '"agent":"pod-alice-meta","classification":"true_positive",'
+        '"notes":"2026-10-01T14:32:05Z invalid-user SSH; I pasted the SIEM time"}\n'
+    )
+    f = _triage(body)
+    try:
+        assert run(
+            tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta.lxd"}
+        ) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
 # ── Scenario 3 (id 9): M2 timeline must match a REAL rule-5710 event time ────
 # SCORE-FIX: the claimed HH:MM is validated against auth.log, so a fabricated or
 # placeholder time fails while a time near a real "Invalid user" event passes.

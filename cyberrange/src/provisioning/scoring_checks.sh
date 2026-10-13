@@ -638,6 +638,8 @@ _s9_has_lab_meta_agent() {
     local f="$1" line agent lower expected expected_lower
     [[ -f "$f" ]] || return 1
     expected="${SCORING_S9_EXPECTED_AGENT:-$(hostname 2>/dev/null)}"
+    # LXD names have no dots; strip an FQDN suffix if hostname returns one.
+    expected="${expected%%.*}"
     [[ -n "$expected" ]] || return 1
     expected_lower=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
     while IFS= read -r line; do
