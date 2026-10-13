@@ -149,6 +149,73 @@ def test_scoring_read_timeout_still_returns_removed_ids(api, caplog):
     assert "scoring read timed out" in caplog.text
 
 
+def test_stale_name_does_not_start_the_agent_or_mark_active(monkeypatch):
+    import sys
+    from unittest.mock import MagicMock
+
+    sys.modules.setdefault("pylxd", MagicMock())
+    import provision
+
+    commands = []
+
+    class _Result:
+        exit_code = 0
+
+    class _Inst:
+        def start(self, wait=True):
+            return None
+
+        def execute(self, argv):
+            commands.append(list(argv))
+            return _Result()
+
+    class _Instances:
+        def create(self, cfg, wait=True):
+            return _Inst()
+
+        def get(self, name):
+            return _Inst()
+
+    class _Client:
+        def __init__(self, project=None):
+            self.instances = _Instances()
+
+    monkeypatch.setattr(provision.pylxd, "Client", _Client)
+    monkeypatch.setattr(provision, "delete_pod_network", lambda pod_id: None)
+    monkeypatch.setattr(provision, "create_pod_network", lambda pod_id: None)
+    monkeypatch.setattr(provision, "log_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(provision, "ensure_guest_nic_up", lambda *args, **kwargs: True)
+    monkeypatch.setattr(provision, "ensure_dvwa_compose", lambda inst: True)
+    monkeypatch.setattr(provision, "ensure_dvwa_ready", lambda inst: True)
+    monkeypatch.setattr(provision, "add_dvwa_http_proxy", lambda name, pod_id: 8080)
+    monkeypatch.setattr(provision, "wazuh_manager_ip", lambda client: "10.0.40.10")
+    monkeypatch.setattr(provision.os.path, "exists", lambda path: False)
+
+    def refuse(student_id):
+        raise wc.StaleWazuhAgent(student_id, ["008"])
+
+    monkeypatch.setattr(provision, "abort_if_names_remain", refuse)
+    cleaned = []
+    monkeypatch.setattr(
+        provision, "cleanup_after_failure", lambda *args: cleaned.append(args)
+    )
+
+    def fail_db():
+        raise AssertionError("pod row was updated")
+
+    monkeypatch.setattr(provision, "get_db_connection", fail_db)
+
+    provision.perform_provisioning(
+        "alice",
+        1,
+        {"kali": "pod-alice-kali", "meta": "pod-alice-meta", "dvwa": "pod-alice-dvwa"},
+        "09",
+    )
+
+    assert not any(cmd[:3] == ["systemctl", "start", "wazuh-agent"] for cmd in commands)
+    assert cleaned == [("alice", 1, None, None)]
+
+
 def test_enroll_handler_reraises_stale_and_swallows_other_errors():
     events = []
 
