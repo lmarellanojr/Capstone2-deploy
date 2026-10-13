@@ -9,8 +9,10 @@ temp_db fixture -- never the shared pod_mgmt.db.
 import uuid
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field, field_validator
 
 import db
 import introspect_cache
@@ -27,9 +29,18 @@ from keycloak_admin import (
     KeycloakOtpRemovalIncomplete,
     KeycloakRejected,
 )
-from provision_api_fastapi import app
+from provision_api_fastapi import app, sanitized_validation_error
 
 NOISE_ROLES = ["offline_access", "uma_authorization", "default-roles-cyber-range"]
+
+
+class EchoingPasswordValidatorRequest(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def reject_password_with_value_in_message(cls, value: str) -> str:
+        raise ValueError(f"Rejected password: {value}")
 
 
 def claims(username, *roles):
@@ -275,14 +286,34 @@ def test_create_and_reset_validation_errors_do_not_echo_passwords(client, kc, ca
     assert rejected not in create.text
     assert all("input" not in error and "ctx" not in error for error in create.json()["detail"])
     assert rejected not in caplog.text
-    assert "min_length" in create.text
+    assert create.json()["detail"][0]["type"] == "string_too_short"
     uid = kc.add("student_demo", "student")
     reset = client.put(f"/admin/users/{uid}/password", json={"password": rejected})
     assert reset.status_code == 422
     assert rejected not in reset.text
     assert all("input" not in error and "ctx" not in error for error in reset.json()["detail"])
     assert rejected not in caplog.text
-    assert "min_length" in reset.text
+    assert reset.json()["detail"][0]["type"] == "string_too_short"
+
+
+def test_password_validation_does_not_echo_custom_validator_message():
+    test_app = FastAPI()
+    test_app.add_exception_handler(RequestValidationError, sanitized_validation_error)
+
+    @test_app.post("/admin/users")
+    def create_user(body: EchoingPasswordValidatorRequest):
+        return {"ok": True}
+
+    rejected = "S3CRETPASS-987!"
+    response = TestClient(test_app).post("/admin/users", json={"password": rejected})
+    assert response.status_code == 422
+    assert rejected not in response.text
+    assert "Rejected password" not in response.text
+    assert response.json()["detail"] == [{
+        "loc": ["body", "password"],
+        "msg": "Invalid request",
+        "type": "value_error",
+    }]
 
 
 def test_create_user_can_set_permanent_password(client, kc, monkeypatch):

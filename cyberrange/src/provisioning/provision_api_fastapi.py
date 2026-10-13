@@ -56,6 +56,22 @@ if _score_mod is None or _wazuh_mod is None:
 
 app = FastAPI(title="Cyber Range Pod Provisioning API (LXD Version)", version="1.2.0")
 
+_SAFE_VALIDATION_ERROR_TYPES = {
+    "missing",
+    "string_type",
+    "string_too_short",
+    "string_too_long",
+    "string_pattern_mismatch",
+    "value_error",
+}
+
+_SAFE_VALIDATION_MESSAGES = {
+    "missing": "Required value is missing",
+    "string_too_short": "Value is too short",
+    "string_too_long": "Value is too long",
+    "string_pattern_mismatch": "Value has an invalid format",
+}
+
 
 @app.exception_handler(RequestValidationError)
 async def sanitized_validation_error(_request: Request, exc: RequestValidationError):
@@ -70,10 +86,17 @@ async def sanitized_validation_error(_request: Request, exc: RequestValidationEr
     )
     if not admin_password_request:
         return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
-    detail = [
-        {"loc": error.get("loc", []), "msg": error.get("msg", "Invalid request"), "type": error.get("type", "value_error")}
-        for error in exc.errors()
-    ]
+    detail = []
+    for error in exc.errors():
+        # Never forward Pydantic `msg`: custom validators can interpolate rejected values.
+        error_type = error.get("type")
+        if error_type not in _SAFE_VALIDATION_ERROR_TYPES:
+            error_type = "value_error"
+        detail.append({
+            "loc": error.get("loc", []),
+            "msg": _SAFE_VALIDATION_MESSAGES.get(error_type, "Invalid request"),
+            "type": error_type,
+        })
     return JSONResponse(status_code=422, content={"detail": detail})
 
 

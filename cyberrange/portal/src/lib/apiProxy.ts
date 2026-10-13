@@ -51,6 +51,31 @@ const BINARY_PASS_HEADERS = [
   "content-security-policy",
 ]
 
+const SAFE_UPSTREAM_ERROR_CODES = new Set([
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+])
+
+function safeUpstreamErrorCode(err: unknown): string {
+  if (err && typeof err === "object" && "cause" in err) {
+    const cause = err.cause
+    if (cause && typeof cause === "object" && "code" in cause) {
+      const code = cause.code
+      if (typeof code === "string" && SAFE_UPSTREAM_ERROR_CODES.has(code)) return code
+    }
+  }
+  return err instanceof TypeError ? "UPSTREAM_FETCH_ERROR" : "UPSTREAM_ERROR"
+}
+
 export async function proxyToApi(
   req: NextRequest,
   path: string,
@@ -104,10 +129,10 @@ export async function proxyToApi(
     const data = await res.json().catch(() => ({}))
     return NextResponse.json(data, { status: res.status })
   } catch (err) {
-    // Log only the error type. Exception messages can contain request details,
-    // so never send them to server logs from an authenticated proxy route.
-    const errorType = err instanceof Error ? err.name : "UnknownError"
-    console.error(`apiProxy: upstream fetch failed for ${API_URL}${path} (${method}): ${errorType}`)
+    // Log only a whitelisted network code; never send exception messages to
+    // server logs from an authenticated proxy route.
+    const errorCode = safeUpstreamErrorCode(err)
+    console.error(`apiProxy: upstream fetch failed for ${API_URL}${path} (${method}): ${errorCode}`)
     // Fallback mock data when provisioning API is unavailable
     if (path === "/pods" && method === "GET") {
       return NextResponse.json({ pods: [], count: 0 }, { status: 200 })
