@@ -124,7 +124,7 @@ describe("TerminalView — Scenario 4 (Vulnerability Hardening)", () => {
     await renderLab({ currentTaskId: task2.id, currentTaskCue: task2.cue, currentTaskCueVariant: task2.cueVariant })
 
     const cue = screen.getByRole("complementary", { name: "Lab warning" })
-    expect(cue).toHaveTextContent(/Empty output = success/)
+    expect(cue).toHaveTextContent(/No output from the grep check/)
   })
 })
 
