@@ -29,6 +29,9 @@ const DOMAINS = {
 
 const HEADERS = ['Booked at', 'Domain', 'Range URL', 'Slot', 'Date', 'Start', 'End',
   'Name', 'Email', 'Student/Employee ID', 'Section', 'Notes', 'Status', 'Cancel code', 'Legacy account setup status', 'Organizer notice sent', 'Legacy account notice status'];
+const HEADERS_VERSION_PROPERTY = 'BOOKING_HEADERS_VERSION';
+const HEADERS_VERSION = '2';
+let headersChecked_ = false;
 
 // Only these addresses may book.
 const ALLOWED_EMAIL_DOMAIN = '@mmdc.mcl.edu.ph';
@@ -70,8 +73,13 @@ function doPost(e) {
   if (notice) {
     try {
       lock.waitLock(10000);
-      if (notify_(notice) && notice.kind === 'New booking') {
-        setOrganizerNoticeSent_(notice.row, true);
+      const current = notice.kind === 'New booking'
+        ? rows_().find(r => r.row === notice.row.sheetRow)
+        : null;
+      const shouldSend = notice.kind !== 'New booking' ||
+        (current && current.status === 'booked' && !current.organizerNoticeSent);
+      if (shouldSend && notify_(notice) && notice.kind === 'New booking') {
+        setOrganizerNoticeSent_(current, true);
       }
     } catch (err) {
       console.error('Booking notification deferred: ' + err);
@@ -146,9 +154,16 @@ function sheet_() {
   } else if (sh.getMaxColumns() < HEADERS.length) {
     sh.insertColumnsAfter(sh.getMaxColumns(), HEADERS.length - sh.getMaxColumns());
   }
-  const currentHeaders = sh.getRange(1, 1, 1, HEADERS.length).getDisplayValues()[0];
-  if (JSON.stringify(currentHeaders) !== JSON.stringify(HEADERS)) {
-    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
+  if (!headersChecked_) {
+    const properties = PropertiesService.getScriptProperties();
+    if (properties.getProperty(HEADERS_VERSION_PROPERTY) !== HEADERS_VERSION) {
+      const currentHeaders = sh.getRange(1, 1, 1, HEADERS.length).getDisplayValues()[0];
+      if (JSON.stringify(currentHeaders) !== JSON.stringify(HEADERS)) {
+        sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
+      }
+      properties.setProperty(HEADERS_VERSION_PROPERTY, HEADERS_VERSION);
+    }
+    headersChecked_ = true;
   }
   return sh;
 }
@@ -184,16 +199,26 @@ function installOrganizerNoticeRetry() {
 // tester confirmations. The script lock prevents a retry racing a live booking.
 function retryPendingOrganizerNotices() {
   const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(10000);
-    rows_().filter(r => r.status === 'booked' && !r.organizerNoticeSent).forEach(r => {
-      if (notify_({ kind: 'New booking', row: r })) setOrganizerNoticeSent_(r, true);
-    });
-  } catch (err) {
-    console.error('Organizer notice retry deferred: ' + err);
-  } finally {
-    try { lock.releaseLock(); } catch (err) {}
-  }
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  const pending = rows_().filter(r => {
+    const bookedAt = Date.parse(r.bookedAt);
+    return r.status === 'booked' && !r.organizerNoticeSent &&
+      (!Number.isFinite(bookedAt) || bookedAt < cutoff);
+  });
+  pending.forEach(candidate => {
+    if (!lock.tryLock(10000)) return;
+    try {
+      const current = rows_().find(r => r.row === candidate.row);
+      if (current && current.status === 'booked' && !current.organizerNoticeSent &&
+          notify_({ kind: 'New booking', row: current })) {
+        setOrganizerNoticeSent_(current, true);
+      }
+    } catch (err) {
+      console.error('Organizer notice retry deferred: ' + err);
+    } finally {
+      lock.releaseLock();
+    }
+  });
 }
 
 // Emails the organizers. A failed email never fails the booking itself.
