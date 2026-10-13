@@ -14,11 +14,11 @@ import org.keycloak.policy.PasswordPolicyProvider;
 
 class DictionaryPolicyTest {
     private static DictionaryMatcher smallDictionary() {
-        return DictionaryMatcher.load(new ByteArrayInputStream("sunshine\nmoon\na\ni\n".getBytes(StandardCharsets.UTF_8)));
+        return DictionaryMatcher.load(new ByteArrayInputStream("sunshine\nmoon\n".getBytes(StandardCharsets.UTF_8)));
     }
 
     @ParameterizedTest
-    @ValueSource(strings={"sunshine", "xxSUNSHINExx!928", "728#moon#837", "moon sunshine", "928#A#728", "928#I#728", "928#ＳＵＮＳＨＩＮＥ#728"})
+    @ValueSource(strings={"sunshine", "xxSUNSHINExx!928", "728#moon#837", "moon sunshine", "928#ＳＵＮＳＨＩＮＥ#728"})
     void rejectsWordsAtAnyPositionAndLength(String password) {
         assertTrue(smallDictionary().rejects(password));
     }
@@ -28,6 +28,12 @@ class DictionaryPolicyTest {
         assertFalse(matcher.rejects("728!$938#527+682%394=876*"));
         assertFalse(matcher.rejects("x".repeat(128)));
         assertFalse(matcher.rejects("928#xq#zv#728"));
+    }
+    @Test void acceptsTheSingleLetterEnglishWords() {
+        var matcher = smallDictionary();
+        for (String letter : new String[]{"a", "i", "o", "A", "I", "O"}) {
+            assertFalse(matcher.rejects("928#" + letter + "#728"), letter);
+        }
     }
     @Test void boundsWorkBeforeAndAfterNormalization() {
         var matcher = smallDictionary();
@@ -41,12 +47,12 @@ class DictionaryPolicyTest {
         var previous = Locale.getDefault();
         try {
             Locale.setDefault(Locale.forLanguageTag("tr-TR"));
-            assertTrue(smallDictionary().rejects("728#I#728"));
+        assertTrue(smallDictionary().rejects("728#SUNSHINE#728"));
         } finally { Locale.setDefault(previous); }
     }
     @Test void missingEmptyInvalidOrUnreadableDataNeverDisablesEnforcement() {
         assertThrows(IllegalStateException.class, () -> DictionaryMatcher.load(null));
-        for (String text : new String[]{"", "Moon\n", "moon\nmoon\n", "moon\n\n", "#comment\n"}) {
+        for (String text : new String[]{"", "Moon\n", "moon\nmoon\n", "moon\n\n", "#comment\n", "a\n"}) {
             assertThrows(IllegalStateException.class, () -> DictionaryMatcher.load(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))));
         }
         assertThrows(IllegalStateException.class, () -> DictionaryMatcher.load(new InputStream() {
@@ -74,8 +80,11 @@ class DictionaryPolicyTest {
         assertEquals("scowl-en-v1", factory.getDefaultConfigValue());
         assertFalse(factory.isMultiplSupported());
         var provider = factory.create(null);
-        for (String word : new String[]{"sunshine", "orchid", "river", "copper", "moon", "a", "i", "o"}) {
+        for (String word : new String[]{"sunshine", "orchid", "river", "copper", "moon"}) {
             assertNotNull(provider.validate("test-user", "928#" + word + "#728"), word);
+        }
+        for (String letter : new String[]{"a", "i", "o", "A", "I", "O"}) {
+            assertNull(provider.validate("test-user", "928#" + letter + "#728"), letter);
         }
         assertNull(provider.validate("test-user", "928#xq#zv#728"));
         assertNull(provider.validate("test-user", "728!$938#527+682%394=876*"));

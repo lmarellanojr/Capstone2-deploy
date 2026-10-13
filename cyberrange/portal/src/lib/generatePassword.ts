@@ -1,6 +1,6 @@
 // Temporary passwords an Admin can read out or paste to a student.
-// Digits and symbols avoid the realm's English dictionary substring rule,
-// including single-letter words. 24 characters compensate for this alphabet.
+// Digits and symbols avoid the realm's English dictionary substring rule.
+// 24 characters compensate for this alphabet.
 // Uses crypto.getRandomValues — never Math.random for credentials.
 
 const DIGIT = "23456789"

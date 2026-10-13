@@ -55,6 +55,8 @@ def test_committed_provider_jar_exists_and_matches_installer_checksum():
     assert jar.is_file() and jar.stat().st_size > 0
     pinned = re.search(r"^PINNED_JAR_SHA256=([0-9a-f]{64})$", text, re.M).group(1)
     assert hashlib.sha256(jar.read_bytes()).hexdigest() == pinned
+    # Keep one fixed destination so replacing v1 cannot leave a second SPI provider installed.
+    assert "/opt/keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar" in text
 
 
 def test_extra_spi_registration_is_refused(tmp_path):
