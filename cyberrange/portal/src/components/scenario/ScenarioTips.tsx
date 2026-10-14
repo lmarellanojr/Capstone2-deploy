@@ -46,8 +46,8 @@ const TIPS: Record<string, { title: string; body: ReactNode }> = {
     body: (
       <>
         Follow the guide <strong>Fast path</strong> on the <strong>Target: meta (lab)</strong> tab as{" "}
-        <code className="bg-white/70 px-1 rounded">msfadmin</code>: view the Tomcat users file, change
-        the default password, restart Tomcat, then confirm the old login gets{" "}
+        <code className="bg-white/70 px-1 rounded">msfadmin</code>: view the Tomcat users file with{" "}
+        <code className="bg-white/70 px-1 rounded">sudo</code>, change the default password, restart Tomcat, then confirm the old login gets{" "}
         <code className="bg-white/70 px-1 rounded">401</code> or{" "}
         <code className="bg-white/70 px-1 rounded">403</code>. Changes made on Kali won&apos;t score.
       </>
