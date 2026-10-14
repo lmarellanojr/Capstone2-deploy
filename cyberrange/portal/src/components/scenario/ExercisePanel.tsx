@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, FileDown, Info, Keyboard, ShieldAlert } from 'lucide-react'
 import { Pod } from '@/lib/api'
 import { Milestone, Scenario, getLabSurface } from '@/hooks/useScenarios'
@@ -48,6 +48,10 @@ export function ExercisePanel({
   onOpenScoringInfo,
 }: ExercisePanelProps) {
   const [guideOpen, setGuideOpen] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0
+  }, [currentTask.id])
   const isSiem = getLabSurface(scenario) === 'siem'
   const taskNumber = currentTask.guideTaskNumber ?? taskIndex + 1
 
@@ -112,7 +116,7 @@ export function ExercisePanel({
       </div>
 
       {/* Scrollable exercise instructions & status */}
-      <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0">
+      <div ref={scrollRef} data-testid="lab-exercise-scroll" className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0">
         {isSiem && scenario.brief && (
           <div className="space-y-2 text-sm text-text-muted leading-relaxed">
             {scenario.brief.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
@@ -248,8 +252,8 @@ export function ExercisePanel({
             <Keyboard size={15} className="text-text-faint shrink-0" aria-hidden="true" />
             <span>
               {getLabSurface(scenario) === 'dvwa'
-                ? 'Type the payloads into DVWA; exact payloads are in the Guide below.'
-                : 'Type the commands yourself; Copy is in the Guide below if you get stuck.'}
+                ? 'Type the payloads into DVWA; exact payloads are in the Walkthrough below.'
+                : 'Type the commands yourself; Copy is in the Walkthrough below if you get stuck.'}
             </span>
           </div>
         )}
@@ -263,7 +267,7 @@ export function ExercisePanel({
               aria-expanded={guideOpen}
               className="flex items-center gap-2 text-xs font-bold text-text-main hover:text-brand transition focus-ring"
             >
-              <span>{isSiem ? 'Guide for this task' : 'Walkthrough for this task'}</span>
+              <span>Walkthrough for this task</span>
               {guideOpen ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
             </button>
             <button
@@ -279,7 +283,8 @@ export function ExercisePanel({
           </div>
 
           {/* CRITICAL: Keep GuideView mounted so #guide-print-root portal stays active! */}
-          <div className={guideOpen ? 'p-3 block max-h-96 overflow-y-auto' : 'hidden'}>
+          {/* No inner max-height: the pane's own scroll area is the only scrollbar. */}
+          <div className={guideOpen ? 'p-3 block' : 'hidden'}>
             <GuideView
               pod={pod}
               scenario={scenario}
