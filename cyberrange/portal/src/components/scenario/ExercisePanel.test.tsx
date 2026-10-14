@@ -147,7 +147,7 @@ describe('ExercisePanel', () => {
     expect(screen.getByText('Run a host-discovery sweep')).toBeTruthy()
     expect(screen.getByText('Scan subnet for hosts')).toBeTruthy()
     expect(
-      screen.getByText(/Type the commands yourself; Copy is in the Guide below/i)
+      screen.getByText(/Type the commands yourself; Copy is in the Walkthrough below/i)
     ).toBeTruthy()
   })
 
@@ -174,7 +174,7 @@ describe('ExercisePanel', () => {
     expect(screen.getByText(/This is the one step you submit yourself\./i)).toBeTruthy()
     // The copy-the-commands hint is suppressed for the flag task.
     expect(
-      screen.queryByText(/Type the commands yourself; Copy is in the Guide below/i)
+      screen.queryByText(/Type the commands yourself; Copy is in the Walkthrough below/i)
     ).toBeNull()
   })
 
@@ -344,8 +344,38 @@ describe('ExercisePanel', () => {
     )
 
     expect(
-      screen.getByText('Type the payloads into DVWA; exact payloads are in the Guide below.')
+      screen.getByText('Type the payloads into DVWA; exact payloads are in the Walkthrough below.')
     ).toBeTruthy()
+  })
+
+  it('resets pane scroll only when the task changes', () => {
+    const props = {
+      pod: mockPod, scenario: mockScenario, currentTask: mockTask,
+      taskIndex: 0, totalTasks: 2, completed: false, isFlag: false,
+      lockedReview: false, verifying: false, milestonesLoading: false,
+      onVerify: jest.fn(), onFlagPass: jest.fn(), onRequestReview: jest.fn(),
+    }
+    const { rerender } = render(<ExercisePanel {...props} />)
+    const pane = screen.getByTestId('lab-exercise-scroll')
+    pane.scrollTop = 900
+    rerender(<ExercisePanel {...props} completed />)
+    expect(pane.scrollTop).toBe(900)
+    rerender(<ExercisePanel {...props} currentTask={{ ...mockTask, id: 2 }} taskIndex={1} />)
+    expect(pane.scrollTop).toBe(0)
+  })
+
+  it('uses one pane scrollbar and the Walkthrough label on SIEM', () => {
+    const props = {
+      pod: mockPod, scenario: { ...mockScenario, id: '09', labSurface: 'siem' as const },
+      currentTask: mockTask, taskIndex: 0, totalTasks: 1, completed: false,
+      isFlag: false, lockedReview: false, verifying: false, milestonesLoading: false,
+      onVerify: jest.fn(), onFlagPass: jest.fn(), onRequestReview: jest.fn(),
+    }
+    render(<ExercisePanel {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Walkthrough for this task' }))
+    const body = screen.getByTestId('guide-view-content').parentElement!
+    expect(body).not.toHaveClass('overflow-y-auto')
+    expect(body.className).not.toMatch(/max-h-/)
   })
 
   it('disables scoring actions and shows expired message when expired is true', () => {
