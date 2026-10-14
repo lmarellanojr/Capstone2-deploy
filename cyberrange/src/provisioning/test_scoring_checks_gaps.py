@@ -138,13 +138,48 @@ def _report(content: str) -> str:
 
 
 def test_s9_m3_real_report_passes(tmp_path):
-    body = ("The system raised alert rule 5710 for a failed SSH login attack. "
+    body = ("The system raised alert rule 5710 on pod-alice-meta for a failed SSH login attack. "
             "Evidence: auth.log and the Wazuh timeline. Recommend blocking the source, "
             "rotating credentials and tuning the detection rules for this host.\n")
     assert len(body) > 200
     f = _report(body)
     try:
-        assert run(tmp_path, 9, 3) == "PASS"
+        assert run(tmp_path, 9, 3, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m3_wrong_agent_fails(tmp_path):
+    """Correct rule 5710 but another pod's agent must FAIL the agent gate."""
+    body = (
+        "Summary: Rule 5710 on pod-bob-meta at 2026-10-01T14:32:05Z recorded a failed SSH.\n"
+        "Affected system: pod-bob-meta\n"
+        "Evidence: Open SIEM rule 5710 event matching auth.log Invalid user.\n"
+        "Interpretation: True positive failed login; no successful access observed.\n"
+        "Recommended response: Monitor for repetition; do not isolate after one lab failure.\n"
+    )
+    assert len(body) > 200
+    f = _report(body)
+    try:
+        assert run(tmp_path, 9, 3, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m3_wrong_rule_fails(tmp_path):
+    """Correct agent but only rule 5503 (no 5710) must FAIL the rule gate."""
+    body = (
+        "Summary: Rule 5503 CIS finding on pod-alice-meta at 2026-10-01T00:00:00Z.\n"
+        "Affected system: pod-alice-meta\n"
+        "Evidence: copied a CIS SIEM row, not our failed SSH attempt.\n"
+        "Interpretation: This is the wrong alert for Scenario 3 Task 0.\n"
+        "Recommended response: ignore this CIS row and reopen the SIEM for authentication events.\n"
+    )
+    assert len(body) > 200
+    assert "5710" not in body
+    f = _report(body)
+    try:
+        assert run(tmp_path, 9, 3, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
     finally:
         _bash_rm(f)
 
@@ -233,8 +268,42 @@ def test_s9_m1_filled_real_values_pass(tmp_path):
         '"notes":"2026-10-01T14:32:05Z invalid-user SSH; I pasted the SIEM time"}\n'
     )
     f = _triage(body)
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    env["SCORING_S9_EXPECTED_AGENT"] = "pod-student-meta"
     try:
-        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-student-meta"}) == "PASS"
+        assert run(tmp_path, 9, 1, extra_env=env) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_wrong_rule_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5503",'
+        '"description":"sshd: attempt to login using a non-existent user",'
+        '"agent":"pod-alice-meta","classification":"true_positive",'
+        '"notes":"2026-10-01T14:32:05Z invalid-user SSH"}\n'
+    )
+    f = _triage(body)
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    env["SCORING_S9_EXPECTED_AGENT"] = "pod-alice-meta"
+    try:
+        assert run(tmp_path, 9, 1, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_fabricated_time_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd: attempt to login using a non-existent user",'
+        '"agent":"pod-alice-meta","classification":"true_positive",'
+        '"notes":"2026-10-01T00:00:00Z invalid-user SSH"}\n'
+    )
+    f = _triage(body)
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    env["SCORING_S9_EXPECTED_AGENT"] = "pod-alice-meta"
+    try:
+        assert run(tmp_path, 9, 1, extra_env=env) == "FAIL"
     finally:
         _bash_rm(f)
 
@@ -279,14 +348,17 @@ def test_s9_m1_ascii_dots_agent_fails(tmp_path):
 
 
 def test_s9_m1_other_pod_agent_fails(tmp_path):
+    """Rule 5710 + matching auth.log time, but another pod's agent, must FAIL."""
     body = (
         '{"alert_id":"case-1","severity":"medium","rule":"5710",'
         '"description":"sshd non-existent user","agent":"pod-bob-meta",'
         '"classification":"true_positive","notes":"2026-10-01T14:32:05Z lab attempt"}\n'
     )
     f = _triage(body)
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    env["SCORING_S9_EXPECTED_AGENT"] = "pod-alice-meta"
     try:
-        assert run(tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}) == "FAIL"
+        assert run(tmp_path, 9, 1, extra_env=env) == "FAIL"
     finally:
         _bash_rm(f)
 
@@ -300,10 +372,10 @@ def test_s9_m1_fqdn_expected_agent_still_passes(tmp_path):
         '"notes":"2026-10-01T14:32:05Z invalid-user SSH; I pasted the SIEM time"}\n'
     )
     f = _triage(body)
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    env["SCORING_S9_EXPECTED_AGENT"] = "pod-alice-meta.lxd"
     try:
-        assert run(
-            tmp_path, 9, 1, extra_env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta.lxd"}
-        ) == "PASS"
+        assert run(tmp_path, 9, 1, extra_env=env) == "PASS"
     finally:
         _bash_rm(f)
 
