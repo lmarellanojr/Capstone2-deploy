@@ -1055,13 +1055,24 @@ class TestScoringChecksDirectBashExecution:
                 capture_output=True, text=True, check=True,
             )
             assert "pod-alice-meta" in shown.stdout
+            subprocess.run(
+                [_BASH_EXE, "-c", "mkdir -p /tmp && cat > /tmp/s9_authlog"],
+                input=self._S09_AUTHLOG_1432.encode("utf-8"),
+                check=True,
+            )
             rc, token, stderr = self._run_script(
-                9, 1, env={"SCORING_S9_EXPECTED_AGENT": "pod-alice-meta"}
+                9,
+                1,
+                env={
+                    "SCORING_S9_EXPECTED_AGENT": "pod-alice-meta",
+                    "S9_AUTHLOG": "/tmp/s9_authlog",
+                    "S9_NOW": "2026-10-01T14:33:05Z",
+                },
             )
             assert rc == 0, stderr
             assert token == "PASS", f"token={token!r} stderr={stderr!r} file={shown.stdout!r}"
         finally:
-            subprocess.run([_BASH_EXE, "-c", cleanup_cmd])
+            subprocess.run([_BASH_EXE, "-c", cleanup_cmd + " /tmp/s9_authlog"])
 
     # A real rule-5710 SSH event at 14:32, used to validate the claimed time.
     _S09_AUTHLOG_1432 = "Oct  1 14:32:05 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n"

@@ -38,9 +38,9 @@ Save files on **Target: meta (lab)** as `msfadmin`. **JSON** is structured text 
 
 Files on meta score automatically; there is no flag submission. A score confirms a limited check, so still review your evidence.
 
-- **Task 1:** Needs the field names, a real `pod-…-meta` agent name (not the fictional example), and either the copied `…Z` timestamp in your notes or substantial notes. Unedited `PASTE…` text does **not** score.
+- **Task 1:** Needs the field names, **your** `pod-…-meta` agent (not another learner’s), rule **5710**, and a `…Z` timestamp in the file that matches your invalid-user SSH event (±5 minutes). Wrong rule IDs, invented times, and unedited `PASTE…` text do **not** score.
 - **Task 2:** Needs rule **5710** and the same full `…Z` timestamp shown in the SIEM Time column (click the event to copy), matching your invalid-user SSH event (±5 minutes). Do not invent or reuse a time. `PASTE_SIEM_TIMESTAMP_Z`, literal `HH:MM`, and the fictional Example timestamp do **not** score.
-- **Task 3:** Needs more than **200 bytes** of your own findings plus a real response. Empty heading-only skeletons and the fictional Example report do **not** score.
+- **Task 3:** Needs more than **200 bytes** of your own findings, rule **5710**, and your own agent name. Empty heading-only skeletons, the fictional Example report, and another learner’s agent/rule do **not** score.
 
 The SIEM Time column shows the exact `YYYY-MM-DDTHH:MM:SSZ` value you paste — type or copy that string, not a locale clock like `10/13/2026, 18:39:25`.
 

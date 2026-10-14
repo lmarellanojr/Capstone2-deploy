@@ -637,10 +637,7 @@ _s9_contains_unfilled_tokens() {
 _s9_has_lab_meta_agent() {
     local f="$1" line agent lower expected expected_lower
     [[ -f "$f" ]] || return 1
-    expected="${SCORING_S9_EXPECTED_AGENT:-$(hostname 2>/dev/null)}"
-    # LXD names have no dots; strip an FQDN suffix if hostname returns one.
-    expected="${expected%%.*}"
-    [[ -n "$expected" ]] || return 1
+    expected=$(_s9_expected_agent) || return 1
     expected_lower=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
     while IFS= read -r line; do
         # LXD names: letters, digits, hyphens only — no '.' / '_' (blocks pod-...-meta).
@@ -653,20 +650,103 @@ _s9_has_lab_meta_agent() {
     return 1
 }
 
-# Scenario 9 M1 substance: copied …Z timestamp or notes value >= 40 chars.
-_s9_has_triage_substance() {
-    local f="$1" notes
+# Scenario 9 M3: report names this pod's agent.
+_s9_report_names_expected_agent() {
+    local f="$1" expected
     [[ -f "$f" ]] || return 1
-    grep -qE '20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z' "$f" 2>/dev/null && return 0
-    # Extract only the "notes":"…" value (not everything after the first colon).
-    notes=$(grep -oiE '"notes"[[:space:]]*:[[:space:]]*"[^"]*"' "$f" 2>/dev/null | head -n1)
-    [[ -n "$notes" ]] || return 1
-    notes=${notes#*\"notes\"}
-    notes=${notes#*:}
-    notes=${notes#*\"}
-    notes=${notes%\"*}
-    notes=${notes//PASTE/}
-    [[ ${#notes} -ge 40 ]] && return 0
+    expected=$(_s9_expected_agent) || return 1
+    grep -qiF "$expected" "$f" 2>/dev/null
+}
+
+# Scenario 9: file mentions rule 5710 (JSON "rule":"5710" or prose).
+_s9_mentions_rule_5710() {
+    local f="$1"
+    [[ -f "$f" ]] || return 1
+    grep -qiE '(^|[^0-9])5710([^0-9]|$)' "$f" 2>/dev/null
+}
+
+# Scenario 9: expected agent short name (hostname / test seam), FQDN-stripped.
+_s9_expected_agent() {
+    local expected
+    expected="${SCORING_S9_EXPECTED_AGENT:-$(hostname 2>/dev/null)}"
+    expected="${expected%%.*}"
+    [[ -n "$expected" ]] || return 1
+    printf '%s\n' "$expected"
+}
+
+# Scenario 9: at least one ISO …Z in the file matches a real invalid-user auth.log
+# event within +/- $2 minutes (same clock rules as M2). Rule need not share a line.
+_s9_has_real_event_timestamp() {
+    local f="$1" tol="${2:-5}"
+    local authlog="${S9_AUTHLOG:-}" path
+    local now_epoch now_year candidate_year month day clock event_epoch
+    local nearest_epoch nearest_distance distance claim_stamp claim_base claim_epoch round_trip
+    local timestamp_re='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?Z'
+    local month_number
+
+    [[ -f "$f" ]] || return 1
+    [[ "$tol" =~ ^[0-9]+$ ]] || return 1
+    if [[ -z "$authlog" ]]; then
+        for path in /var/log/auth.log /var/log/secure; do
+            if [[ -f "$path" ]]; then authlog="$path"; break; fi
+        done
+    fi
+    [[ -z "$authlog" || ! -f "$authlog" ]] && return 1
+
+    if [[ -n "${S9_NOW:-}" ]]; then
+        [[ "$S9_NOW" =~ ^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$ ]] || return 1
+        round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$S9_NOW" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || return 1
+        [[ "$round_trip" == "$S9_NOW" ]] || return 1
+        now_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "$S9_NOW" '+%s' 2>/dev/null) || return 1
+    else
+        now_epoch=$(TZ=UTC0 LC_ALL=C date -u '+%s' 2>/dev/null) || return 1
+    fi
+    now_year=$(TZ=UTC0 LC_ALL=C date -u -d "@$now_epoch" '+%Y' 2>/dev/null) || return 1
+
+    while IFS= read -r claim_stamp; do
+        [[ "$claim_stamp" =~ ^$timestamp_re$ ]] || continue
+        claim_base=$(printf '%s' "$claim_stamp" | sed -E 's/\.[0-9]{1,3}Z$/Z/')
+        round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
+        [[ "$round_trip" == "$claim_base" ]] || continue
+        claim_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%s' 2>/dev/null) || continue
+
+        while IFS= read -r event; do
+            [[ "$event" == *'flag-m1-'* ]] && continue
+            [[ "$event" =~ sshd\[[0-9]+\]:.*Invalid\ user[[:space:]]+[^[:space:]]+[[:space:]]+from[[:space:]]+[0-9A-Fa-f:.]+ ]] || continue
+            [[ "$event" =~ ^([A-Z][a-z]{2})[[:space:]]+([0-9]{1,2})[[:space:]]+([0-9]{2}:[0-9]{2}:[0-9]{2}) ]] || continue
+            month="${BASH_REMATCH[1]}"
+            day="${BASH_REMATCH[2]}"
+            clock="${BASH_REMATCH[3]}"
+            printf -v day '%02d' "$day"
+            case "$month" in
+                Jan) month_number=01 ;; Feb) month_number=02 ;; Mar) month_number=03 ;;
+                Apr) month_number=04 ;; May) month_number=05 ;; Jun) month_number=06 ;;
+                Jul) month_number=07 ;; Aug) month_number=08 ;; Sep) month_number=09 ;;
+                Oct) month_number=10 ;; Nov) month_number=11 ;; Dec) month_number=12 ;;
+                *) continue ;;
+            esac
+
+            nearest_epoch=''
+            nearest_distance=''
+            for candidate_year in "$((now_year - 1))" "$now_year" "$((now_year + 1))"; do
+                event_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "${candidate_year}-${month_number}-${day}T${clock}Z" '+%s' 2>/dev/null) || continue
+                round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "@$event_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
+                [[ "$round_trip" == "${candidate_year}-${month_number}-${day}T${clock}Z" ]] || continue
+                distance=$((event_epoch - now_epoch))
+                (( distance < 0 )) && distance=$((-distance))
+                if [[ -z "$nearest_distance" ]] || (( distance < nearest_distance )); then
+                    nearest_epoch="$event_epoch"
+                    nearest_distance="$distance"
+                fi
+            done
+            [[ -n "$nearest_epoch" ]] || continue
+
+            distance=$((claim_epoch - nearest_epoch))
+            (( distance < 0 )) && distance=$((-distance))
+            (( distance <= tol * 60 )) && return 0
+        done < <(grep -hiE 'invalid user' "$authlog" 2>/dev/null | grep -iE 'from ')
+    done < <(grep -Eo "$timestamp_re" "$f" 2>/dev/null)
+
     return 1
 }
 
@@ -791,13 +871,15 @@ check_scenario_9() {
     done
     case $milestone in
         1)
-            # M1: field names + real pod-…-meta agent + substance; reject PASTE/fiction.
+            # M1: field names + this pod's agent + rule 5710 + real …Z vs auth.log.
+            # Reject PASTE/fiction. Description wording stays flexible.
             if [[ -n "$triage" ]] \
                 && grep -qiE "alert_id|severity|rule" "$triage" 2>/dev/null \
                 && ! _s9_contains_unfilled_tokens "$triage" \
                 && ! _s9_contains_guide_fiction "$triage" \
                 && _s9_has_lab_meta_agent "$triage" \
-                && _s9_has_triage_substance "$triage"; then
+                && _s9_mentions_rule_5710 "$triage" \
+                && _s9_has_real_event_timestamp "$triage" 5; then
                 echo "PASS"
             else
                 echo "FAIL"
@@ -816,13 +898,15 @@ check_scenario_9() {
             echo "FAIL"
             ;;
         3)
-            # M3: size + keywords + body substance; reject guide §5 fingerprints.
+            # M3: size + keywords + body + this pod + rule 5710; reject §5 fiction.
             if [[ -n "$report" ]] \
                 && [[ $(wc -c < "$report") -gt 200 ]] \
                 && grep -qiE "system|attack|alert|recommend" "$report" \
                 && ! _s9_contains_guide_fiction "$report" \
                 && ! _s9_looks_like_example_report "$report" \
-                && [[ $(_s9_report_body_bytes "$report") -ge 120 ]]; then
+                && [[ $(_s9_report_body_bytes "$report") -ge 120 ]] \
+                && _s9_mentions_rule_5710 "$report" \
+                && _s9_report_names_expected_agent "$report"; then
                 echo "PASS"
             else
                 echo "FAIL"
