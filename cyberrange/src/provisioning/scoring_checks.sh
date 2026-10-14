@@ -607,12 +607,14 @@ check_scenario_8() {
 }
 
 # Scenario 9: guide fiction fingerprints (section 5 example). Fixed strings only.
+# Prefer grep -qF on lowercased text: GNU grep 3.0 (Git Bash) aborts grep -qiF.
 _s9_contains_guide_fiction() {
-    local f="$1"
+    local f="$1" lower
     [[ -f "$f" ]] || return 1
-    grep -qiF 'pod-example-meta' "$f" 2>/dev/null && return 0
-    grep -qiF 'case-example' "$f" 2>/dev/null && return 0
-    grep -qF '2026-10-10T06:32:00Z' "$f" 2>/dev/null && return 0
+    lower=$(tr '[:upper:]' '[:lower:]' < "$f" 2>/dev/null) || return 1
+    grep -qF 'pod-example-meta' <<< "$lower" 2>/dev/null && return 0
+    grep -qF 'case-example' <<< "$lower" 2>/dev/null && return 0
+    grep -qF '2026-10-10t06:32:00z' <<< "$lower" 2>/dev/null && return 0
     return 1
 }
 
@@ -651,11 +653,14 @@ _s9_has_lab_meta_agent() {
 }
 
 # Scenario 9 M3: report names this pod's agent.
+# Avoid grep -qiF: GNU grep 3.0 (Git Bash) aborts that flag combo (exit 134).
 _s9_report_names_expected_agent() {
-    local f="$1" expected
+    local f="$1" expected expected_lower
     [[ -f "$f" ]] || return 1
     expected=$(_s9_expected_agent) || return 1
-    grep -qiF "$expected" "$f" 2>/dev/null
+    expected_lower=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
+    # LXD agent names are [A-Za-z0-9-]; -qiE is safe and portable here.
+    grep -qiE "$expected_lower" "$f" 2>/dev/null
 }
 
 # Scenario 9: file mentions rule 5710 (JSON "rule":"5710" or prose).
@@ -762,11 +767,12 @@ _s9_report_body_bytes() {
 
 # Scenario 9 M3: lightly edited §5 example (need ≥2 of 3 fingerprints).
 _s9_looks_like_example_report() {
-    local f="$1" hits=0
+    local f="$1" hits=0 lower
     [[ -f "$f" ]] || return 1
-    grep -qiF 'pod-example-meta' "$f" 2>/dev/null && hits=$((hits + 1))
-    grep -qiF '10 October 2026' "$f" 2>/dev/null && hits=$((hits + 1))
-    grep -qiF 'nonexistent-user SSH attempt' "$f" 2>/dev/null && hits=$((hits + 1))
+    lower=$(tr '[:upper:]' '[:lower:]' < "$f" 2>/dev/null) || return 1
+    grep -qF 'pod-example-meta' <<< "$lower" 2>/dev/null && hits=$((hits + 1))
+    grep -qF '10 october 2026' <<< "$lower" 2>/dev/null && hits=$((hits + 1))
+    grep -qF 'nonexistent-user ssh attempt' <<< "$lower" 2>/dev/null && hits=$((hits + 1))
     (( hits >= 2 ))
 }
 
