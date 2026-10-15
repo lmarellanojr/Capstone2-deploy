@@ -41,6 +41,7 @@ const EVENTS: Record<string, EventInfo> = {
   WAZUH_ENROLL_OK: { label: "SIEM monitoring connected", description: "The lab machines report to the Wazuh SIEM.", category: "lab" },
   WAZUH_ENROLL_FAIL: { label: "SIEM monitoring failed", description: "The lab machines could not be connected to the Wazuh SIEM.", category: "lab" },
   WAZUH_STALE_AGENT: { label: "Lab blocked by old SIEM agent", description: "A Wazuh agent from an earlier lab is still registered, so the lab was refused. Remove the old agent, then retry.", category: "lab" },
+  WAZUH_CLEANUP_SKIPPED: { label: "SIEM clean-up skipped", description: "Old Wazuh agents were not removed because the provisioner user is not set up on this host. A student's next lab may be refused until an operator removes them.", category: "lab" },
   POD_TTL_REAP: { label: "Lab expired", description: "The lab reached its time limit and was removed automatically.", category: "lab" },
   POD_STUCK_PROVISIONING_REAP: { label: "Stuck lab start cleaned up", description: "A lab stuck while starting was cleaned up automatically.", category: "lab" },
   POD_STUCK_DESTROYING_REAP: { label: "Stuck lab removal retried", description: "A lab stuck while being removed was removed again automatically.", category: "lab" },
@@ -214,6 +215,7 @@ const KEY_LABELS: Record<string, string> = {
   manager: "SIEM manager",
   agents: "SIEM agents",
   port: "Port",
+  source: "Step",
 }
 
 // users_router / pods_router reason= codes.
@@ -230,6 +232,13 @@ const REASONS: Record<string, string> = {
   password_policy: "the password doesn't meet the policy",
   not_found: "the lab no longer exists",
   state: "the lab wasn't in a state that can be destroyed",
+  provisioner_not_configured: "the Wazuh provisioner user isn't set up on this host",
+}
+
+// WAZUH_CLEANUP_SKIPPED source= values (wazuh_client._audit_cleanup_skipped).
+const SOURCES: Record<string, string> = {
+  teardown: "lab teardown",
+  remove_by_name: "lab start (old agent names)",
 }
 
 function titleCase(value: string): string {
@@ -240,6 +249,7 @@ function formatValue(key: string, value: string): string {
   if (value === "True") return "Yes"
   if (value === "False") return "No"
   if (key === "review_id") return `#${value}`
+  if (key === "source") return SOURCES[value] ?? value.replace(/_/g, " ")
   if (["role", "previous", "status", "previous_status"].includes(key)) return titleCase(value)
   return value
 }

@@ -15,6 +15,7 @@ from config import (
     WAZUH_URL,
     WAZUH_USER,
 )
+from db import log_event
 
 logger = logging.getLogger("provision_api")
 
@@ -91,6 +92,27 @@ def get_provision_token(timeout=None):
             "WAZUH_PROVISION_PW in the API .env."
         )
     return _authenticate(WAZUH_PROVISION_USER, WAZUH_PROVISION_PASS, timeout)
+
+
+def provisioner_configured() -> bool:
+    return bool(WAZUH_PROVISION_USER and WAZUH_PROVISION_PASS)
+
+
+def _audit_cleanup_skipped(student_id, source: str) -> None:
+    """Record that lab-agent cleanup was skipped because the provisioner user is
+    not set up, so an admin can see why the next lab is refused with
+    WAZUH_STALE_AGENT. Silent on hosts with no Wazuh scoring at all, and never
+    raises: cleanup must not block provisioning or teardown."""
+    if not (WAZUH_USER and WAZUH_PASS):
+        return
+    try:
+        log_event(
+            "WAZUH_CLEANUP_SKIPPED",
+            student_id=student_id or None,
+            detail=f"source={source} reason=provisioner_not_configured",
+        )
+    except Exception as e:
+        logger.warning(f"could not audit skipped agent cleanup: {e}")
 
 
 def get_agent_id_by_name(token: str, name: str):
@@ -229,6 +251,13 @@ def remove_agents_named(student_id: str) -> list:
     teardown, so failures are logged instead."""
     if not student_id:
         return []
+    if not provisioner_configured():
+        logger.warning(
+            f"agent cleanup by name skipped for {student_id!r}: Wazuh agent cleanup "
+            "is not configured: set WAZUH_PROVISION_USER and WAZUH_PROVISION_PW in the API .env."
+        )
+        _audit_cleanup_skipped(student_id, "remove_by_name")
+        return []
     try:
         token = get_provision_token()
         removed = []
@@ -246,6 +275,14 @@ def deregister_agents(wazuh_agent_id, student_id=None):
     """Remove a lab's agents at teardown: the ids stored at enrolment, plus any
     agent still registered under the lab's names (labs whose enrolment couldn't
     read ids back never stored them, so id-only cleanup missed those)."""
+    if not provisioner_configured():
+        logger.warning(
+            "agent de-registration skipped: Wazuh agent cleanup is not configured: "
+            "set WAZUH_PROVISION_USER and WAZUH_PROVISION_PW in the API .env."
+        )
+        if wazuh_agent_id or student_id:
+            _audit_cleanup_skipped(student_id, "teardown")
+        return
     try:
         ids = {}
         if wazuh_agent_id:
