@@ -83,18 +83,31 @@ elif actor == "wazuh":
         gone = {int(x) for x in q["user_ids"][0].split(",")}
         st["users"] = {k: v for k, v in st["users"].items() if v["id"] not in gone}
     elif path == "/security/roles" and method == "GET":
-        payload = {"data": {"affected_items": list(st["roles"].values())}}
-    elif path == "/security/roles" and method == "POST":
-        r = json.loads(body); r["id"] = nid(); r["policy_ids"] = []; st["roles"][r["name"]] = r; payload = item(id=r["id"])
-    elif re.fullmatch(r"/security/roles/\d+/policies", path):
+        want = {int(x) for x in q.get("role_ids", [""])[0].split(",") if x}
+        payload = {"data": {"affected_items": [r for r in st["roles"].values() if not want or r["id"] in want]}}
+    elif re.fullmatch(r"/security/roles/\d+/policies", path) and method == "DELETE":
         rid = int(path.split("/")[3])
         for r in st["roles"].values():
             if r["id"] == rid:
-                r["policy_ids"] = sorted(set(r["policy_ids"]) | {int(x) for x in q["policy_ids"][0].split(",")})
+                r["policies"] = [x for x in r["policies"] if x not in {int(y) for y in q["policy_ids"][0].split(",")}]
+    elif re.fullmatch(r"/security/users/\d+/roles", path) and method == "DELETE":
+        uid = int(path.split("/")[3])
+        for v in st["users"].values():
+            if v["id"] == uid:
+                v["roles"] = [x for x in v["roles"] if x not in {int(y) for y in q["role_ids"][0].split(",")}]
+    elif path == "/security/roles" and method == "POST":
+        r = json.loads(body); r["id"] = nid(); r["policies"] = []; st["roles"][r["name"]] = r; payload = item(id=r["id"])
+    elif re.fullmatch(r"/security/roles/\d+/policies", path):
+        rid = int(path.split("/")[3])
+        for r in st["roles"].values():
+            if r["id"] == rid and not os.environ.get("FAKE_LINK_FAIL"):
+                r["policies"] = sorted(set(r["policies"]) | {int(x) for x in q["policy_ids"][0].split(",")})
     elif path == "/security/users" and method == "GET":
-        payload = {"data": {"affected_items": [{"id": v["id"], "username": k} for k, v in st["users"].items()]}}
+        want = {int(x) for x in q.get("user_ids", [""])[0].split(",") if x}
+        payload = {"data": {"affected_items": [{"id": v["id"], "username": k, "roles": v["roles"]}
+                                               for k, v in st["users"].items() if not want or v["id"] in want]}}
     elif path == "/security/users" and method == "POST":
-        b = json.loads(body); st["users"][b["username"]] = {"id": nid(), "password": b["password"], "role_ids": []}
+        b = json.loads(body); st["users"][b["username"]] = {"id": nid(), "password": b["password"], "roles": []}
         payload = item(id=st["users"][b["username"]]["id"])
     elif re.fullmatch(r"/security/users/\d+", path) and method == "PUT":
         uid = int(path.split("/")[3])
@@ -105,16 +118,16 @@ elif actor == "wazuh":
         uid = int(path.split("/")[3])
         for v in st["users"].values():
             if v["id"] == uid:
-                v["role_ids"] = sorted(set(v["role_ids"]) | {int(x) for x in q["role_ids"][0].split(",")})
+                v["roles"] = sorted(set(v["roles"]) | {int(x) for x in q["role_ids"][0].split(",")})
 elif actor == "provisioner":
     user = st["users"]["provisioner"]
-    role = next((r for r in st["roles"].values() if r["id"] in user["role_ids"]), None)
+    role = next((r for r in st["roles"].values() if r["id"] in user["roles"]), None)
     can_read = role is not None
     if path == "/agents" and method == "GET":
         code = 200 if can_read else 403
     elif path == "/security/users" and method == "POST":
         if os.environ.get("FAKE_WIDE"):  # a too-wide role really creates the account
-            b = json.loads(body); st["users"][b["username"]] = {"id": nid(), "password": b["password"], "role_ids": []}
+            b = json.loads(body); st["users"][b["username"]] = {"id": nid(), "password": b["password"], "roles": []}
             code = 200
         else:
             code = 403
@@ -171,8 +184,8 @@ def test_creates_a_least_privilege_role_and_updates_env_in_place(host):
     allow, deny = st["policies"]["provisioner_agents"]["policy"], st["policies"]["provisioner_deny_000"]["policy"]
     assert allow == {"actions": ["agent:read", "agent:delete"], "resources": ["agent:id:*"], "effect": "allow"}
     assert deny == {"actions": ["agent:delete"], "resources": ["agent:id:000"], "effect": "deny"}
-    assert sorted(st["roles"]["provisioner"]["policy_ids"]) == sorted(p["id"] for p in st["policies"].values())
-    assert st["users"]["provisioner"]["role_ids"] == [st["roles"]["provisioner"]["id"]]
+    assert sorted(st["roles"]["provisioner"]["policies"]) == sorted(p["id"] for p in st["policies"].values())
+    assert st["users"]["provisioner"]["roles"] == [st["roles"]["provisioner"]["id"]]
 
     env = _env(host)
     assert env["WAZUH_PROVISION_USER"] == "provisioner"
@@ -257,3 +270,37 @@ def test_wrong_admin_password_is_reported_and_creates_nothing(host):
     assert res.returncode != 0 and "could not authenticate" in res.stderr
     assert "wrong" not in res.stdout + res.stderr.replace("wrong password", "")
     assert not _env(host).get("WAZUH_PROVISION_PW")
+
+
+def _seed(tmp_path, **parts):
+    base = {"policies": {}, "roles": {}, "users": {}, "calls": [], "next": 100, "admin_pw": ADMIN_PW}
+    base.update(parts)
+    (tmp_path / "state.json").write_text(json.dumps(base))
+
+
+def test_extra_policies_on_the_role_are_removed(host, tmp_path):
+    readonly_all = {"id": 5, "name": "agents_all_agents", "policy": {"actions": ["agent:*"], "resources": ["agent:id:*"], "effect": "allow"}}
+    _seed(tmp_path, policies={"agents_all_agents": readonly_all},
+          roles={"provisioner": {"id": 6, "name": "provisioner", "policies": [5]}})
+    res = host()
+    assert res.returncode == 0, res.stderr
+    assert "removing unexpected role provisioner policies [5]" in res.stderr
+    names = {p["id"]: n for n, p in host.state()["policies"].items()}
+    assert sorted(names[i] for i in host.state()["roles"]["provisioner"]["policies"]) == ["provisioner_agents", "provisioner_deny_000"]
+
+
+def test_a_user_with_another_role_is_reduced_to_the_provisioner_role(host, tmp_path):
+    _seed(tmp_path, roles={"readonly": {"id": 2, "name": "readonly", "policies": []}},
+          users={"provisioner": {"id": 9, "password": "Old-Passw0rd!x", "roles": [2]}})
+    host.env_file.write_text("WAZUH_PROVISION_PW=Old-Passw0rd!x" + chr(10))
+    res = host()
+    assert res.returncode == 0, res.stderr
+    assert "removing unexpected user provisioner roles [2]" in res.stderr
+    assert host.state()["users"]["provisioner"]["roles"] == [host.state()["roles"]["provisioner"]["id"]]
+
+
+def test_a_link_that_did_not_take_is_refused_and_env_untouched(host):
+    before = host.env_file.read_text()
+    res = host(FAKE_LINK_FAIL="1")
+    assert res.returncode != 0 and "expected" in res.stderr and "not writing" in res.stderr
+    assert host.env_file.read_text() == before

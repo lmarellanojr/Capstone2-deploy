@@ -85,6 +85,35 @@ for it in json.load(sys.stdin).get("data", {}).get("affected_items", []):
         print(it["id"]); break'
 }
 
+# list_ids <get-path> <field> -> sorted ids of that field on the first item, comma-joined
+list_ids() {
+  api admin.cfg GET "$1" | FIELD="$2" "$PY" -c '
+import json, os, sys
+items = json.load(sys.stdin).get("data", {}).get("affected_items", [])
+print(",".join(str(i) for i in sorted(items[0].get(os.environ["FIELD"], []))) if items else "")'
+}
+
+# exact_links <label> <get-path> <field> <wanted-csv> <unlink-path> <unlink-param>
+# Read the links back instead of trusting the link call's status: remove anything that is
+# not wanted, then require the exact set. A 403 from the probes below cannot show that
+# agent:delete was granted, so the stored role and user are what we verify.
+exact_links() {
+  local have extra
+  have="$(list_ids "$2" "$3")"
+  if [ "$have" != "$4" ]; then
+    extra="$(HAVE="$have" WANT="$4" "$PY" -c '
+import os
+h = set(filter(None, os.environ["HAVE"].split(","))); w = set(filter(None, os.environ["WANT"].split(",")))
+print(",".join(sorted(h - w, key=int)))')"
+    if [ -n "$extra" ]; then
+      echo "setup_wazuh_provisioner: removing unexpected $1 [$extra]" >&2
+      api admin.cfg DELETE "$5?$6=$extra" >/dev/null
+    fi
+    have="$(list_ids "$2" "$3")"
+  fi
+  [ "$have" = "$4" ] || die "$1 are [$have], expected [$4]; not writing ${API_ENV}"
+}
+
 ADMIN_TOKEN="$(authenticate "$ADMIN_USER" "$ADMIN_PW")"
 [ -n "$ADMIN_TOKEN" ] || die "could not authenticate as ${ADMIN_USER} against ${WZ} (wrong password, or CA/URL problem)"
 write_token_cfg "$ADMIN_TOKEN" admin.cfg
@@ -146,7 +175,13 @@ else
 fi
 api admin.cfg POST "/security/users/${USER_ID}/roles?role_ids=${ROLE_ID}" >/dev/null
 
-# --- prove the role before trusting it ---
+# --- the stored role and user must be exactly what was intended ---
+WANT_POLICIES="$(printf '%s
+' "$ALLOW_ID" "$DENY_ID" | sort -n | paste -sd, -)"
+exact_links "role ${ROLE} policies" "/security/roles?role_ids=${ROLE_ID}" policies "$WANT_POLICIES"   "/security/roles/${ROLE_ID}/policies" policy_ids
+exact_links "user ${PROV_USER} roles" "/security/users?user_ids=${USER_ID}" roles "$ROLE_ID"   "/security/users/${USER_ID}/roles" role_ids
+
+# --- probe the role before trusting it (necessary, not sufficient: see exact_links) ---
 PROV_TOKEN="$(authenticate "$PROV_USER" "$PROV_PW")"
 [ -n "$PROV_TOKEN" ] || die "could not authenticate as ${PROV_USER}"
 write_token_cfg "$PROV_TOKEN" prov.cfg
@@ -193,6 +228,7 @@ os.replace(tmp, path)
 os.chmod(path, 0o600)
 PYEOF
 
-echo "provisioner user ready: GET /agents 200, POST /security/users 403, DELETE agent 000 403."
+echo "provisioner user ready: the role holds exactly the allow and deny policies, the user holds only that role,"
+echo "and GET /agents is 200, POST /security/users 403, DELETE agent 000 403."
 echo "WAZUH_PROVISION_USER and WAZUH_PROVISION_PW are set in ${API_ENV} (mode 600)."
 echo "Next: systemctl --user restart cyberrange-provision-api.service"

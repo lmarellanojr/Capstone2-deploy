@@ -192,9 +192,11 @@ shows the cause as `agent cleanup by name skipped ... Wazuh agent cleanup is not
 configured`, and `/admin/audit` shows **SIEM clean-up skipped**.
 
 Run the script. It creates a `provisioner` user whose role holds only `agent:read`
-and `agent:delete` (deny `agent:delete` on the manager, agent `000`), proves that
-with three calls, and only then writes `WAZUH_PROVISION_USER` and
-`WAZUH_PROVISION_PW` into `~/cyberrange/env/.env`:
+and `agent:delete` (deny `agent:delete` on the manager, agent `000`). It reads the
+stored policies, role and user back and requires them to match exactly (it corrects
+a stale same-named policy and removes any extra policy or role), runs three probe
+calls, and only then writes `WAZUH_PROVISION_USER` and `WAZUH_PROVISION_PW` into
+`~/cyberrange/env/.env`:
 
 ```bash
 read -rs WAZUH_ADMIN_PW; export WAZUH_ADMIN_PW   # the Step 2 password; not echoed
@@ -204,8 +206,9 @@ systemctl --user restart cyberrange-provision-api.service
 ```
 
 A passing run ends with `GET /agents 200, POST /security/users 403, DELETE agent
-000 403`. If any of the three is different, the script stops and leaves `.env`
-untouched. It is safe to run again: it reuses what it finds and keeps the stored
+000 403`. A 403 on agent `000` only shows the manager is protected, not that delete
+is granted, which is why the stored role is checked as well. If anything differs, the
+script stops and leaves `.env` untouched. It is safe to run again: it reuses what it finds and keeps the stored
 password. It never prints a password.
 
 > Do not attach the built-in `agents_all_agents` role, and do not set
