@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, ScrollText, X } from "lucide-react";
+import { Download, RefreshCw, ScrollText, X } from "lucide-react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, Button, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
@@ -19,6 +19,14 @@ import {
   auditResultVariant,
   humanizeAuditFacts,
 } from "@/lib/auditEvents";
+import {
+  AUDIT_CSV_MAX_ROWS,
+  auditCsvFilename,
+  buildAuditCsv,
+  fetchAuditEventsForCsv,
+  saveCsvBlob,
+} from "@/lib/auditCsv";
+import { backendDetail } from "@/lib/errorHandler";
 import { formatSqliteDate } from "@/lib/sqliteTime";
 
 const RESULTS = ["OK", "FAILED", "DENIED"];
@@ -38,6 +46,9 @@ export default function AdminAuditLogPage() {
   const [result, setResult] = useState("");
   const [userInput, setUserInput] = useState("");
   const [studentId, setStudentId] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
 
   // Debounce the free-text user filter; the selects apply immediately.
   useEffect(() => {
@@ -54,11 +65,48 @@ export default function AdminAuditLogPage() {
   });
   // The Event dropdown only offers types that exist and belong to the tab.
   const typeOptions = eventTypes.filter((t) => category === "all" || auditEventCategory(t) === category);
-  const filtered = Boolean(eventType || result || studentId);
+  const filtered = Boolean(eventType || result || studentId || userInput.trim());
+
+  // Drop a finished download message as soon as the filters it described change.
+  useEffect(() => {
+    setDownloadError(null);
+    setDownloadStatus(null);
+  }, [eventType, category, result, userInput]);
 
   const chooseCategory = (next: AuditCategory | "all") => {
+    if (downloading) return;
     setCategory(next);
     if (eventType && next !== "all" && auditEventCategory(eventType) !== next) setEventType("");
+  };
+
+  const downloadCsv = async () => {
+    setDownloading(true);
+    setDownloadError(null);
+    setDownloadStatus(null);
+    try {
+      // Use the box text, not the debounced table filter, so Download matches the screen.
+      const { events: rows, truncated } = await fetchAuditEventsForCsv({
+        eventType,
+        eventTypes: categoryTypes,
+        result,
+        studentId: userInput.trim(),
+      });
+      if (rows.length === 0) {
+        setDownloadStatus("No events match these filters.");
+        return;
+      }
+      const name = auditCsvFilename();
+      saveCsvBlob(buildAuditCsv(rows), name);
+      setDownloadStatus(
+        truncated
+          ? `Downloaded the newest ${AUDIT_CSV_MAX_ROWS.toLocaleString()} matching events as ${name}. Narrow the filters to export the rest.`
+          : `Downloaded ${rows.length.toLocaleString()} event${rows.length === 1 ? "" : "s"} as ${name}.`
+      );
+    } catch (err) {
+      setDownloadError(backendDetail(err));
+    } finally {
+      setDownloading(false);
+    }
   };
 
   if (forbidden) {
@@ -79,10 +127,22 @@ export default function AdminAuditLogPage() {
           <h1 className="text-2xl sm:text-3xl font-bold text-text-main">Audit log</h1>
           <p className="text-text-muted mt-1">Who did what, newest first. Read-only.</p>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
-          <RefreshCw size={14} aria-hidden="true" className={loading ? "animate-spin" : ""} />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void downloadCsv()}
+            loading={downloading}
+            disabled={loading || downloading}
+          >
+            {!downloading && <Download size={14} aria-hidden="true" />}
+            Download CSV
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading || downloading}>
+            <RefreshCw size={14} aria-hidden="true" className={loading ? "animate-spin" : ""} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div role="group" aria-label="Event category" className="mb-4 inline-flex flex-wrap rounded-lg border border-border bg-secondary p-1">
@@ -92,7 +152,8 @@ export default function AdminAuditLogPage() {
             type="button"
             onClick={() => chooseCategory(c.id)}
             aria-pressed={category === c.id}
-            className={`rounded-md px-3 py-1.5 text-sm font-semibold focus-ring ${
+            disabled={downloading}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold focus-ring disabled:opacity-50 disabled:cursor-not-allowed ${
               category === c.id ? "bg-brand text-white" : "text-text-muted hover:text-text-main"
             }`}
           >
@@ -104,7 +165,12 @@ export default function AdminAuditLogPage() {
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <label className="text-sm">
           <span className="block font-semibold text-text-main mb-1">Event</span>
-          <select className={select} value={eventType} onChange={(e) => setEventType(e.target.value)}>
+          <select
+            className={select}
+            value={eventType}
+            disabled={downloading}
+            onChange={(e) => setEventType(e.target.value)}
+          >
             <option value="">All events</option>
             {typeOptions.map((t) => (
               <option key={t} value={t}>
@@ -115,7 +181,12 @@ export default function AdminAuditLogPage() {
         </label>
         <label className="text-sm">
           <span className="block font-semibold text-text-main mb-1">Result</span>
-          <select className={select} value={result} onChange={(e) => setResult(e.target.value)}>
+          <select
+            className={select}
+            value={result}
+            disabled={downloading}
+            onChange={(e) => setResult(e.target.value)}
+          >
             <option value="">Any result</option>
             {RESULTS.map((r) => (
               <option key={r} value={r}>
@@ -129,21 +200,23 @@ export default function AdminAuditLogPage() {
           <input
             type="search"
             value={userInput}
+            disabled={downloading}
             onChange={(e) => setUserInput(e.target.value)}
             placeholder="Exact username"
-            className={`${select} w-48`}
+            className={`${select} w-48 disabled:opacity-50 disabled:cursor-not-allowed`}
           />
         </label>
         {filtered && (
           <button
             type="button"
+            disabled={downloading}
             onClick={() => {
               setEventType("");
               setResult("");
               setUserInput("");
               setStudentId("");
             }}
-            className="inline-flex items-center gap-1 pb-2 text-sm font-semibold text-brand hover:underline rounded focus-ring"
+            className="inline-flex items-center gap-1 pb-2 text-sm font-semibold text-brand hover:underline rounded focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X size={14} aria-hidden="true" />
             Clear filters
@@ -155,6 +228,21 @@ export default function AdminAuditLogPage() {
         <div role="alert" className="mb-4 p-3 alert-error text-sm">
           {error}
         </div>
+      )}
+      {downloadError && (
+        <div role="alert" className="mb-4 p-3 alert-error text-sm">
+          {downloadError}
+        </div>
+      )}
+      {downloadStatus && (
+        <p
+          role="status"
+          className={`mb-4 text-sm ${
+            downloadStatus === "No events match these filters." ? "text-text-muted" : "text-success"
+          }`}
+        >
+          {downloadStatus}
+        </p>
       )}
 
       <div className="card-surface overflow-hidden">

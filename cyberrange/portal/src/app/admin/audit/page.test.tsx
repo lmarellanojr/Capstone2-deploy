@@ -24,6 +24,17 @@ const ROWS = [
   { id: 2, event_type: "ADMIN_USER_ROLE_SET", student_id: "student2", pod_id: null, vmid: null, result: "OK", detail: "actor=admin_demo role=instructor previous=student", timestamp: "2026-10-15 00:58:00" },
 ]
 
+function stubCsvAnchorClick() {
+  const click = jest.fn()
+  const originalCreate = Document.prototype.createElement
+  const spy = jest.spyOn(document, "createElement").mockImplementation(function (this: Document, tag: string, options?: ElementCreationOptions) {
+    const el = originalCreate.call(this, tag, options)
+    if (tag === "a") (el as HTMLAnchorElement).click = click
+    return el
+  })
+  return { click, spy }
+}
+
 beforeEach(() => {
   listAuditLog.mockReset()
   listAuditLog.mockResolvedValue({
@@ -31,6 +42,12 @@ beforeEach(() => {
     next_before_id: null,
     event_types: ["ADMIN_USER_ROLE_SET", "PROVISION_FAILED", "REVIEW_CASE_RESOLVED"],
   })
+  ;(URL as unknown as { createObjectURL: jest.Mock }).createObjectURL = jest.fn(() => "blob:audit")
+  ;(URL as unknown as { revokeObjectURL: jest.Mock }).revokeObjectURL = jest.fn()
+})
+
+afterEach(() => {
+  jest.restoreAllMocks()
 })
 
 it("opens on admin actions and asks only for admin event types", async () => {
@@ -68,4 +85,46 @@ it("All sends no type restriction and offers every type in the dropdown", async 
   expect(listAuditLog.mock.calls[1][0].eventTypes).toEqual([])
   const options = within(screen.getByLabelText("Event")).getAllByRole("option").map((o) => o.textContent)
   expect(options).toEqual(["All events", "Role changed", "Lab failed to start", "Review graded"])
+})
+
+it("Download CSV reuses the current filters and saves a file", async () => {
+  const { click } = stubCsvAnchorClick()
+
+  render(<AdminAuditLogPage />)
+  await screen.findByRole("table")
+  const initialCalls = listAuditLog.mock.calls.length
+  fireEvent.click(screen.getByRole("button", { name: "Download CSV" }))
+
+  await waitFor(() => expect(click).toHaveBeenCalled())
+  const downloadCall = listAuditLog.mock.calls[initialCalls][0]
+  expect(downloadCall.eventTypes).toContain("ADMIN_USER_ROLE_SET")
+  expect(downloadCall.eventTypes).not.toContain("PROVISION_FAILED")
+  expect(downloadCall.limit).toBe(500)
+  expect(URL.createObjectURL).toHaveBeenCalled()
+  expect(screen.getByRole("status")).toHaveTextContent(/Downloaded 3 events as audit_log_/)
+})
+
+it("Download CSV uses the Affected user box before the debounce lands", async () => {
+  const { click } = stubCsvAnchorClick()
+
+  render(<AdminAuditLogPage />)
+  await screen.findByRole("table")
+  const initialCalls = listAuditLog.mock.calls.length
+  fireEvent.change(screen.getByPlaceholderText("Exact username"), { target: { value: "student2" } })
+  fireEvent.click(screen.getByRole("button", { name: "Download CSV" }))
+
+  await waitFor(() => expect(click).toHaveBeenCalled())
+  expect(listAuditLog.mock.calls[initialCalls][0].studentId).toBe("student2")
+})
+
+it("clears the download status when filters change", async () => {
+  const { click } = stubCsvAnchorClick()
+
+  render(<AdminAuditLogPage />)
+  await screen.findByRole("table")
+  fireEvent.click(screen.getByRole("button", { name: "Download CSV" }))
+  await waitFor(() => expect(click).toHaveBeenCalled())
+  expect(screen.getByRole("status")).toBeInTheDocument()
+  fireEvent.click(screen.getByRole("button", { name: "Lab activity" }))
+  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument())
 })
