@@ -35,8 +35,8 @@ export function StudentAlertsPanel({ studentId, activePod, scenarioId }: Student
         </span>
       </div>
       <p className="text-xs text-text-muted mb-4">
-        The Wazuh alerts that fired on this student&apos;s current lab, the same view they see. Compare the
-        rule IDs and times in their report with what actually fired.
+        The Wazuh alerts that fired on this student&apos;s current lab, the same view they see. Filter by
+        search text, rule, agent, or severity to check specific log lines against their report.
       </p>
 
       {running ? (
@@ -54,7 +54,8 @@ export function StudentAlertsPanel({ studentId, activePod, scenarioId }: Student
 
       <h3 className="text-sm font-semibold text-text-main mt-6 mb-2">Past labs</h3>
       <p className="text-xs text-text-muted mb-3">
-        Alerts from any lab this student has run, read from the SIEM&apos;s daily archives.
+        Alerts from any lab this student has run, read from the SIEM&apos;s daily archives. Open a lab,
+        then use the same search and rule/agent/severity filters as the live view.
       </p>
       <LabHistory studentId={studentId} scenarioId={scenarioId} />
     </section>

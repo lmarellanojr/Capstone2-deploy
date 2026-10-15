@@ -118,22 +118,29 @@ export type AlertFilters = {
   ruleId: string
   agent: string
   severity: SeverityBand | ''
+  /** Case-insensitive match against rule id, description, or agent name. */
+  query: string
 }
 
-export const NO_FILTERS: AlertFilters = { ruleId: '', agent: '', severity: '' }
+export const NO_FILTERS: AlertFilters = { ruleId: '', agent: '', severity: '', query: '' }
 
 export function hasActiveFilters(f: AlertFilters): boolean {
-  return f.ruleId !== '' || f.agent !== '' || f.severity !== ''
+  return f.ruleId !== '' || f.agent !== '' || f.severity !== '' || f.query.trim() !== ''
 }
 
 export function filterAlerts(alerts: SiemAlert[], f: AlertFilters): SiemAlert[] {
   if (!hasActiveFilters(f)) return alerts
-  return alerts.filter(
-    (a) =>
-      (f.ruleId === '' || a.rule_id === f.ruleId) &&
-      (f.agent === '' || a.agent_name === f.agent) &&
-      (f.severity === '' || severityBand(a.rule_level) === f.severity)
-  )
+  const needle = f.query.trim().toLowerCase()
+  return alerts.filter((a) => {
+    if (f.ruleId !== '' && a.rule_id !== f.ruleId) return false
+    if (f.agent !== '' && a.agent_name !== f.agent) return false
+    if (f.severity !== '' && severityBand(a.rule_level) !== f.severity) return false
+    if (needle) {
+      const haystack = `${a.rule_id} ${a.rule_description} ${a.agent_name}`.toLowerCase()
+      if (!haystack.includes(needle)) return false
+    }
+    return true
+  })
 }
 
 export type AlertFilterOptions = {
@@ -170,6 +177,8 @@ export function describeFilters(f: AlertFilters): string {
     const label = SEVERITY_OPTIONS.find((o) => o.value === f.severity)?.label ?? f.severity
     parts.push(`severity ${label}`)
   }
+  const q = f.query.trim()
+  if (q) parts.push(`text "${q}"`)
   return parts.join(', ')
 }
 
