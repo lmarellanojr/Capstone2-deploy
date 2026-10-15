@@ -41,6 +41,13 @@ describe("csvField", () => {
     expect(csvField('say "hi"')).toBe('"say ""hi"""')
     expect(csvField("line1\nline2")).toBe('"line1\nline2"')
   })
+
+  it("prefixes spreadsheet formula-leading cells", () => {
+    expect(csvField('=HYPERLINK("http://evil","x")')).toBe(`"'=HYPERLINK(""http://evil"",""x"")"`)
+    expect(csvField("+cmd")).toBe("'+cmd")
+    expect(csvField("-1+1")).toBe("'-1+1")
+    expect(csvField("@sum")).toBe("'@sum")
+  })
 })
 
 describe("auditEventToCsvRow", () => {

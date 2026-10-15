@@ -60,10 +60,13 @@ export const AUDIT_CSV_HEADERS = [
   "Raw detail",
 ] as const
 
-/** RFC 4180 field: quote when needed; double any embedded quotes. */
+/** Neutralize spreadsheet formulas, then RFC 4180-quote when needed.
+ *  Same rule as csvEscape in the instructor CSV helper (not on main yet). */
 export function csvField(value: string): string {
-  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
-  return value
+  let text = value
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
+  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`
+  return text
 }
 
 export function auditEventToCsvRow(event: AuditEvent): string[] {

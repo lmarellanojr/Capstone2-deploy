@@ -65,9 +65,16 @@ export default function AdminAuditLogPage() {
   });
   // The Event dropdown only offers types that exist and belong to the tab.
   const typeOptions = eventTypes.filter((t) => category === "all" || auditEventCategory(t) === category);
-  const filtered = Boolean(eventType || result || studentId);
+  const filtered = Boolean(eventType || result || studentId || userInput.trim());
+
+  // Drop a finished download message as soon as the filters it described change.
+  useEffect(() => {
+    setDownloadError(null);
+    setDownloadStatus(null);
+  }, [eventType, category, result, userInput]);
 
   const chooseCategory = (next: AuditCategory | "all") => {
+    if (downloading) return;
     setCategory(next);
     if (eventType && next !== "all" && auditEventCategory(eventType) !== next) setEventType("");
   };
@@ -77,11 +84,12 @@ export default function AdminAuditLogPage() {
     setDownloadError(null);
     setDownloadStatus(null);
     try {
+      // Use the box text, not the debounced table filter, so Download matches the screen.
       const { events: rows, truncated } = await fetchAuditEventsForCsv({
         eventType,
         eventTypes: categoryTypes,
         result,
-        studentId,
+        studentId: userInput.trim(),
       });
       if (rows.length === 0) {
         setDownloadStatus("No events match these filters.");
@@ -144,7 +152,8 @@ export default function AdminAuditLogPage() {
             type="button"
             onClick={() => chooseCategory(c.id)}
             aria-pressed={category === c.id}
-            className={`rounded-md px-3 py-1.5 text-sm font-semibold focus-ring ${
+            disabled={downloading}
+            className={`rounded-md px-3 py-1.5 text-sm font-semibold focus-ring disabled:opacity-50 disabled:cursor-not-allowed ${
               category === c.id ? "bg-brand text-white" : "text-text-muted hover:text-text-main"
             }`}
           >
@@ -156,7 +165,12 @@ export default function AdminAuditLogPage() {
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <label className="text-sm">
           <span className="block font-semibold text-text-main mb-1">Event</span>
-          <select className={select} value={eventType} onChange={(e) => setEventType(e.target.value)}>
+          <select
+            className={select}
+            value={eventType}
+            disabled={downloading}
+            onChange={(e) => setEventType(e.target.value)}
+          >
             <option value="">All events</option>
             {typeOptions.map((t) => (
               <option key={t} value={t}>
@@ -167,7 +181,12 @@ export default function AdminAuditLogPage() {
         </label>
         <label className="text-sm">
           <span className="block font-semibold text-text-main mb-1">Result</span>
-          <select className={select} value={result} onChange={(e) => setResult(e.target.value)}>
+          <select
+            className={select}
+            value={result}
+            disabled={downloading}
+            onChange={(e) => setResult(e.target.value)}
+          >
             <option value="">Any result</option>
             {RESULTS.map((r) => (
               <option key={r} value={r}>
@@ -181,21 +200,23 @@ export default function AdminAuditLogPage() {
           <input
             type="search"
             value={userInput}
+            disabled={downloading}
             onChange={(e) => setUserInput(e.target.value)}
             placeholder="Exact username"
-            className={`${select} w-48`}
+            className={`${select} w-48 disabled:opacity-50 disabled:cursor-not-allowed`}
           />
         </label>
         {filtered && (
           <button
             type="button"
+            disabled={downloading}
             onClick={() => {
               setEventType("");
               setResult("");
               setUserInput("");
               setStudentId("");
             }}
-            className="inline-flex items-center gap-1 pb-2 text-sm font-semibold text-brand hover:underline rounded focus-ring"
+            className="inline-flex items-center gap-1 pb-2 text-sm font-semibold text-brand hover:underline rounded focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X size={14} aria-hidden="true" />
             Clear filters
@@ -214,7 +235,12 @@ export default function AdminAuditLogPage() {
         </div>
       )}
       {downloadStatus && (
-        <p role="status" className="mb-4 text-sm text-success">
+        <p
+          role="status"
+          className={`mb-4 text-sm ${
+            downloadStatus === "No events match these filters." ? "text-text-muted" : "text-success"
+          }`}
+        >
           {downloadStatus}
         </p>
       )}

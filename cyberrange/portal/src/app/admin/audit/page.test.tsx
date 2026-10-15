@@ -24,6 +24,17 @@ const ROWS = [
   { id: 2, event_type: "ADMIN_USER_ROLE_SET", student_id: "student2", pod_id: null, vmid: null, result: "OK", detail: "actor=admin_demo role=instructor previous=student", timestamp: "2026-10-15 00:58:00" },
 ]
 
+function stubCsvAnchorClick() {
+  const click = jest.fn()
+  const originalCreate = Document.prototype.createElement
+  const spy = jest.spyOn(document, "createElement").mockImplementation(function (this: Document, tag: string, options?: ElementCreationOptions) {
+    const el = originalCreate.call(this, tag, options)
+    if (tag === "a") (el as HTMLAnchorElement).click = click
+    return el
+  })
+  return { click, spy }
+}
+
 beforeEach(() => {
   listAuditLog.mockReset()
   listAuditLog.mockResolvedValue({
@@ -33,6 +44,10 @@ beforeEach(() => {
   })
   ;(URL as unknown as { createObjectURL: jest.Mock }).createObjectURL = jest.fn(() => "blob:audit")
   ;(URL as unknown as { revokeObjectURL: jest.Mock }).revokeObjectURL = jest.fn()
+})
+
+afterEach(() => {
+  jest.restoreAllMocks()
 })
 
 it("opens on admin actions and asks only for admin event types", async () => {
@@ -73,13 +88,7 @@ it("All sends no type restriction and offers every type in the dropdown", async 
 })
 
 it("Download CSV reuses the current filters and saves a file", async () => {
-  const click = jest.fn()
-  const originalCreate = document.createElement.bind(document)
-  jest.spyOn(document, "createElement").mockImplementation((tag: string) => {
-    const el = originalCreate(tag)
-    if (tag === "a") el.click = click
-    return el
-  })
+  const { click } = stubCsvAnchorClick()
 
   render(<AdminAuditLogPage />)
   await screen.findByRole("table")
@@ -93,4 +102,29 @@ it("Download CSV reuses the current filters and saves a file", async () => {
   expect(downloadCall.limit).toBe(500)
   expect(URL.createObjectURL).toHaveBeenCalled()
   expect(screen.getByRole("status")).toHaveTextContent(/Downloaded 3 events as audit_log_/)
+})
+
+it("Download CSV uses the Affected user box before the debounce lands", async () => {
+  const { click } = stubCsvAnchorClick()
+
+  render(<AdminAuditLogPage />)
+  await screen.findByRole("table")
+  const initialCalls = listAuditLog.mock.calls.length
+  fireEvent.change(screen.getByPlaceholderText("Exact username"), { target: { value: "student2" } })
+  fireEvent.click(screen.getByRole("button", { name: "Download CSV" }))
+
+  await waitFor(() => expect(click).toHaveBeenCalled())
+  expect(listAuditLog.mock.calls[initialCalls][0].studentId).toBe("student2")
+})
+
+it("clears the download status when filters change", async () => {
+  const { click } = stubCsvAnchorClick()
+
+  render(<AdminAuditLogPage />)
+  await screen.findByRole("table")
+  fireEvent.click(screen.getByRole("button", { name: "Download CSV" }))
+  await waitFor(() => expect(click).toHaveBeenCalled())
+  expect(screen.getByRole("status")).toBeInTheDocument()
+  fireEvent.click(screen.getByRole("button", { name: "Lab activity" }))
+  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument())
 })
