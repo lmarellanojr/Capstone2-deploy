@@ -235,6 +235,12 @@ const REASONS: Record<string, string> = {
   provisioner_not_configured: "the Wazuh provisioner user isn't set up on this host",
 }
 
+// WAZUH_CLEANUP_SKIPPED source= values (wazuh_client._audit_cleanup_skipped).
+const SOURCES: Record<string, string> = {
+  teardown: "lab teardown",
+  remove_by_name: "lab start (old agent names)",
+}
+
 function titleCase(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase()
 }
@@ -243,6 +249,7 @@ function formatValue(key: string, value: string): string {
   if (value === "True") return "Yes"
   if (value === "False") return "No"
   if (key === "review_id") return `#${value}`
+  if (key === "source") return SOURCES[value] ?? value.replace(/_/g, " ")
   if (["role", "previous", "status", "previous_status"].includes(key)) return titleCase(value)
   return value
 }

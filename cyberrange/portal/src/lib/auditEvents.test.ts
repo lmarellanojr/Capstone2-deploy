@@ -99,8 +99,15 @@ describe("humanizeAuditFacts", () => {
 
   it("explains a skipped SIEM clean-up", () => {
     expect(humanizeAuditFacts("source=teardown reason=provisioner_not_configured")).toBe(
-      "Step: teardown · Reason: the Wazuh provisioner user isn't set up on this host",
+      "Step: lab teardown · Reason: the Wazuh provisioner user isn't set up on this host",
     )
+  })
+
+  it("words the skipped clean-up step without raw codes", () => {
+    expect(humanizeAuditFacts("source=remove_by_name reason=provisioner_not_configured")).toBe(
+      "Step: lab start (old agent names) · Reason: the Wazuh provisioner user isn't set up on this host",
+    )
+    expect(humanizeAuditFacts("source=something_new")).toBe("Step: something new")
   })
 
   it("formats yes/no, review ids and statuses", () => {

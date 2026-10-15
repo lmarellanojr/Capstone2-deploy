@@ -74,6 +74,14 @@ elif actor == "wazuh":
         payload = {"data": {"affected_items": list(st["policies"].values())}}
     elif path == "/security/policies" and method == "POST":
         p = json.loads(body); p["id"] = nid(); st["policies"][p["name"]] = p; payload = item(id=p["id"])
+    elif re.fullmatch(r"/security/policies/\d+", path) and method == "PUT":
+        pid = int(path.split("/")[3])
+        for p in st["policies"].values():
+            if p["id"] == pid:
+                p["policy"] = json.loads(body)["policy"]
+    elif path == "/security/users" and method == "DELETE":
+        gone = {int(x) for x in q["user_ids"][0].split(",")}
+        st["users"] = {k: v for k, v in st["users"].items() if v["id"] not in gone}
     elif path == "/security/roles" and method == "GET":
         payload = {"data": {"affected_items": list(st["roles"].values())}}
     elif path == "/security/roles" and method == "POST":
@@ -105,7 +113,11 @@ elif actor == "provisioner":
     if path == "/agents" and method == "GET":
         code = 200 if can_read else 403
     elif path == "/security/users" and method == "POST":
-        code = 200 if os.environ.get("FAKE_WIDE") else 403
+        if os.environ.get("FAKE_WIDE"):  # a too-wide role really creates the account
+            b = json.loads(body); st["users"][b["username"]] = {"id": nid(), "password": b["password"], "role_ids": []}
+            code = 200
+        else:
+            code = 403
     elif path == "/agents" and method == "DELETE":
         code = 200 if os.environ.get("FAKE_NO_DENY") else 403
 else:
@@ -214,6 +226,25 @@ def test_a_role_that_is_too_wide_is_refused_and_env_untouched(host, fault):
     assert res.returncode != 0
     assert "not writing" in res.stderr
     assert host.env_file.read_text() == before
+
+
+def test_a_wide_role_does_not_leave_the_probe_account_behind(host):
+    res = host(FAKE_WIDE="1")
+    assert res.returncode != 0 and "probe account was removed" in res.stderr
+    assert "shouldfail" not in host.state()["users"]
+    assert "provisioner" in host.state()["users"]  # only the probe is removed
+
+
+def test_a_stale_same_named_policy_is_corrected_not_trusted(host, tmp_path):
+    stale = {"id": 7, "name": "provisioner_agents",
+             "policy": {"actions": ["agent:read", "agent:delete", "agent:modify_group"], "resources": ["agent:id:*"], "effect": "allow"}}
+    (tmp_path / "state.json").write_text(json.dumps(
+        {"policies": {"provisioner_agents": stale}, "roles": {}, "users": {}, "calls": [], "next": 100, "admin_pw": ADMIN_PW}))
+    res = host()
+    assert res.returncode == 0, res.stderr
+    assert "differs from the intended one" in res.stderr
+    got = host.state()["policies"]["provisioner_agents"]
+    assert got["id"] == 7 and got["policy"] == {"actions": ["agent:read", "agent:delete"], "resources": ["agent:id:*"], "effect": "allow"}
 
 
 def test_refuses_without_an_admin_password(host):

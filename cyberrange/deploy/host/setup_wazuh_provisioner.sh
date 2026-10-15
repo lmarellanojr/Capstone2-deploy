@@ -91,13 +91,22 @@ write_token_cfg "$ADMIN_TOKEN" admin.cfg
 unset ADMIN_PW
 
 # --- policies (allow read+delete on agents, deny delete on the manager) ---
-ensure_policy() {  # name json-body -> id
-  local id
-  id="$(find_id admin.cfg /security/policies name "$1")"
-  if [ -z "$id" ]; then
-    api admin.cfg POST /security/policies "$2" | json_get 'print(d["data"]["affected_items"][0]["id"])' > "$WORK/id" \
-      || die "could not create policy $1 (HTTP $(status))"
+ensure_policy() {  # name json-body -> id. An existing same-named policy is corrected, not trusted.
+  local found id state
+  found="$(api admin.cfg GET "/security/policies?limit=500" | NAME="$1" WANT="$2" "$PY" -c '
+import json, os, sys
+want = json.loads(os.environ["WANT"])["policy"]
+for it in json.load(sys.stdin).get("data", {}).get("affected_items", []):
+    if it.get("name") == os.environ["NAME"]:
+        print(it["id"], "same" if it.get("policy") == want else "differs"); break')"
+  id="${found%% *}"; state="${found##* }"
+  if [ -z "$found" ]; then
+    api admin.cfg POST /security/policies "$2" | json_get 'print(d["data"]["affected_items"][0]["id"])' > "$WORK/id"       || die "could not create policy $1 (HTTP $(status))"
     id="$(cat "$WORK/id")"
+  elif [ "$state" = differs ]; then
+    echo "setup_wazuh_provisioner: policy $1 (id ${id}) differs from the intended one; correcting it" >&2
+    api admin.cfg PUT "/security/policies/${id}" "$2" >/dev/null
+    [ "$(status)" = 200 ] || die "could not correct policy $1 (HTTP $(status))"
   fi
   echo "$id"
 }
@@ -144,8 +153,15 @@ write_token_cfg "$PROV_TOKEN" prov.cfg
 
 api prov.cfg GET "/agents?limit=1" >/dev/null
 [ "$(status)" = 200 ] || die "provisioner cannot read agents (HTTP $(status)); not writing ${API_ENV}"
+# A valid body, so Wazuh's authorization (not body validation) decides the answer. If the
+# role is too wide this really creates the account, so remove it again before refusing.
 api prov.cfg POST /security/users '{"username":"shouldfail","password":"Abcd1234!x"}' >/dev/null
-[ "$(status)" = 403 ] || die "provisioner can create users (HTTP $(status)): role is too wide. Remove it; not writing ${API_ENV}"
+PROBE_STATUS="$(status)"
+if [ "$PROBE_STATUS" != 403 ]; then
+  PROBE_ID="$(find_id admin.cfg /security/users username shouldfail)"
+  [ -z "$PROBE_ID" ] || api admin.cfg DELETE "/security/users?user_ids=${PROBE_ID}" >/dev/null
+  die "provisioner can create users (HTTP ${PROBE_STATUS}): role is too wide. The probe account was removed. Remove the role; not writing ${API_ENV}"
+fi
 api prov.cfg DELETE "/agents?agents_list=000&older_than=0s&status=all&purge=true" >/dev/null
 [ "$(status)" = 403 ] || die "provisioner may delete the manager (HTTP $(status)): deny policy missing; not writing ${API_ENV}"
 
