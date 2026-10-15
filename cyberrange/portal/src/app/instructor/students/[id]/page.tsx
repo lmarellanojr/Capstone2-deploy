@@ -8,6 +8,7 @@ import { useStudentProgress } from "@/hooks/useStudentProgress";
 import { podBadgeVariant } from "@/lib/instructorBadges";
 import { parseSqliteUtc } from "@/lib/sqliteTime";
 import { formatScenarioNumber } from "@/lib/scenarioLabels";
+import { describeSiemDetection } from "@/lib/siemDetection";
 import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
 
 interface PageProps {
@@ -68,9 +69,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
             <h1 className="text-3xl font-bold text-text-main">{student.student_id}</h1>
             <p className="text-text-muted mt-1">Milestone progress, active pod, and review history</p>
             <p className="text-xs text-text-muted mt-1">
-              Gap: no aggregate score field exists per student in the merged API. Milestones below
-              list every verification attempt with its own detection score; review scores (0-100)
-              are per review case.
+              Milestones below list every verification attempt. Review scores (0-100) are per review case.
             </p>
           </div>
 
@@ -108,6 +107,11 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
 
           <div className="card-surface overflow-hidden mb-6">
             <h2 className="text-lg font-bold text-text-main p-6 pb-4">Milestones (attempt history)</h2>
+            <p className="text-sm text-text-muted px-6 pb-4">
+              SIEM detection records supporting Wazuh alerts, separately from task completion and points.
+              {" "}Not configured means no detection rule is currently configured for that milestone.
+              {" "}Not detected means no matching alert was recorded, or the check did not run.
+            </p>
             {student.milestones.length === 0 ? (
               <p className="text-text-muted text-sm px-6 pb-6">No milestone activity yet.</p>
             ) : (
@@ -118,7 +122,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                       <th className="py-3 px-6 font-semibold">Scenario</th>
                       <th className="py-3 px-4 font-semibold">Milestone</th>
                       <th className="py-3 px-4 font-semibold">Status</th>
-                      <th className="py-3 px-4 font-semibold">Detection Score</th>
+                      <th className="py-3 px-4 font-semibold">SIEM detection</th>
                       <th className="py-3 px-4 font-semibold">Verified At</th>
                     </tr>
                   </thead>
@@ -130,7 +134,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                         <td className="py-3 px-4">
                           <Badge variant={milestoneBadgeVariant(m.status)}>{m.status}</Badge>
                         </td>
-                        <td className="py-3 px-4 text-text-muted">{m.detection_score ?? "—"}</td>
+                        <td className="py-3 px-4 text-text-muted">{describeSiemDetection(m.scenario_id, m.milestone_id, m.detection_score)}</td>
                         <td className="py-3 px-4 text-text-muted">
                           {parseSqliteUtc(m.verified_at)?.toLocaleString() ?? "—"}
                         </td>
