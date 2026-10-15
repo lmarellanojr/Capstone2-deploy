@@ -679,26 +679,34 @@ _s9_expected_agent() {
     printf '%s\n' "$expected"
 }
 
-# Scenario 9: claim epoch $1 is within +/- $3 minutes of event epoch $2, or of the
-# event shifted by a whole number of hours up to 14 (real UTC offsets span
-# -12..+14), so a correct clock time recorded in local time still matches.
+# Scenario 9: claim epoch $1 is within +/- $3 minutes of event epoch $2. When $4
+# is 1, also accept the event's clock time read in a local zone and labeled Z:
+# claim = event + h hours (h in -12..+14, real UTC offsets) within 60 s. A local
+# copy keeps minutes/seconds, so the shifted window stays tight; callers allow the
+# shift for one stamp only so a list of guesses can't cover every minute (#218).
 _s9_claim_matches_event() {
-    local claim_epoch="$1" event_epoch="$2" tol="$3" distance hours residual
-    distance=$((claim_epoch - event_epoch))
-    (( distance < 0 )) && distance=$((-distance))
-    hours=$(( (distance + 1800) / 3600 ))
-    (( hours <= 14 )) || return 1
-    residual=$((distance - hours * 3600))
+    local claim_epoch="$1" event_epoch="$2" tol="$3" allow_shift="${4:-0}"
+    local diff abs hours residual
+    diff=$((claim_epoch - event_epoch))
+    abs=$diff
+    (( abs < 0 )) && abs=$((-abs))
+    (( abs <= tol * 60 )) && return 0
+    [[ "$allow_shift" == 1 ]] || return 1
+    hours=$(( (abs + 1800) / 3600 ))
+    (( diff < 0 )) && hours=$((-hours))
+    (( hours != 0 && hours >= -12 && hours <= 14 )) || return 1
+    residual=$((diff - hours * 3600))
     (( residual < 0 )) && residual=$((-residual))
-    (( residual <= tol * 60 ))
+    (( residual <= 60 ))
 }
 
 # Scenario 9: at least one ISO …Z in the file matches a real invalid-user auth.log
-# event within +/- $2 minutes, whole-hour offsets allowed (same clock rules as M2).
-# Rule need not share a line.
+# event within +/- $2 minutes (same clock rules as M2); only the file's first …Z
+# may match via a whole-hour timezone shift. Rule need not share a line.
 _s9_has_real_event_timestamp() {
     local f="$1" tol="${2:-5}"
     local authlog="${S9_AUTHLOG:-}" path
+    local allow_shift first_stamp=1
     local now_epoch now_year candidate_year month day clock event_epoch
     local nearest_epoch nearest_distance distance claim_stamp claim_base claim_epoch round_trip
     local timestamp_re='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?Z'
@@ -724,6 +732,8 @@ _s9_has_real_event_timestamp() {
     now_year=$(TZ=UTC0 LC_ALL=C date -u -d "@$now_epoch" '+%Y' 2>/dev/null) || return 1
 
     while IFS= read -r claim_stamp; do
+        allow_shift=$first_stamp
+        first_stamp=0
         [[ "$claim_stamp" =~ ^$timestamp_re$ ]] || continue
         claim_base=$(printf '%s' "$claim_stamp" | sed -E 's/\.[0-9]{1,3}Z$/Z/')
         round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
@@ -761,7 +771,7 @@ _s9_has_real_event_timestamp() {
             done
             [[ -n "$nearest_epoch" ]] || continue
 
-            _s9_claim_matches_event "$claim_epoch" "$nearest_epoch" "$tol" && return 0
+            _s9_claim_matches_event "$claim_epoch" "$nearest_epoch" "$tol" "$allow_shift" && return 0
         done < <(grep -hiE 'invalid user' "$authlog" 2>/dev/null | grep -iE 'from ')
     done < <(grep -Eo "$timestamp_re" "$f" 2>/dev/null)
 
@@ -790,8 +800,9 @@ _s9_looks_like_example_report() {
 }
 
 # Scenario 9 M2 helper: is a full UTC timestamp claimed alongside Rule 5710 in
-# the timeline within +/- $2 minutes of a real sshd invalid-user event, allowing
-# a whole-hour timezone offset (_s9_claim_matches_event)?
+# the timeline within +/- $2 minutes of a real sshd invalid-user event? Only the
+# first such timestamp may match via a whole-hour timezone shift
+# (_s9_claim_matches_event), so extra lines or stamps can't enumerate minutes.
 #
 # `auth.log` uses UTC syslog timestamps without a year. Infer each event's year
 # from the trusted container UTC clock (nearest current/adjacent year), never
@@ -815,7 +826,7 @@ _s9_timeline_time_is_real() {
     local now_epoch now_year candidate_year month day clock event_epoch
     local nearest_epoch nearest_distance distance claim_stamp claim_base claim_epoch round_trip
     local timestamp_re='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?Z'
-    local month_number
+    local month_number allow_shift first_stamp=1
 
     # S9_NOW is a deterministic test seam only; production uses the container clock.
     if [[ -n "${S9_NOW:-}" ]]; then
@@ -831,6 +842,8 @@ _s9_timeline_time_is_real() {
     while IFS= read -r line; do
         [[ "$line" =~ [Rr]ule[^0-9]{0,15}5710([^0-9]|$) ]] || continue
         while IFS= read -r claim_stamp; do
+            allow_shift=$first_stamp
+            first_stamp=0
             [[ "$claim_stamp" =~ ^$timestamp_re$ ]] || continue
             claim_base=$(printf '%s' "$claim_stamp" | sed -E 's/\.[0-9]{1,3}Z$/Z/')
             round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
@@ -868,7 +881,7 @@ _s9_timeline_time_is_real() {
                 done
                 [[ -n "$nearest_epoch" ]] || continue
 
-                _s9_claim_matches_event "$claim_epoch" "$nearest_epoch" "$tol" && return 0
+                _s9_claim_matches_event "$claim_epoch" "$nearest_epoch" "$tol" "$allow_shift" && return 0
             done < <(grep -hiE 'invalid user' "$authlog" 2>/dev/null | grep -iE 'from ')
         done < <(grep -iE 'rule[^0-9]{0,15}5710([^0-9]|$)' <<< "$line" | grep -Eo "$timestamp_re")
     done < "$timeline"

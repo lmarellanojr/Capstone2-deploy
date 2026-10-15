@@ -544,6 +544,74 @@ def test_s9_m2_offset_beyond_fourteen_hours_fails(tmp_path):
         _bash_rm(f)
 
 
+_AUTHLOG_NEAR_HOUR = "Oct  1 10:02:11 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n"
+
+
+@pytest.mark.parametrize("claim", ["2026-10-01T00:00:00Z", "2026-10-01T18:00:00Z"])
+def test_s9_m2_round_hour_guess_near_event_fails(tmp_path, claim):
+    # Event at 10:02:11: a round HH:00:00Z is within 5 min of a whole-hour shift but
+    # a real local-clock copy keeps minutes/seconds, so the shifted window is 60 s.
+    env = _authlog(tmp_path, _AUTHLOG_NEAR_HOUR)
+    f = _timeline(f"1. phase: initial_access_attempt, rule: 5710, timestamp: {claim}, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+_SIX_GUESSES = [f"2026-10-01T10:{m}0:00Z" for m in range(6)]
+
+
+def test_s9_m2_minute_enumeration_on_one_line_fails(tmp_path):
+    # Six stamps 10 min apart cover every minute-of-hour; only the first stamp may
+    # use the hour shift, so the list can't hit 14:32:05 without reading the SIEM.
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline(f"1. phase: initial_access_attempt, rule: 5710, timestamps: {', '.join(_SIX_GUESSES)}\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_minute_enumeration_across_lines_fails(tmp_path):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("".join(f"{i}. rule: 5710, timestamp: {s}\n" for i, s in enumerate(_SIX_GUESSES, 1)))
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_minute_enumeration_fails(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd: attempt to login using a non-existent user",'
+        '"agent":"pod-student-meta","classification":"true_positive",'
+        f'"notes":"{" ".join(_SIX_GUESSES)}"}}\n'
+    )
+    f = _triage(body)
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    env["SCORING_S9_EXPECTED_AGENT"] = "pod-student-meta"
+    try:
+        assert run(tmp_path, 9, 1, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+@pytest.mark.parametrize("claim,expected", [
+    ("2026-10-01T02:32:05Z", "PASS"),  # UTC-12, the westernmost real offset
+    ("2026-10-01T01:32:05Z", "FAIL"),  # -13 h: no such zone
+    ("2026-10-01T00:32:05Z", "FAIL"),  # -14 h: no such zone
+])
+def test_s9_m2_negative_offset_bounded_to_twelve_hours(tmp_path, claim, expected):
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline(f"1. phase: initial_access_attempt, rule: 5710, timestamp: {claim}, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == expected
+    finally:
+        _bash_rm(f)
+
+
 def test_s9_m1_whole_hour_timezone_offset_passes(tmp_path):
     body = (
         '{"alert_id":"case-1","severity":"medium","rule":"5710",'
