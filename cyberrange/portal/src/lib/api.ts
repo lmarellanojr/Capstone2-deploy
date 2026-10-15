@@ -695,6 +695,7 @@ export const admin = {
   // Read-only audit trail, newest first; page with next_before_id.
   listAuditLog: async (filters: {
     eventType?: string
+    eventTypes?: string[]
     studentId?: string
     result?: string
     beforeId?: number
@@ -702,6 +703,7 @@ export const admin = {
   } = {}): Promise<AuditLogPage> => {
     const params: Record<string, string> = { limit: String(filters.limit ?? 100) }
     if (filters.eventType) params.event_type = filters.eventType
+    if (filters.eventTypes?.length) params.event_types = filters.eventTypes.join(',')
     if (filters.studentId?.trim()) params.student_id = filters.studentId.trim()
     if (filters.result) params.result = filters.result
     if (filters.beforeId) params.before_id = String(filters.beforeId)

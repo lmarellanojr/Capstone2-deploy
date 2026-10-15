@@ -7,7 +7,7 @@ pods_router._audit_force_destroy, db.log_event callers -- keeps secrets out of
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 import auth
 from auth import verify_token
@@ -16,11 +16,26 @@ from db import get_db_connection
 router = APIRouter()
 
 MAX_LIMIT = 500
+MAX_EVENT_TYPES = 64
+
+# Provisioning writers record success/failure only in the event name
+# (PROVISION_FAILED, DVWA_READY_OK, ...) and leave `result` NULL. A result
+# filter also matches those rows so "FAILED" does not hide failed lab starts.
+# The portal derives the same badge (auditEvents.auditResult).
+_NAME_SUFFIXES = {
+    "OK": ("_OK", "_SUCCESS"),
+    "FAILED": ("_FAIL", "_FAILED"),
+}
+
+
+def _like_suffix(suffix: str) -> str:
+    return "%" + suffix.replace("_", "\\_")
 
 
 @router.get("/admin/audit-log")
 def admin_list_audit_log(
     event_type: Optional[str] = Query(None, max_length=64),
+    event_types: Optional[str] = Query(None, max_length=4096),
     student_id: Optional[str] = Query(None, max_length=64),
     result: Optional[str] = Query(None, max_length=16),
     before_id: Optional[int] = Query(None, ge=1),
@@ -31,6 +46,7 @@ def admin_list_audit_log(
 
     Page through with `before_id` = the previous page's `next_before_id`
     (keyset paging: stable while new events keep arriving, unlike OFFSET).
+    `event_types` is a comma-separated set (the portal's category tabs).
     """
     auth.require_role(["admin"], claims)
 
@@ -39,12 +55,26 @@ def admin_list_audit_log(
     if event_type:
         where.append("event_type = ?")
         params.append(event_type.strip())
+    if event_types:
+        types = sorted({t.strip() for t in event_types.split(",") if t.strip()})
+        if len(types) > MAX_EVENT_TYPES:
+            raise HTTPException(status_code=422, detail=f"At most {MAX_EVENT_TYPES} event types")
+        if types:
+            where.append(f"event_type IN ({','.join('?' * len(types))})")
+            params.extend(types)
     if student_id:
         where.append("student_id = ?")
         params.append(student_id.strip())
     if result:
-        where.append("result = ?")
-        params.append(result.strip().upper())
+        wanted = result.strip().upper()
+        suffixes = _NAME_SUFFIXES.get(wanted, ())
+        if suffixes:
+            by_name = " OR ".join("event_type LIKE ? ESCAPE '\\'" for _ in suffixes)
+            where.append(f"(result = ? OR (result IS NULL AND ({by_name})))")
+            params.extend([wanted, *(_like_suffix(s) for s in suffixes)])
+        else:
+            where.append("result = ?")
+            params.append(wanted)
     if before_id:
         where.append("id < ?")
         params.append(before_id)

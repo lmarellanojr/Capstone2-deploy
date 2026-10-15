@@ -91,3 +91,38 @@ def test_audit_log_is_read_only():
     paths = app.openapi()["paths"]
     writes = {(p, m) for p, ops in paths.items() for m in ops if "audit" in p and m != "get"}
     assert writes == set()
+
+
+def test_event_types_filters_to_a_set(client):
+    seed(("ADMIN_USER_CREATE", "a", "OK"), ("PROVISION_SUCCESS", "b", None), ("ADMIN_POD_FORCE_DESTROY", "c", "OK"))
+    as_caller(claims("admin_demo", "admin"))
+    body = client.get("/admin/audit-log", params={"event_types": "ADMIN_USER_CREATE, ADMIN_POD_FORCE_DESTROY,"}).json()
+    assert [e["student_id"] for e in body["events"]] == ["c", "a"]
+    # The dropdown still offers every type that exists.
+    assert "PROVISION_SUCCESS" in body["event_types"]
+
+
+def test_event_types_rejects_too_many(client):
+    as_caller(claims("admin_demo", "admin"))
+    many = ",".join(f"T{i}" for i in range(65))
+    assert client.get("/admin/audit-log", params={"event_types": many}).status_code == 422
+
+
+def test_result_filter_matches_outcome_in_event_name(client):
+    # Provisioning writers leave result NULL; the name carries the outcome.
+    seed(
+        ("PROVISION_FAILED", "a", None),
+        ("DVWA_READY_FAIL", "b", None),
+        ("PROVISION_SUCCESS", "c", None),
+        ("ADMIN_USER_CREATE", "d", "FAILED"),
+        ("ADMIN_USER_CREATE", "e", "OK"),
+        ("POD_TTL_REAP", "f", None),
+        ("XFAILY", "g", None),
+    )
+    as_caller(claims("admin_demo", "admin"))
+    failed = client.get("/admin/audit-log", params={"result": "failed"}).json()
+    assert [e["student_id"] for e in failed["events"]] == ["d", "b", "a"]
+    ok = client.get("/admin/audit-log", params={"result": "OK"}).json()
+    assert [e["student_id"] for e in ok["events"]] == ["e", "c"]
+    denied = client.get("/admin/audit-log", params={"result": "DENIED"}).json()
+    assert denied["events"] == []
