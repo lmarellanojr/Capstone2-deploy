@@ -154,3 +154,38 @@ def test_warns_when_api_unit_does_not_use_the_venv(host):
     res = host(FAKE_EXEC="{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 provision_api_fastapi.py }")
     assert res.returncode == 0, res.stderr
     assert "WARNING" in res.stderr and "install-user-units.sh" in res.stderr
+
+
+def _write_api_env(host, text):
+    env = host.root / "env"
+    env.mkdir(parents=True, exist_ok=True)
+    (env / ".env").write_text(text)
+
+
+def test_warns_when_scoring_is_set_but_provisioner_is_missing(host):
+    _write_api_env(host, "WAZUH_SCORING_USER=scoring\nWAZUH_SCORING_PW=s3cret-scoring\n# WAZUH_PROVISION_USER=provisioner\n")
+    res = host()
+    assert res.returncode == 0, res.stderr  # warn only: never blocks the release
+    assert "WAZUH_PROVISION_USER" in res.stderr and "setup_wazuh_provisioner.sh" in res.stderr
+    assert "s3cret-scoring" not in res.stderr + res.stdout
+
+
+@pytest.mark.parametrize("pair", ["WAZUH_PROVISION_USER=provisioner\n", "WAZUH_PROVISION_USER=\nWAZUH_PROVISION_PW=x\n",
+                                  'WAZUH_PROVISION_USER=""\nWAZUH_PROVISION_PW=""\n'])
+def test_warns_on_a_half_set_or_empty_provisioner_pair(host, pair):
+    _write_api_env(host, "WAZUH_SCORING_USER=scoring\n" + pair)
+    res = host()
+    assert res.returncode == 0, res.stderr
+    assert "WAZUH_PROVISION_USER" in res.stderr
+
+
+@pytest.mark.parametrize("env", [
+    "WAZUH_SCORING_USER=scoring\nWAZUH_PROVISION_USER=provisioner\nWAZUH_PROVISION_PW=pw\n",
+    'WAZUH_SCORING_USER=scoring\nWAZUH_PROVISION_USER="provisioner"\nWAZUH_PROVISION_PW="pw"\n',
+    "# Wazuh is not used on this host\n",
+])
+def test_no_provisioner_warning_when_set_or_wazuh_unused(host, env):
+    _write_api_env(host, env)
+    res = host()
+    assert res.returncode == 0, res.stderr
+    assert "WAZUH_PROVISION_USER" not in res.stderr

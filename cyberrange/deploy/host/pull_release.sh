@@ -265,6 +265,22 @@ case "$API_EXEC" in
        "Python dependencies installed there are not used. Re-run deploy/systemd/install-user-units.sh." >&2 ;;
 esac
 
+# Lab-agent cleanup needs the Wazuh `provisioner` user (#210). Without it, End Session
+# leaves the lab's agents registered and the same student's next lab is refused with
+# WAZUH_STALE_AGENT. Warn only: Wazuh scoring is optional, and a hard failure here
+# would block unrelated releases. Only values are checked for presence, never printed.
+API_ENV="${ROOT}/env/.env"
+env_has() {
+  grep -Eq "^[[:space:]]*$1=[\"']?[^\"'[:space:]]" "$API_ENV" 2>/dev/null
+}
+if [ -f "$API_ENV" ] && env_has WAZUH_SCORING_USER \
+   && { ! env_has WAZUH_PROVISION_USER || ! env_has WAZUH_PROVISION_PW; }; then
+  echo "pull-release WARNING: Wazuh scoring is configured but WAZUH_PROVISION_USER /" \
+       "WAZUH_PROVISION_PW are not set in ${API_ENV}. Lab agents will not be removed" \
+       "and a student's next lab can be refused (WAZUH_STALE_AGENT)." \
+       "Run deploy/host/setup_wazuh_provisioner.sh (Manual 06 Step 3b)." >&2
+fi
+
 restart_units
 BASE_RESTARTS="$(systemctl --user show -p NRestarts --value cyberrange-provision-api 2>/dev/null || echo 0)"
 

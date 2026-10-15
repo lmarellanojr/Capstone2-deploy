@@ -181,6 +181,43 @@ systemctl --user restart cyberrange-provision-api.service
 
 ---
 
+## Step 3b: Create the `provisioner` user (lab-agent clean-up)
+
+Skipping this step does not stop labs from starting, but it breaks the **second**
+lab. The `scoring` user is read-only, so when a student ends a session nothing
+removes their Wazuh agents. The manager keeps the names `pod-<student>-meta` and
+`pod-<student>-dvwa`, and the student's next lab is refused with
+`WAZUH_STALE_AGENT` until an operator removes the old agents by hand. The API log
+shows the cause as `agent cleanup by name skipped ... Wazuh agent cleanup is not
+configured`, and `/admin/audit` shows **SIEM clean-up skipped**.
+
+Run the script. It creates a `provisioner` user whose role holds only `agent:read`
+and `agent:delete` (deny `agent:delete` on the manager, agent `000`), proves that
+with three calls, and only then writes `WAZUH_PROVISION_USER` and
+`WAZUH_PROVISION_PW` into `~/cyberrange/env/.env`:
+
+```bash
+read -rs WAZUH_ADMIN_PW; export WAZUH_ADMIN_PW   # the Step 2 password; not echoed
+~/cyberrange/deploy/host/setup_wazuh_provisioner.sh
+unset WAZUH_ADMIN_PW
+systemctl --user restart cyberrange-provision-api.service
+```
+
+A passing run ends with `GET /agents 200, POST /security/users 403, DELETE agent
+000 403`. If any of the three is different, the script stops and leaves `.env`
+untouched. It is safe to run again: it reuses what it finds and keeps the stored
+password. It never prints a password.
+
+> Do not attach the built-in `agents_all_agents` role, and do not set
+> `WAZUH_TLS_VERIFY=false` to get past a certificate error. Use
+> `https://localhost:55000` and the pinned CA, as in Step 3.
+
+Each release pull warns when `WAZUH_SCORING_USER` is set but the provisioner pair
+is not (`pull-release WARNING: ... WAZUH_PROVISION_USER`). Watch for it on a new
+host (validators, UAT, final defense).
+
+---
+
 ## Step 4: Agents in student pods — run during Chapter 07's gate
 
 `meta-base` carries wazuh-agent 4.7.5, pre-configured to auto-enrol against the

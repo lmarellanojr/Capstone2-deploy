@@ -39,6 +39,7 @@ describe("labels and result colors", () => {
     expect(auditEventLabel("ADMIN_USER_PASSWORD_RESET")).toBe("Password reset")
     expect(auditEventLabel("ADMIN_USER_MFA_RESET")).toBe("Authenticator reset")
     expect(auditEventLabel("DVWA_READY_FAIL")).toBe("Lab web app didn't start")
+    expect(auditEventLabel("WAZUH_CLEANUP_SKIPPED")).toBe("SIEM clean-up skipped")
     expect(auditEventLabel("SOMETHING_NEW")).toBe("SOMETHING_NEW")
     expect(auditEventDescription("SOMETHING_NEW")).toBeNull()
   })
@@ -93,6 +94,12 @@ describe("humanizeAuditFacts", () => {
     expect(humanizeAuditFacts("role=admin reason=last_admin")).toBe("Role: Admin · Reason: it would leave no admin")
     expect(humanizeAuditFacts("role=student reason=keycloak rolled_back")).toBe(
       "Role: Student · Reason: Keycloak error · New account was rolled back",
+    )
+  })
+
+  it("explains a skipped SIEM clean-up", () => {
+    expect(humanizeAuditFacts("source=teardown reason=provisioner_not_configured")).toBe(
+      "Step: teardown · Reason: the Wazuh provisioner user isn't set up on this host",
     )
   })
 
@@ -154,6 +161,7 @@ describe("auditActor", () => {
   it("marks provisioning and reaper events as the system", () => {
     expect(auditActor(ev("PROVISION_SUCCESS", null))).toEqual({ actor: "System", system: true, facts: "" })
     expect(auditActor(ev("POD_TTL_REAP", null)).actor).toBe("System")
+    expect(auditActor(ev("WAZUH_CLEANUP_SKIPPED", "source=teardown reason=provisioner_not_configured")).actor).toBe("System")
     expect(auditActor(ev("REVIEW_CASE_RESUBMITTED", "review_id=7", null)).actor).toBe("System")
   })
 })

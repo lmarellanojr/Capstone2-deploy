@@ -109,6 +109,61 @@ def test_unconfigured_provisioner_logs_and_never_raises(api, monkeypatch, caplog
     assert api["deleted"] == []
 
 
+@pytest.fixture
+def audited(monkeypatch):
+    events = []
+    monkeypatch.setattr(wc, "log_event", lambda *args, **kwargs: events.append((args, kwargs)))
+    return events
+
+
+def test_skipped_cleanup_is_audited_once_per_teardown(api, audited, monkeypatch):
+    monkeypatch.setattr(wc, "WAZUH_PROVISION_USER", "")
+    wc.deregister_agents('{"meta": "008"}', "alice")  # ids and a student name: still one event
+    assert audited == [
+        (("WAZUH_CLEANUP_SKIPPED",), {"student_id": "alice", "detail": "source=teardown reason=provisioner_not_configured"})
+    ]
+    assert api["deleted"] == []
+
+
+def test_skipped_remove_by_name_is_audited(api, audited, monkeypatch):
+    monkeypatch.setattr(wc, "WAZUH_PROVISION_PASS", "")
+    assert wc.remove_agents_named("alice") == []
+    assert audited == [
+        (("WAZUH_CLEANUP_SKIPPED",), {"student_id": "alice", "detail": "source=remove_by_name reason=provisioner_not_configured"})
+    ]
+
+
+def test_nothing_to_clean_is_not_audited(api, audited, monkeypatch):
+    monkeypatch.setattr(wc, "WAZUH_PROVISION_USER", "")
+    wc.deregister_agents(None, None)
+    assert wc.remove_agents_named("") == []
+    assert audited == []
+
+
+def test_configured_provisioner_writes_no_skip_event(api, audited):
+    wc.deregister_agents('{"meta": "008"}', "alice")
+    assert audited == []
+
+
+def test_host_without_wazuh_scoring_is_not_audited(api, audited, monkeypatch):
+    monkeypatch.setattr(wc, "WAZUH_PROVISION_USER", "")
+    monkeypatch.setattr(wc, "WAZUH_USER", "")
+    wc.deregister_agents('{"meta": "008"}', "alice")
+    assert audited == []
+
+
+def test_audit_failure_never_reaches_teardown(api, monkeypatch, caplog):
+    monkeypatch.setattr(wc, "WAZUH_PROVISION_USER", "")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(wc, "log_event", boom)
+    wc.deregister_agents('{"meta": "008"}', "alice")  # must not raise
+    assert wc.remove_agents_named("alice") == []
+    assert "could not audit skipped agent cleanup" in caplog.text
+
+
 def test_unsafe_names_are_skipped(api):
     assert wc.find_agent_ids_by_name("tok", "pod-x; rm -rf /") == []
 
