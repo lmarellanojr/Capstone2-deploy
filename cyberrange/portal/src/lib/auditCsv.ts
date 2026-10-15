@@ -6,6 +6,7 @@ import {
   auditResultLabel,
   humanizeAuditFacts,
 } from "@/lib/auditEvents"
+import { csvEscape } from "@/lib/csvExport"
 
 /** Hard cap so a huge trail cannot hang the browser. Pages at the API max. */
 export const AUDIT_CSV_PAGE = 500
@@ -60,13 +61,8 @@ export const AUDIT_CSV_HEADERS = [
   "Raw detail",
 ] as const
 
-/** Neutralize spreadsheet formulas, then RFC 4180-quote when needed.
- *  Same rule as csvEscape in the instructor CSV helper (not on main yet). */
 export function csvField(value: string): string {
-  let text = value
-  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
-  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`
-  return text
+  return csvEscape(value)
 }
 
 export function auditEventToCsvRow(event: AuditEvent): string[] {
