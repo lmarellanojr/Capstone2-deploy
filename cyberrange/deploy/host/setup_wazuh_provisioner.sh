@@ -124,10 +124,12 @@ ensure_policy() {  # name json-body -> id. An existing same-named policy is corr
   local found id state
   found="$(api admin.cfg GET "/security/policies?limit=500" | NAME="$1" WANT="$2" "$PY" -c '
 import json, os, sys
+def norm(p):  # order of actions / resources is not significant to Wazuh
+    return {"actions": sorted(p.get("actions", [])), "resources": sorted(p.get("resources", [])), "effect": p.get("effect")}
 want = json.loads(os.environ["WANT"])["policy"]
 for it in json.load(sys.stdin).get("data", {}).get("affected_items", []):
     if it.get("name") == os.environ["NAME"]:
-        print(it["id"], "same" if it.get("policy") == want else "differs"); break')"
+        print(it["id"], "same" if norm(it.get("policy") or {}) == norm(want) else "differs"); break')"
   id="${found%% *}"; state="${found##* }"
   if [ -z "$found" ]; then
     api admin.cfg POST /security/policies "$2" | json_get 'print(d["data"]["affected_items"][0]["id"])' > "$WORK/id"       || die "could not create policy $1 (HTTP $(status))"
@@ -194,8 +196,17 @@ api prov.cfg POST /security/users '{"username":"shouldfail","password":"Abcd1234
 PROBE_STATUS="$(status)"
 if [ "$PROBE_STATUS" != 403 ]; then
   PROBE_ID="$(find_id admin.cfg /security/users username shouldfail)"
-  [ -z "$PROBE_ID" ] || api admin.cfg DELETE "/security/users?user_ids=${PROBE_ID}" >/dev/null
-  die "provisioner can create users (HTTP ${PROBE_STATUS}): role is too wide. The probe account was removed. Remove the role; not writing ${API_ENV}"
+  if [ -z "$PROBE_ID" ]; then
+    PROBE_NOTE="The probe account was not created."
+  else
+    api admin.cfg DELETE "/security/users?user_ids=${PROBE_ID}" >/dev/null
+    if [ "$(status)" = 200 ]; then
+      PROBE_NOTE="The probe account was removed."
+    else
+      PROBE_NOTE="The probe account 'shouldfail' (id ${PROBE_ID}) could NOT be removed (HTTP $(status)): delete it by hand."
+    fi
+  fi
+  die "provisioner can create users (HTTP ${PROBE_STATUS}): role is too wide. ${PROBE_NOTE} Remove the role; not writing ${API_ENV}"
 fi
 api prov.cfg DELETE "/agents?agents_list=000&older_than=0s&status=all&purge=true" >/dev/null
 [ "$(status)" = 403 ] || die "provisioner may delete the manager (HTTP $(status)): deny policy missing; not writing ${API_ENV}"

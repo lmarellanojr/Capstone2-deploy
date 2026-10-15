@@ -71,7 +71,10 @@ if path == "/security/user/authenticate":
     code, payload = (200, {"data": {"token": "tok-" + user}}) if ok else (401, {})
 elif actor == "wazuh":
     if path == "/security/policies" and method == "GET":
-        payload = {"data": {"affected_items": list(st["policies"].values())}}
+        items = list(st["policies"].values())
+        if os.environ.get("FAKE_REORDER"):  # a real manager may list actions in another order
+            items = [{**i, "policy": {**i["policy"], "actions": i["policy"]["actions"][::-1], "resources": i["policy"]["resources"][::-1]}} for i in items]
+        payload = {"data": {"affected_items": items}}
     elif path == "/security/policies" and method == "POST":
         p = json.loads(body); p["id"] = nid(); st["policies"][p["name"]] = p; payload = item(id=p["id"])
     elif re.fullmatch(r"/security/policies/\d+", path) and method == "PUT":
@@ -79,6 +82,8 @@ elif actor == "wazuh":
         for p in st["policies"].values():
             if p["id"] == pid:
                 p["policy"] = json.loads(body)["policy"]
+    elif path == "/security/users" and method == "DELETE" and os.environ.get("FAKE_DELETE_FAIL"):
+        code = 500
     elif path == "/security/users" and method == "DELETE":
         gone = {int(x) for x in q["user_ids"][0].split(",")}
         st["users"] = {k: v for k, v in st["users"].items() if v["id"] not in gone}
@@ -126,7 +131,9 @@ elif actor == "provisioner":
     if path == "/agents" and method == "GET":
         code = 200 if can_read else 403
     elif path == "/security/users" and method == "POST":
-        if os.environ.get("FAKE_WIDE"):  # a too-wide role really creates the account
+        if os.environ.get("FAKE_PROBE_500"):
+            code = 500
+        elif os.environ.get("FAKE_WIDE"):  # a too-wide role really creates the account
             b = json.loads(body); st["users"][b["username"]] = {"id": nid(), "password": b["password"], "roles": []}
             code = 200
         else:
@@ -304,3 +311,31 @@ def test_a_link_that_did_not_take_is_refused_and_env_untouched(host):
     res = host(FAKE_LINK_FAIL="1")
     assert res.returncode != 0 and "expected" in res.stderr and "not writing" in res.stderr
     assert host.env_file.read_text() == before
+
+
+def test_probe_cleanup_message_says_what_really_happened(host):
+    res = host(FAKE_WIDE="1")
+    assert "The probe account was removed." in res.stderr
+
+
+def test_a_failed_probe_cleanup_is_not_reported_as_removed(host):
+    res = host(FAKE_WIDE="1", FAKE_DELETE_FAIL="1")
+    assert res.returncode != 0
+    assert "could NOT be removed (HTTP 500)" in res.stderr and "shouldfail" in res.stderr
+    assert "was removed" not in res.stderr
+    assert "shouldfail" in host.state()["users"]
+
+
+def test_a_probe_that_created_nothing_says_so(host):
+    res = host(FAKE_PROBE_500="1")
+    assert res.returncode != 0
+    assert "HTTP 500" in res.stderr and "was not created" in res.stderr and "was removed" not in res.stderr
+
+
+def test_policy_comparison_ignores_list_order(host):
+    host()
+    before = host.state()
+    res = host(FAKE_REORDER="1")
+    assert res.returncode == 0, res.stderr
+    assert "differs" not in res.stderr
+    assert not [c for c in host.state()["calls"][len(before["calls"]):] if c[0] == "PUT" and "policies" in c[1]]
