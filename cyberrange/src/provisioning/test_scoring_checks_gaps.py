@@ -598,6 +598,19 @@ def test_s9_m1_minute_enumeration_fails(tmp_path):
         _bash_rm(f)
 
 
+def test_s9_m2_invalid_date_does_not_take_shift_slot(tmp_path):
+    # An unparseable 2026-02-30 stamp can't match, so it must not use up the one
+    # hour-shift slot; the following +8 h local-clock copy still passes.
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline(
+        "1. rule: 5710, timestamps: 2026-02-30T14:32:05Z, 2026-10-01T22:32:05Z, true_positive\n"
+    )
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
 @pytest.mark.parametrize("claim,expected", [
     ("2026-10-01T02:32:05Z", "PASS"),  # UTC-12, the westernmost real offset
     ("2026-10-01T01:32:05Z", "FAIL"),  # -13 h: no such zone

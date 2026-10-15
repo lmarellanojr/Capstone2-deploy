@@ -701,8 +701,8 @@ _s9_claim_matches_event() {
 }
 
 # Scenario 9: at least one ISO …Z in the file matches a real invalid-user auth.log
-# event within +/- $2 minutes (same clock rules as M2); only the file's first …Z
-# may match via a whole-hour timezone shift. Rule need not share a line.
+# event within +/- $2 minutes (same clock rules as M2); only the file's first valid
+# …Z may match via a whole-hour timezone shift. Rule need not share a line.
 _s9_has_real_event_timestamp() {
     local f="$1" tol="${2:-5}"
     local authlog="${S9_AUTHLOG:-}" path
@@ -732,13 +732,14 @@ _s9_has_real_event_timestamp() {
     now_year=$(TZ=UTC0 LC_ALL=C date -u -d "@$now_epoch" '+%Y' 2>/dev/null) || return 1
 
     while IFS= read -r claim_stamp; do
-        allow_shift=$first_stamp
-        first_stamp=0
         [[ "$claim_stamp" =~ ^$timestamp_re$ ]] || continue
         claim_base=$(printf '%s' "$claim_stamp" | sed -E 's/\.[0-9]{1,3}Z$/Z/')
         round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
         [[ "$round_trip" == "$claim_base" ]] || continue
         claim_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%s' 2>/dev/null) || continue
+        # Only a valid date takes the one shift slot (an invalid one can't match anyway).
+        allow_shift=$first_stamp
+        first_stamp=0
 
         while IFS= read -r event; do
             [[ "$event" == *'flag-m1-'* ]] && continue
@@ -801,7 +802,7 @@ _s9_looks_like_example_report() {
 
 # Scenario 9 M2 helper: is a full UTC timestamp claimed alongside Rule 5710 in
 # the timeline within +/- $2 minutes of a real sshd invalid-user event? Only the
-# first such timestamp may match via a whole-hour timezone shift
+# first valid such timestamp may match via a whole-hour timezone shift
 # (_s9_claim_matches_event), so extra lines or stamps can't enumerate minutes.
 #
 # `auth.log` uses UTC syslog timestamps without a year. Infer each event's year
@@ -842,13 +843,14 @@ _s9_timeline_time_is_real() {
     while IFS= read -r line; do
         [[ "$line" =~ [Rr]ule[^0-9]{0,15}5710([^0-9]|$) ]] || continue
         while IFS= read -r claim_stamp; do
-            allow_shift=$first_stamp
-            first_stamp=0
             [[ "$claim_stamp" =~ ^$timestamp_re$ ]] || continue
             claim_base=$(printf '%s' "$claim_stamp" | sed -E 's/\.[0-9]{1,3}Z$/Z/')
             round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
             [[ "$round_trip" == "$claim_base" ]] || continue
             claim_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%s' 2>/dev/null) || continue
+            # Only a valid date takes the one shift slot (an invalid one can't match anyway).
+            allow_shift=$first_stamp
+            first_stamp=0
 
             while IFS= read -r event; do
                 [[ "$event" == *'flag-m1-'* ]] && continue
