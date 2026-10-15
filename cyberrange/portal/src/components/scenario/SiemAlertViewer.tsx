@@ -6,6 +6,7 @@ import { Button } from '@/components/ui'
 import { copyToClipboard } from '@/lib/copyToClipboard'
 import { useToastContext } from '@/context/ToastContext'
 import { AlertFilterBar } from '@/components/scenario/AlertFilterBar'
+import { AlertRowsDownload } from '@/components/instructor/StudentProgressDownload'
 import {
   alertsQuery,
   emptyAlertsCopy,
@@ -43,10 +44,13 @@ function isTabHidden(): boolean {
 export function SiemAlertViewer({
   podId,
   source = 'student',
+  exportStudentId,
 }: {
   podId: number
   /** 'staff' reads the Instructor/Admin route (any student's pod, same safe fields). */
   source?: 'student' | 'staff'
+  /** When set, show a CSV download for the currently filtered alert rows. */
+  exportStudentId?: string
 }) {
   const { success, warning } = useToastContext()
   const [alerts, setAlerts] = useState<SiemAlert[]>([])
@@ -181,14 +185,21 @@ export function SiemAlertViewer({
         </label>
         {status}
       </div>
-      <AlertFilterBar
-        filters={only5710 ? { ...filters, ruleId: '' } : filters}
-        options={options}
-        totalCount={alerts.length}
-        visibleCount={visible.length}
-        onChange={(next) => setFilters(only5710 ? { ...next, ruleId: '' } : next)}
-        ruleLocked={only5710}
-      />
+      <div className="flex flex-wrap items-start gap-2 mb-2">
+        <div className="min-w-0 flex-1">
+          <AlertFilterBar
+            filters={only5710 ? { ...filters, ruleId: '' } : filters}
+            options={options}
+            totalCount={alerts.length}
+            visibleCount={visible.length}
+            onChange={(next) => setFilters(only5710 ? { ...next, ruleId: '' } : next)}
+            ruleLocked={only5710}
+          />
+        </div>
+        {exportStudentId && (
+          <AlertRowsDownload studentId={exportStudentId} alerts={visible} label="live_filtered" />
+        )}
+      </div>
       <div className={SIEM_TABLE_VIEWPORT_CLASS}>
         {alerts.length === 0 ? (
           <p className="text-text-secondary p-2">{emptyAlertsCopy(only5710)}</p>

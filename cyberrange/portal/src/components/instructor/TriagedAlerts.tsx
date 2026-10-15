@@ -19,6 +19,7 @@ import {
   type SeverityBand,
 } from "@/components/scenario/siemAlertQuery";
 import { AlertHistoryTable } from "./AlertHistoryTable";
+import { AlertRowsDownload } from "./StudentProgressDownload";
 
 const SEVERITY_CLASS: Record<SeverityBand, string> = {
   high: "text-red-600",
@@ -39,6 +40,7 @@ interface TriagedAlertsProps {
   alerts: SiemAlert[];
   totalCount: number;
   scenarioId?: string | number | null;
+  studentId?: string;
 }
 
 /**
@@ -46,7 +48,7 @@ interface TriagedAlertsProps {
  * student activity first, one row per rule, with the agent's own start-up
  * scans and status noise folded away (one click to show).
  */
-export function TriagedAlerts({ alerts, totalCount, scenarioId }: TriagedAlertsProps) {
+export function TriagedAlerts({ alerts, totalCount, scenarioId, studentId }: TriagedAlertsProps) {
   const [showBackground, setShowBackground] = useState(false);
   const [raw, setRaw] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -66,14 +68,21 @@ export function TriagedAlerts({ alerts, totalCount, scenarioId }: TriagedAlertsP
 
   return (
     <div>
-      <AlertFilterBar
-        filters={filters}
-        options={options}
-        totalCount={alerts.length}
-        visibleCount={filtered.length}
-        onChange={setFilters}
-        summaryTestId="lab-alert-filter-summary"
-      />
+      <div className="flex flex-wrap items-start gap-2 mb-2">
+        <div className="min-w-0 flex-1">
+          <AlertFilterBar
+            filters={filters}
+            options={options}
+            totalCount={alerts.length}
+            visibleCount={filtered.length}
+            onChange={setFilters}
+            summaryTestId="lab-alert-filter-summary"
+          />
+        </div>
+        {studentId && (
+          <AlertRowsDownload studentId={studentId} alerts={filtered} label="past_lab_filtered" />
+        )}
+      </div>
 
       {filtersActive && filtered.length === 0 ? (
         <p className="text-sm text-text-muted mb-2">{filteredEmptyCopy(filters, alerts.length)}</p>

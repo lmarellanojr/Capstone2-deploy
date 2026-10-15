@@ -10,6 +10,7 @@ import { parseSqliteUtc } from "@/lib/sqliteTime";
 import { formatScenarioNumber } from "@/lib/scenarioLabels";
 import { describeSiemDetection } from "@/lib/siemDetection";
 import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
+import { StudentProgressDownload } from "@/components/instructor/StudentProgressDownload";
 
 interface PageProps {
   params: { id: string };
@@ -68,9 +69,16 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
           <div className="mb-6">
             <h1 className="text-3xl font-bold text-text-main">{student.student_id}</h1>
             <p className="text-text-muted mt-1">Milestone progress, active pod, and review history</p>
-            <p className="text-xs text-text-muted mt-1">
-              Milestones below list every verification attempt. Review scores (0-100) are per review case.
+            <p className="text-xs text-text-muted mt-1 mb-3">
+              Milestones below list every verification attempt with detection score. Review scores (0-100) are per
+              review case. Download packs milestones, reviews, and live alerts into one CSV.
             </p>
+            <StudentProgressDownload
+              studentId={student.student_id}
+              milestones={student.milestones}
+              reviews={student.reviews}
+              activePodId={student.active_pod?.status === "ACTIVE" ? student.active_pod.pod_id : null}
+            />
           </div>
 
           <div className="card-surface p-6 mb-6">
@@ -102,13 +110,18 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
           </div>
 
           <div className="mb-6">
-            <StudentAlertsPanel studentId={student.student_id} activePod={student.active_pod} />
+            <StudentAlertsPanel
+              studentId={student.student_id}
+              activePod={student.active_pod}
+              milestones={student.milestones}
+            />
           </div>
 
           <div className="card-surface overflow-hidden mb-6">
             <h2 className="text-lg font-bold text-text-main p-6 pb-4">Milestones (attempt history)</h2>
             <p className="text-sm text-text-muted px-6 pb-4">
-              SIEM detection records supporting Wazuh alerts, separately from task completion and points.
+              Status is task completion. Score is the numeric SIEM detection score for that attempt.
+              {" "}SIEM detection is the plain-language label for that score.
               {" "}Not configured means no detection rule is currently configured for that milestone.
               {" "}Not detected means no matching alert was recorded, or the check did not run.
             </p>
@@ -122,6 +135,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                       <th className="py-3 px-6 font-semibold">Scenario</th>
                       <th className="py-3 px-4 font-semibold">Milestone</th>
                       <th className="py-3 px-4 font-semibold">Status</th>
+                      <th className="py-3 px-4 font-semibold">Score</th>
                       <th className="py-3 px-4 font-semibold">SIEM detection</th>
                       <th className="py-3 px-4 font-semibold">Verified At</th>
                     </tr>
@@ -133,6 +147,9 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                         <td className="py-3 px-4 text-text-muted">{m.milestone_id}</td>
                         <td className="py-3 px-4">
                           <Badge variant={milestoneBadgeVariant(m.status)}>{m.status}</Badge>
+                        </td>
+                        <td className="py-3 px-4 tabular-nums text-text-main">
+                          {m.detection_score == null ? "—" : m.detection_score}
                         </td>
                         <td className="py-3 px-4 text-text-muted">{describeSiemDetection(m.scenario_id, m.milestone_id, m.detection_score)}</td>
                         <td className="py-3 px-4 text-text-muted">
