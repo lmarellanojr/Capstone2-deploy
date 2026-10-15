@@ -18,11 +18,13 @@ router = APIRouter()
 MAX_LIMIT = 500
 MAX_EVENT_TYPES = 64
 
-# The Result filter matches every row whose badge reads OK / Failed, which is
-# more than `result = ?`: scoring writes PASS / FAIL / ERROR, and provisioning
-# writers record the outcome only in the event name (PROVISION_FAILED,
-# DVWA_READY_OK, ...) with `result` NULL. Keep in step with
-# RESULT_FILTER_GROUPS / auditResult in portal/src/lib/auditEvents.ts.
+# The OK / Failed filters cover operation outcomes, which is more than
+# `result = ?`: scoring writes PASS / FAIL / ERROR, and provisioning writers
+# record the outcome only in the event name (PROVISION_FAILED, DVWA_READY_OK,
+# ...) with `result` NULL. Review decisions (APPROVED, REJECTED, RETRY) are not
+# operation outcomes and keep their own badge labels, so they match only by
+# exact value. Keep in step with auditResult / auditResultVariant in
+# portal/src/lib/auditEvents.ts.
 _RESULT_GROUPS = {
     "OK": ("OK", "PASS"),
     "FAILED": ("FAILED", "FAIL", "ERROR"),

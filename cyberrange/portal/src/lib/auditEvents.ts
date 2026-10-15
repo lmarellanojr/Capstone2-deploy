@@ -98,9 +98,11 @@ const RESULT_LABELS: Record<string, string> = {
 }
 
 /** The row's result, or the outcome carried in the event name when the
- *  writer left result empty (PROVISION_FAILED, DVWA_READY_OK, ...). The
- *  Result filter (audit_router._RESULT_GROUPS / _NAME_SUFFIXES) must return
- *  every row this badges OK or Failed; change both together. */
+ *  writer left result empty (PROVISION_FAILED, DVWA_READY_OK, ...). The OK /
+ *  Failed filters (audit_router._RESULT_GROUPS / _NAME_SUFFIXES) return every
+ *  operation outcome badged OK, Passed, Failed or Error; change both together.
+ *  Review decisions (Approved, Rejected, Try again) share the colours but not
+ *  the labels, and are not in those filters. */
 export function auditResult(event: { event_type: string; result: string | null }): string | null {
   if (event.result) return event.result.toUpperCase()
   if (/_(OK|SUCCESS)$/.test(event.event_type)) return "OK"
