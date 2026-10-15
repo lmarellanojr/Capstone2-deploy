@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, ScrollText, X } from "lucide-react";
+import { Download, RefreshCw, ScrollText, X } from "lucide-react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, Button, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
@@ -19,6 +19,14 @@ import {
   auditResultVariant,
   humanizeAuditFacts,
 } from "@/lib/auditEvents";
+import {
+  AUDIT_CSV_MAX_ROWS,
+  auditCsvFilename,
+  buildAuditCsv,
+  fetchAuditEventsForCsv,
+  saveCsvBlob,
+} from "@/lib/auditCsv";
+import { backendDetail } from "@/lib/errorHandler";
 import { formatSqliteDate } from "@/lib/sqliteTime";
 
 const RESULTS = ["OK", "FAILED", "DENIED"];
@@ -38,6 +46,9 @@ export default function AdminAuditLogPage() {
   const [result, setResult] = useState("");
   const [userInput, setUserInput] = useState("");
   const [studentId, setStudentId] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
 
   // Debounce the free-text user filter; the selects apply immediately.
   useEffect(() => {
@@ -61,6 +72,35 @@ export default function AdminAuditLogPage() {
     if (eventType && next !== "all" && auditEventCategory(eventType) !== next) setEventType("");
   };
 
+  const downloadCsv = async () => {
+    setDownloading(true);
+    setDownloadError(null);
+    setDownloadStatus(null);
+    try {
+      const { events: rows, truncated } = await fetchAuditEventsForCsv({
+        eventType,
+        eventTypes: categoryTypes,
+        result,
+        studentId,
+      });
+      if (rows.length === 0) {
+        setDownloadStatus("No events match these filters.");
+        return;
+      }
+      const name = auditCsvFilename();
+      saveCsvBlob(buildAuditCsv(rows), name);
+      setDownloadStatus(
+        truncated
+          ? `Downloaded the newest ${AUDIT_CSV_MAX_ROWS.toLocaleString()} matching events as ${name}. Narrow the filters to export the rest.`
+          : `Downloaded ${rows.length.toLocaleString()} event${rows.length === 1 ? "" : "s"} as ${name}.`
+      );
+    } catch (err) {
+      setDownloadError(backendDetail(err));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   if (forbidden) {
     return (
       <LayoutWrapper navItems={adminNavItems} sectionLabel="Admin" hideSearch>
@@ -79,10 +119,22 @@ export default function AdminAuditLogPage() {
           <h1 className="text-2xl sm:text-3xl font-bold text-text-main">Audit log</h1>
           <p className="text-text-muted mt-1">Who did what, newest first. Read-only.</p>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
-          <RefreshCw size={14} aria-hidden="true" className={loading ? "animate-spin" : ""} />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void downloadCsv()}
+            loading={downloading}
+            disabled={loading || downloading}
+          >
+            {!downloading && <Download size={14} aria-hidden="true" />}
+            Download CSV
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading || downloading}>
+            <RefreshCw size={14} aria-hidden="true" className={loading ? "animate-spin" : ""} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div role="group" aria-label="Event category" className="mb-4 inline-flex flex-wrap rounded-lg border border-border bg-secondary p-1">
@@ -155,6 +207,16 @@ export default function AdminAuditLogPage() {
         <div role="alert" className="mb-4 p-3 alert-error text-sm">
           {error}
         </div>
+      )}
+      {downloadError && (
+        <div role="alert" className="mb-4 p-3 alert-error text-sm">
+          {downloadError}
+        </div>
+      )}
+      {downloadStatus && (
+        <p role="status" className="mb-4 text-sm text-success">
+          {downloadStatus}
+        </p>
       )}
 
       <div className="card-surface overflow-hidden">

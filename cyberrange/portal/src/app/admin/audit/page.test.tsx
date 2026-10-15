@@ -31,6 +31,8 @@ beforeEach(() => {
     next_before_id: null,
     event_types: ["ADMIN_USER_ROLE_SET", "PROVISION_FAILED", "REVIEW_CASE_RESOLVED"],
   })
+  ;(URL as unknown as { createObjectURL: jest.Mock }).createObjectURL = jest.fn(() => "blob:audit")
+  ;(URL as unknown as { revokeObjectURL: jest.Mock }).revokeObjectURL = jest.fn()
 })
 
 it("opens on admin actions and asks only for admin event types", async () => {
@@ -68,4 +70,27 @@ it("All sends no type restriction and offers every type in the dropdown", async 
   expect(listAuditLog.mock.calls[1][0].eventTypes).toEqual([])
   const options = within(screen.getByLabelText("Event")).getAllByRole("option").map((o) => o.textContent)
   expect(options).toEqual(["All events", "Role changed", "Lab failed to start", "Review graded"])
+})
+
+it("Download CSV reuses the current filters and saves a file", async () => {
+  const click = jest.fn()
+  const originalCreate = document.createElement.bind(document)
+  jest.spyOn(document, "createElement").mockImplementation((tag: string) => {
+    const el = originalCreate(tag)
+    if (tag === "a") el.click = click
+    return el
+  })
+
+  render(<AdminAuditLogPage />)
+  await screen.findByRole("table")
+  const initialCalls = listAuditLog.mock.calls.length
+  fireEvent.click(screen.getByRole("button", { name: "Download CSV" }))
+
+  await waitFor(() => expect(click).toHaveBeenCalled())
+  const downloadCall = listAuditLog.mock.calls[initialCalls][0]
+  expect(downloadCall.eventTypes).toContain("ADMIN_USER_ROLE_SET")
+  expect(downloadCall.eventTypes).not.toContain("PROVISION_FAILED")
+  expect(downloadCall.limit).toBe(500)
+  expect(URL.createObjectURL).toHaveBeenCalled()
+  expect(screen.getByRole("status")).toHaveTextContent(/Downloaded 3 events as audit_log_/)
 })
