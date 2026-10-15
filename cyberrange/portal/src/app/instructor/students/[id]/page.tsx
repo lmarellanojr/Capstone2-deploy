@@ -70,8 +70,9 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
             <h1 className="text-3xl font-bold text-text-main">{student.student_id}</h1>
             <p className="text-text-muted mt-1">Milestone progress, active pod, and review history</p>
             <p className="text-xs text-text-muted mt-1 mb-3">
-              Milestones below list every verification attempt with detection score. Review scores (0-100) are per
-              review case. Download packs milestones, reviews, and live alerts into one CSV.
+              Milestones below are verification attempts: task status plus SIEM detection score (0 or 1), not catalog
+              points. Review scores (0-100) are per review case. Download packs milestones, reviews, and live alerts
+              into one CSV.
             </p>
             <StudentProgressDownload
               studentId={student.student_id}
@@ -120,8 +121,9 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
           <div className="card-surface overflow-hidden mb-6">
             <h2 className="text-lg font-bold text-text-main p-6 pb-4">Milestones (attempt history)</h2>
             <p className="text-sm text-text-muted px-6 pb-4">
-              Status is task completion. Score is the numeric SIEM detection score for that attempt.
-              {" "}SIEM detection is the plain-language label for that score.
+              Status is task completion (PASS/FAIL). Detection score is SIEM corroboration only (usually 0 or 1),
+              not the scenario point total from the catalog.
+              {" "}SIEM detection is the plain-language label for that detection score.
               {" "}Not configured means no detection rule is currently configured for that milestone.
               {" "}Not detected means no matching alert was recorded, or the check did not run.
             </p>
@@ -135,7 +137,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                       <th className="py-3 px-6 font-semibold">Scenario</th>
                       <th className="py-3 px-4 font-semibold">Milestone</th>
                       <th className="py-3 px-4 font-semibold">Status</th>
-                      <th className="py-3 px-4 font-semibold">Score</th>
+                      <th className="py-3 px-4 font-semibold">Detection score</th>
                       <th className="py-3 px-4 font-semibold">SIEM detection</th>
                       <th className="py-3 px-4 font-semibold">Verified At</th>
                     </tr>

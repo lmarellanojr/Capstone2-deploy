@@ -21,14 +21,14 @@ jest.mock("@/hooks/useStudentProgress", () => ({
   }),
 }))
 
-it("shows milestone scores with SIEM labels and offers CSV download", () => {
+it("shows detection scores with SIEM labels and offers CSV download", () => {
   render(<Page params={{ id: "srivera" }} />)
-  expect(screen.getByRole("columnheader", { name: "Score" })).toBeInTheDocument()
+  expect(screen.getByRole("columnheader", { name: "Detection score" })).toBeInTheDocument()
   expect(screen.getByRole("columnheader", { name: "SIEM detection" })).toBeInTheDocument()
-  expect(screen.queryByText("Detection Score")).not.toBeInTheDocument()
   expect(screen.getByText(/Status is task completion/)).toHaveTextContent(
     "no detection rule is currently configured for that milestone",
   )
+  expect(screen.getByText(/not the scenario point total/)).toBeInTheDocument()
   expect(screen.getByRole("button", { name: /Download scores and logs as CSV/i })).toBeInTheDocument()
   const passRow = within(screen.getByText("Scenario 2").closest("tr")!)
   expect(passRow.getByText("PASS")).toBeInTheDocument()
@@ -37,7 +37,7 @@ it("shows milestone scores with SIEM labels and offers CSV download", () => {
   const failRow = within(screen.getByText("Scenario 3").closest("tr")!)
   expect(failRow.getByText("FAIL")).toBeInTheDocument()
   expect(failRow.getByText("Detected")).toBeInTheDocument()
-  // Score column is the numeric detection_score (distinct from milestone_id 1).
+  // Detection score column is the numeric detection_score (distinct from milestone_id 1).
   const failCells = failRow.getAllByRole("cell").map((c) => c.textContent)
   expect(failCells).toContain("1")
   expect(failCells.filter((t) => t === "1")).toHaveLength(2)
