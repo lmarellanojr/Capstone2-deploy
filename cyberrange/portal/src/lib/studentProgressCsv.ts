@@ -1,6 +1,8 @@
 import type { InstructorMilestone, ReviewCase, SiemAlert } from "@/lib/api"
+import { SCENARIOS } from "@/hooks/useScenarios"
 import { describeSiemDetection } from "@/lib/siemDetection"
 import { formatScenarioNumber } from "@/lib/scenarioLabels"
+import { earnedPointsForAttempt } from "@/lib/scenarioProgress"
 import { rowsToCsv } from "@/lib/csvExport"
 
 export function milestoneCsvRows(milestones: InstructorMilestone[]): Array<Array<unknown>> {
@@ -9,6 +11,7 @@ export function milestoneCsvRows(milestones: InstructorMilestone[]): Array<Array
     m.scenario_id,
     m.milestone_id,
     m.status,
+    earnedPointsForAttempt(m, SCENARIOS),
     m.detection_score ?? "",
     describeSiemDetection(m.scenario_id, m.milestone_id, m.detection_score),
     m.detection_data ?? "",
@@ -22,6 +25,7 @@ export const MILESTONE_CSV_HEADERS = [
   "scenario_id",
   "milestone_id",
   "status",
+  "points",
   "detection_score",
   "siem_detection",
   "detection_data",
