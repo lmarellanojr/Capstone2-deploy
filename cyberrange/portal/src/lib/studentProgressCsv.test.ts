@@ -37,20 +37,23 @@ const alerts: SiemAlert[] = [
 ]
 
 describe("studentProgressCsv", () => {
-  it("includes milestone status, numeric score, and SIEM label", () => {
+  it("includes milestone status, catalog points, detection score, and SIEM label", () => {
     const rows = milestoneCsvRows(milestones)
+    // Scenario 2 / id 6 M4 is 75 pts in the portal catalog when PASS.
     expect(rows[0]).toEqual([
       "Scenario 2",
       6,
       4,
       "PASS",
+      75,
       0,
       "Not configured",
       "",
       "",
       "2026-10-15 01:00:00",
     ])
-    expect(rows[1][5]).toBe("Detected")
+    expect(rows[1][4]).toBe(0) // FAIL → 0 points
+    expect(rows[1][6]).toBe("Detected")
   })
 
   it("includes review scores", () => {

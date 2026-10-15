@@ -2,7 +2,9 @@
 
 import { Badge } from "@/components/ui"
 import type { InstructorMilestone } from "@/lib/api"
+import { SCENARIOS } from "@/hooks/useScenarios"
 import { formatScenarioNumber } from "@/lib/scenarioLabels"
+import { earnedPointsForAttempt } from "@/lib/scenarioProgress"
 import { describeSiemDetection } from "@/lib/siemDetection"
 
 function statusVariant(status: string): "success" | "danger" | "warning" {
@@ -24,10 +26,10 @@ export function MilestoneScoreStrip({ milestones }: { milestones: InstructorMile
 
   return (
     <div className="mb-4" data-testid="milestone-score-strip">
-      <h3 className="text-sm font-semibold text-text-main mb-2">Detection scores next to these logs</h3>
+      <h3 className="text-sm font-semibold text-text-main mb-2">Points and detection next to these logs</h3>
       <p className="text-xs text-text-muted mb-2">
-        Recent attempts: task status and SIEM detection score (0/1), not catalog points. Full history is in the
-        Milestones table below.
+        Recent attempts use the same catalog Points the student sees on PASS, plus SIEM detection score (0/1).
+        Full history is in the Milestones table below.
       </p>
       <div className="overflow-x-auto border border-border rounded-lg">
         <table className="w-full text-xs">
@@ -36,6 +38,7 @@ export function MilestoneScoreStrip({ milestones }: { milestones: InstructorMile
               <th className="py-2 px-3 font-semibold">Scenario</th>
               <th className="py-2 px-3 font-semibold">Milestone</th>
               <th className="py-2 px-3 font-semibold">Status</th>
+              <th className="py-2 px-3 font-semibold">Points</th>
               <th className="py-2 px-3 font-semibold">Detection score</th>
               <th className="py-2 px-3 font-semibold">SIEM detection</th>
             </tr>
@@ -47,6 +50,9 @@ export function MilestoneScoreStrip({ milestones }: { milestones: InstructorMile
                 <td className="py-2 px-3 text-text-muted">{m.milestone_id}</td>
                 <td className="py-2 px-3">
                   <Badge variant={statusVariant(m.status)}>{m.status}</Badge>
+                </td>
+                <td className="py-2 px-3 tabular-nums text-text-main">
+                  {earnedPointsForAttempt(m, SCENARIOS)}
                 </td>
                 <td className="py-2 px-3 tabular-nums text-text-main">
                   {m.detection_score == null ? "—" : m.detection_score}

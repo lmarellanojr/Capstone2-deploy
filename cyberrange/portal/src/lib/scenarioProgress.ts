@@ -19,6 +19,26 @@ export function scenarioTotalPoints(s: ScenarioLike): number {
   return s.milestones.reduce((sum, m) => sum + m.points, 0)
 }
 
+/** Catalog points for one milestone id, or null when that task is not in the portal catalog. */
+export function catalogMilestonePoints(
+  scenarioId: number | string,
+  milestoneId: number,
+  scenarios: ScenarioLike[],
+): number | null {
+  const sid = String(scenarioId).padStart(2, "0")
+  const m = scenarios.find((s) => s.id === sid)?.milestones.find((x) => x.id === milestoneId)
+  return m ? m.points : null
+}
+
+/** Points a student earns from this attempt row: catalog points on PASS, otherwise 0. */
+export function earnedPointsForAttempt(
+  row: ProgressRow,
+  scenarios: ScenarioLike[],
+): number {
+  if (row.status !== "PASS") return 0
+  return catalogMilestonePoints(row.scenario_id, row.milestone_id, scenarios) ?? 0
+}
+
 /** Points earned per catalog id ("01", "06", ...). Each milestone counts once,
  *  however many PASS rows it has, and only for milestones in the catalog. */
 export function earnedByScenario(rows: ProgressRow[], scenarios: ScenarioLike[]): Record<string, number> {
