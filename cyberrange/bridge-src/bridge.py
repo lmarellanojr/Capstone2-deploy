@@ -59,16 +59,69 @@ def launch_command_for(pod_type: str) -> list:
             "--", "su", "-", user, "-c", launch]
 
 
+MIN_ROWS, MAX_ROWS = 5, 200
+MIN_COLS, MAX_COLS = 20, 500
+
+
+def clamp_size(rows: int, cols: int):
+    """Keep a client-supplied size inside sane bounds (and inside struct "H" range)."""
+    return (min(max(rows, MIN_ROWS), MAX_ROWS), min(max(cols, MIN_COLS), MAX_COLS))
+
+
 def parse_client_message(msg: str):
     """('resize', rows, cols) for a well-formed resize control message, else ('data', msg).
-    Malformed resize JSON is treated as keystrokes (never raises)."""
+    Sizes are clamped. Malformed resize JSON is treated as keystrokes (never raises)."""
     if msg.startswith('{"type":"resize"'):
         try:
             p = json.loads(msg)
-            return ("resize", int(p["rows"]), int(p["cols"]))
-        except (ValueError, KeyError, TypeError):
+            return ("resize", *clamp_size(int(p["rows"]), int(p["cols"])))
+        except (ValueError, KeyError, TypeError, OverflowError):
             return ("data", msg)
     return ("data", msg)
+
+
+def tmux_resize_command_for(pod_type: str, container: str, rows: int, cols: int) -> list:
+    """argv that resizes the pod-side TTY of every client attached to the 'lab' tmux
+    session. `lxc exec` does not forward mid-session resizes into the pod (confirmed
+    live 2026-10-16: browser at ~46 cols, tmux still 80), so set the inner TTY size
+    directly, then SIGWINCH the tmux client: the kernel's own SIGWINCH goes to the TTY's
+    foreground process group, which under `su -c` is not the client (also confirmed
+    live: stty alone left tmux at 80x24). Runs as root in the container (the TTY is
+    root-owned, mode 600) against the role user's socket."""
+    user = POD_USERS[pod_type]
+    rows, cols = clamp_size(int(rows), int(cols))
+    script = (f'S=/tmp/tmux-$(id -u {user})/default; '
+              f'tmux -S "$S" list-clients -t lab -F "#{{client_tty}} #{{client_pid}}" 2>/dev/null | '
+              f'while read t p; do stty -F "$t" rows {rows} cols {cols} && kill -WINCH "$p"; done')
+    return ["lxc", "--project", LXD_PROJECT, "exec", container, "--", "sh", "-c", script]
+
+
+class ResizeCoalescer:
+    """Collapses a burst of resize messages (ResizeObserver fires many while a window
+    is dragged) into one run of `apply(rows, cols)` with the latest size, and never
+    runs two at once for the same session."""
+
+    def __init__(self, apply, delay: float = 0.15):
+        self._apply = apply
+        self._delay = delay
+        self._size = None
+        self._wake = asyncio.Event()
+
+    def submit(self, rows: int, cols: int):
+        self._size = (rows, cols)
+        self._wake.set()
+
+    async def run(self, first_delay: float = 0.0):
+        if first_delay:
+            await asyncio.sleep(first_delay)
+        while True:
+            await self._wake.wait()
+            await asyncio.sleep(self._delay)
+            self._wake.clear()
+            try:
+                await self._apply(*self._size)
+            except Exception as e:
+                logger.warning(f"tmux resize failed: {e}")
 
 
 # --- config (fail-closed) ---
@@ -208,16 +261,54 @@ async def _evict_existing_session(container: str):
 
 
 
+async def _first_client_size(ws, timeout: float = 1.0):
+    """Wait briefly for the browser's first resize (sent ~500 ms after open) so the
+    session starts at the real size. Falls back to 24x80; keystrokes that arrive
+    first are returned for replay."""
+    try:
+        raw = await asyncio.wait_for(ws.recv(), timeout)
+    except asyncio.TimeoutError:
+        return (24, 80), []
+    msg = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
+    kind, *rest = parse_client_message(msg)
+    if kind == "resize":
+        return (rest[0], rest[1]), []
+    return (24, 80), [rest[0]]
+
+
+async def _run_tmux_resize(container: str, pod_type: str, rows: int, cols: int,
+                           timeout: float = 5):
+    proc = await asyncio.create_subprocess_exec(
+        *tmux_resize_command_for(pod_type, container, rows, cols),
+        stdin=asyncio.subprocess.DEVNULL,  # never let lxc exec see a TTY and go interactive
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        env={**os.environ, "HOME": "/home/llms_admin"},
+    )
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        # Also covers session teardown cancelling us mid-resize: never leave it unreaped.
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+
+
 async def run_pty_session(ws, container: str, pod_type: str):
     import pty  # Unix-only; lazy
+    # Wait for the browser's size first, so eviction and registration below stay adjacent
+    # (a second connection in between would otherwise both see nothing to evict).
+    (rows, cols), pending_input = await _first_client_size(ws)
     await _evict_existing_session(container)
     argv = [a.replace("{container}", container) for a in launch_command_for(pod_type)]
     master, slave = pty.openpty()
-    _set_winsize(master, 24, 80)  # sane initial size; browser sends a resize on connect
+    _set_winsize(master, rows, cols)
 
     def _child_setctty():
         # Make the pty slave (fd 0 after dup2) the controlling terminal so the kernel
-        # delivers SIGWINCH to `lxc exec` on resize -> it forwards the size into the pod.
+        # delivers SIGWINCH to `lxc exec` on resize (host side only; lxc exec doesn't
+        # carry it into the pod, so the pod-side size is set by tmux_resize_command_for).
         import fcntl as _f, termios as _t
         _f.ioctl(0, _t.TIOCSCTTY, 0)
 
@@ -231,7 +322,17 @@ async def run_pty_session(ws, container: str, pod_type: str):
     loop = asyncio.get_running_loop()
     session_entry = {"ws": ws, "proc": proc}
     _active_sessions[container] = session_entry
+    for data in pending_input:
+        os.write(master, data.encode("utf-8"))
 
+    async def _apply_resize(r, c):
+        await _run_tmux_resize(container, pod_type, r, c)
+
+    resizer = ResizeCoalescer(_apply_resize)
+    # Also push the initial size into the pod once tmux has had time to attach, in
+    # case lxc exec didn't carry it in.
+    resizer.submit(rows, cols)
+    resize_task = asyncio.create_task(resizer.run(first_delay=1.5))
 
     async def pty_to_ws():
         try:
@@ -249,16 +350,15 @@ async def run_pty_session(ws, container: str, pod_type: str):
                 msg = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
                 kind, *rest = parse_client_message(msg)
                 if kind == "resize":
-                    # KNOWN LIMITATION: sets our PTY master size + SIGWINCHes lxc exec,
-                    # but lxc exec's dynamic resize forwarding into the pod's inner PTY
-                    # does not currently track mid-session (terminal opens at 24x80 and
-                    # functions; reflow on browser-resize is a follow-up). Shell I/O is
-                    # unaffected. See run log 2026-06-22.
+                    # Our PTY + SIGWINCH to lxc exec keeps the host side right, but lxc
+                    # exec doesn't forward it into the pod, so the coalescer also
+                    # resizes the tmux client's TTY inside the pod.
                     _set_winsize(master, rest[0], rest[1])
                     try:
                         os.killpg(os.getpgid(proc.pid), signal.SIGWINCH)
                     except (ProcessLookupError, PermissionError):
                         pass
+                    resizer.submit(rest[0], rest[1])
                 else:
                     os.write(master, rest[0].encode("utf-8"))
         except Exception:
@@ -270,6 +370,7 @@ async def run_pty_session(ws, container: str, pod_type: str):
         await asyncio.wait({pump, proc_wait}, return_when=asyncio.FIRST_COMPLETED)
     finally:
         pump.cancel()
+        resize_task.cancel()
     # Teardown: kill the exec process group, close fds, close ws
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
