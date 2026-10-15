@@ -11,6 +11,13 @@ describe("csvEscape", () => {
     expect(csvEscape('rule "5710", sshd')).toBe('"rule ""5710"", sshd"')
     expect(csvEscape("a\nb")).toBe('"a\nb"')
   })
+
+  it("neutralizes formula-leading cells for spreadsheet opens", () => {
+    expect(csvEscape('=HYPERLINK("http://evil")')).toBe(`"'=HYPERLINK(""http://evil"")"`)
+    expect(csvEscape("+cmd")).toBe("'+cmd")
+    expect(csvEscape("-1+1")).toBe("'-1+1")
+    expect(csvEscape("@SUM(A1)")).toBe("'@SUM(A1)")
+  })
 })
 
 describe("rowsToCsv", () => {

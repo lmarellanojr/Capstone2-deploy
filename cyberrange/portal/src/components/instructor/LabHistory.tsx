@@ -120,6 +120,7 @@ export function LabHistory({ studentId, scenarioId }: LabHistoryProps) {
                       totalCount={result.total_count}
                       scenarioId={lab.scenario_id}
                       studentId={studentId}
+                      exportLabel={`pod${lab.pod_id}_${String(lab.started_at).replace(/[^\d]/g, "").slice(0, 14)}`}
                     />
                   </>
                 ) : null}

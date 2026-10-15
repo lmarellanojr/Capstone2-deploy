@@ -41,6 +41,8 @@ interface TriagedAlertsProps {
   totalCount: number;
   scenarioId?: string | number | null;
   studentId?: string;
+  /** Included in the filtered-alerts CSV filename so labs don't collide. */
+  exportLabel?: string;
 }
 
 /**
@@ -48,7 +50,13 @@ interface TriagedAlertsProps {
  * student activity first, one row per rule, with the agent's own start-up
  * scans and status noise folded away (one click to show).
  */
-export function TriagedAlerts({ alerts, totalCount, scenarioId, studentId }: TriagedAlertsProps) {
+export function TriagedAlerts({
+  alerts,
+  totalCount,
+  scenarioId,
+  studentId,
+  exportLabel = "past_lab_filtered",
+}: TriagedAlertsProps) {
   const [showBackground, setShowBackground] = useState(false);
   const [raw, setRaw] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -80,7 +88,7 @@ export function TriagedAlerts({ alerts, totalCount, scenarioId, studentId }: Tri
           />
         </div>
         {studentId && (
-          <AlertRowsDownload studentId={studentId} alerts={filtered} label="past_lab_filtered" />
+          <AlertRowsDownload studentId={studentId} alerts={filtered} label={exportLabel} />
         )}
       </div>
 

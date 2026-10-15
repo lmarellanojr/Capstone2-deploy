@@ -37,34 +37,40 @@ export function StudentProgressDownload({
     setNote(null)
     let alerts: SiemAlert[] | undefined
     let alertsLabel: string | undefined
-    if (activePodId != null) {
-      try {
-        const data = await instructor.getPodAlerts(activePodId, { limit: 200 })
-        if (!data.error) {
-          alerts = data.alerts || []
-          alertsLabel = `live pod ${activePodId}`
+    let alertsFailed = false
+    try {
+      if (activePodId != null) {
+        try {
+          const data = await instructor.getPodAlerts(activePodId, { limit: 200 })
+          if (data.error) {
+            alertsFailed = true
+          } else {
+            alerts = data.alerts || []
+            alertsLabel = `live pod ${activePodId}`
+          }
+        } catch {
+          alertsFailed = true
         }
-      } catch {
-        setNote("Scores downloaded; live alerts were unavailable.")
       }
+      const csv = buildStudentProgressCsv({
+        studentId,
+        milestones,
+        reviews,
+        alerts,
+        alertsLabel,
+      })
+      const name = `student_${studentId}_scores_and_logs.csv`
+      saveBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), name)
+      if (alertsFailed) {
+        setNote("Scores downloaded; live alerts were unavailable.")
+      } else if (alerts) {
+        setNote(`Downloaded ${name} (milestones, reviews, ${alerts.length} live alerts).`)
+      } else {
+        setNote(`Downloaded ${name} (milestones and reviews).`)
+      }
+    } finally {
+      setBusy(false)
     }
-    const csv = buildStudentProgressCsv({
-      studentId,
-      milestones,
-      reviews,
-      alerts,
-      alertsLabel,
-    })
-    const name = `student_${studentId}_scores_and_logs.csv`
-    saveBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), name)
-    if (!note) {
-      setNote(
-        alerts
-          ? `Downloaded ${name} (milestones, reviews, ${alerts.length} live alerts).`
-          : `Downloaded ${name} (milestones and reviews).`,
-      )
-    }
-    setBusy(false)
   }
 
   return (
@@ -80,7 +86,11 @@ export function StudentProgressDownload({
         <Download size={14} className="mr-1.5" aria-hidden="true" />
         {busy ? "Preparing…" : "Download scores & logs (CSV)"}
       </Button>
-      {note && <span className="text-xs text-text-muted">{note}</span>}
+      {note && (
+        <span className="text-xs text-text-muted" data-testid="progress-download-note">
+          {note}
+        </span>
+      )}
     </div>
   )
 }

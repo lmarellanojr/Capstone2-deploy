@@ -1,5 +1,6 @@
 "use client"
 
+import { useId } from "react"
 import { Button } from "@/components/ui"
 import {
   describeFilters,
@@ -43,17 +44,18 @@ export function AlertFilterBar({
   ruleLockedLabel = "Rule 5710 (shortcut on)",
   summaryTestId = "siem-filter-summary",
 }: AlertFilterBarProps) {
+  const queryId = useId()
   const active = hasActiveFilters(filters)
   const setFilter = <K extends keyof AlertFilters>(key: K, value: AlertFilters[K]) =>
     onChange({ ...filters, [key]: value })
 
   return (
     <div className="flex flex-wrap items-center gap-2 mb-2">
-      <label className="sr-only" htmlFor="alert-filter-query">
+      <label className="sr-only" htmlFor={queryId}>
         Search alerts
       </label>
       <input
-        id="alert-filter-query"
+        id={queryId}
         type="search"
         aria-label="Search alerts"
         placeholder="Search rule, agent, text…"

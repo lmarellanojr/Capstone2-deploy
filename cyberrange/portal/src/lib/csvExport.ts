@@ -1,7 +1,9 @@
 /** Small CSV helpers for instructor downloads (no extra deps). */
 
+/** OWASP CSV injection: neutralize formula-leading cells before Excel/Sheets open them. */
 export function csvEscape(value: unknown): string {
-  const text = value == null ? "" : String(value)
+  let text = value == null ? "" : String(value)
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
   if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`
   return text
 }
