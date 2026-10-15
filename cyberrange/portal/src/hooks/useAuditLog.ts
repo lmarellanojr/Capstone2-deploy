@@ -6,13 +6,17 @@ import { backendDetail, isForbiddenError } from '@/lib/errorHandler'
 
 export interface AuditFilters {
   eventType: string
+  // Category tab: limit to these types (empty = every type).
+  categoryTypes: string[]
   result: string
   studentId: string
 }
 
 const PAGE = 100
 
-export function useAuditLog({ eventType, result, studentId }: AuditFilters) {
+export function useAuditLog({ eventType, categoryTypes, result, studentId }: AuditFilters) {
+  // Join so a new array with the same types does not refetch.
+  const typesKey = categoryTypes.join(',')
   const [events, setEvents] = useState<AuditEvent[]>([])
   const [eventTypes, setEventTypes] = useState<string[]>([])
   const [nextBeforeId, setNextBeforeId] = useState<number | null>(null)
@@ -28,7 +32,14 @@ export function useAuditLog({ eventType, result, studentId }: AuditFilters) {
       if (beforeId) setLoadingMore(true)
       else setLoading(true)
       try {
-        const page = await admin.listAuditLog({ eventType, result, studentId, beforeId, limit: PAGE })
+        const page = await admin.listAuditLog({
+          eventType,
+          eventTypes: typesKey ? typesKey.split(',') : [],
+          result,
+          studentId,
+          beforeId,
+          limit: PAGE,
+        })
         if (mine !== seq.current) return // filters changed mid-request
         setEvents((prev) => (beforeId ? [...prev, ...page.events] : page.events))
         setEventTypes(page.event_types)
@@ -46,7 +57,7 @@ export function useAuditLog({ eventType, result, studentId }: AuditFilters) {
         }
       }
     },
-    [eventType, result, studentId]
+    [eventType, typesKey, result, studentId]
   )
 
   useEffect(() => {
