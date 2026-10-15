@@ -28,6 +28,9 @@ it("explains SIEM corroboration without changing milestone outcomes", () => {
   expect(screen.getByText(/separately from task completion and points/)).toHaveTextContent(
     "no detection rule is currently configured for that milestone",
   )
+  expect(screen.getByText(/separately from task completion and points/)).toHaveTextContent(
+    "no matching alert was recorded, or the check did not run",
+  )
   const passRow = within(screen.getByText("Scenario 2").closest("tr")!)
   expect(passRow.getByText("PASS")).toBeInTheDocument()
   expect(passRow.getByText("Not configured")).toBeInTheDocument()

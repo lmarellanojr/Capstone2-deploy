@@ -110,7 +110,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
             <p className="text-sm text-text-muted px-6 pb-4">
               SIEM detection records supporting Wazuh alerts, separately from task completion and points.
               {" "}Not configured means no detection rule is currently configured for that milestone.
-              {" "}Not detected means no matching alert was recorded for that attempt.
+              {" "}Not detected means no matching alert was recorded, or the check did not run.
             </p>
             {student.milestones.length === 0 ? (
               <p className="text-text-muted text-sm px-6 pb-6">No milestone activity yet.</p>
