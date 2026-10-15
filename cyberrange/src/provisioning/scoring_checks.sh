@@ -679,8 +679,23 @@ _s9_expected_agent() {
     printf '%s\n' "$expected"
 }
 
+# Scenario 9: claim epoch $1 is within +/- $3 minutes of event epoch $2, or of the
+# event shifted by a whole number of hours up to 14 (real UTC offsets span
+# -12..+14), so a correct clock time recorded in local time still matches.
+_s9_claim_matches_event() {
+    local claim_epoch="$1" event_epoch="$2" tol="$3" distance hours residual
+    distance=$((claim_epoch - event_epoch))
+    (( distance < 0 )) && distance=$((-distance))
+    hours=$(( (distance + 1800) / 3600 ))
+    (( hours <= 14 )) || return 1
+    residual=$((distance - hours * 3600))
+    (( residual < 0 )) && residual=$((-residual))
+    (( residual <= tol * 60 ))
+}
+
 # Scenario 9: at least one ISO …Z in the file matches a real invalid-user auth.log
-# event within +/- $2 minutes (same clock rules as M2). Rule need not share a line.
+# event within +/- $2 minutes, whole-hour offsets allowed (same clock rules as M2).
+# Rule need not share a line.
 _s9_has_real_event_timestamp() {
     local f="$1" tol="${2:-5}"
     local authlog="${S9_AUTHLOG:-}" path
@@ -746,9 +761,7 @@ _s9_has_real_event_timestamp() {
             done
             [[ -n "$nearest_epoch" ]] || continue
 
-            distance=$((claim_epoch - nearest_epoch))
-            (( distance < 0 )) && distance=$((-distance))
-            (( distance <= tol * 60 )) && return 0
+            _s9_claim_matches_event "$claim_epoch" "$nearest_epoch" "$tol" && return 0
         done < <(grep -hiE 'invalid user' "$authlog" 2>/dev/null | grep -iE 'from ')
     done < <(grep -Eo "$timestamp_re" "$f" 2>/dev/null)
 
@@ -777,7 +790,8 @@ _s9_looks_like_example_report() {
 }
 
 # Scenario 9 M2 helper: is a full UTC timestamp claimed alongside Rule 5710 in
-# the timeline within +/- $2 minutes of a real sshd invalid-user event?
+# the timeline within +/- $2 minutes of a real sshd invalid-user event, allowing
+# a whole-hour timezone offset (_s9_claim_matches_event)?
 #
 # `auth.log` uses UTC syslog timestamps without a year. Infer each event's year
 # from the trusted container UTC clock (nearest current/adjacent year), never
@@ -854,9 +868,7 @@ _s9_timeline_time_is_real() {
                 done
                 [[ -n "$nearest_epoch" ]] || continue
 
-                distance=$((claim_epoch - nearest_epoch))
-                (( distance < 0 )) && distance=$((-distance))
-                (( distance <= tol * 60 )) && return 0
+                _s9_claim_matches_event "$claim_epoch" "$nearest_epoch" "$tol" && return 0
             done < <(grep -hiE 'invalid user' "$authlog" 2>/dev/null | grep -iE 'from ')
         done < <(grep -iE 'rule[^0-9]{0,15}5710([^0-9]|$)' <<< "$line" | grep -Eo "$timestamp_re")
     done < "$timeline"

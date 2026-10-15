@@ -514,6 +514,52 @@ def test_s9_m2_guide_example_timestamp_fails(tmp_path):
         _bash_rm(f)
 
 
+def test_s9_m2_whole_hour_timezone_offset_passes(tmp_path):
+    # Event 14:32:05Z recorded on a UTC+8 clock as 22:32 with a Z (#218).
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T22:33:00Z, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_whole_hour_offset_plus_drift_fails(tmp_path):
+    # 8 h + 10 min off: not within +/- 5 min of any whole-hour shift.
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T22:42:05Z, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m2_offset_beyond_fourteen_hours_fails(tmp_path):
+    # 15 h is outside every real UTC offset, so the hour tolerance stops there.
+    env = _authlog(tmp_path, "Oct  1 08:32:05 meta sshd[1337]: Invalid user oracle from 10.0.51.10 port 50122 ssh2\n")
+    f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T23:32:05Z, true_positive\n")
+    try:
+        assert run(tmp_path, 9, 2, extra_env=env) == "FAIL"
+    finally:
+        _bash_rm(f)
+
+
+def test_s9_m1_whole_hour_timezone_offset_passes(tmp_path):
+    body = (
+        '{"alert_id":"case-1","severity":"medium","rule":"5710",'
+        '"description":"sshd: attempt to login using a non-existent user",'
+        '"agent":"pod-student-meta","classification":"true_positive",'
+        '"notes":"2026-10-01T09:32:05Z invalid-user SSH; recorded on a UTC-5 clock"}\n'
+    )
+    f = _triage(body)
+    env = _authlog(tmp_path, _AUTHLOG_5710)
+    env["SCORING_S9_EXPECTED_AGENT"] = "pod-student-meta"
+    try:
+        assert run(tmp_path, 9, 1, extra_env=env) == "PASS"
+    finally:
+        _bash_rm(f)
+
+
 def test_s9_m2_correct_time_but_no_real_event_fails(tmp_path):
     env = _authlog(tmp_path, "Oct  1 09:00:00 meta sshd[1]: Accepted password for msfadmin\n")
     f = _timeline("1. phase: initial_access_attempt, rule: 5710, timestamp: 2026-10-01T14:32:05Z, true_positive\n")
