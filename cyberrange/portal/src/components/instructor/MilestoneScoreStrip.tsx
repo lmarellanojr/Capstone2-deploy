@@ -24,9 +24,10 @@ export function MilestoneScoreStrip({ milestones }: { milestones: InstructorMile
 
   return (
     <div className="mb-4" data-testid="milestone-score-strip">
-      <h3 className="text-sm font-semibold text-text-main mb-2">Scores next to these logs</h3>
+      <h3 className="text-sm font-semibold text-text-main mb-2">Detection scores next to these logs</h3>
       <p className="text-xs text-text-muted mb-2">
-        Milestone status and SIEM detection score for recent attempts. Full history is in the Milestones table below.
+        Recent attempts: task status and SIEM detection score (0/1), not catalog points. Full history is in the
+        Milestones table below.
       </p>
       <div className="overflow-x-auto border border-border rounded-lg">
         <table className="w-full text-xs">
@@ -35,7 +36,7 @@ export function MilestoneScoreStrip({ milestones }: { milestones: InstructorMile
               <th className="py-2 px-3 font-semibold">Scenario</th>
               <th className="py-2 px-3 font-semibold">Milestone</th>
               <th className="py-2 px-3 font-semibold">Status</th>
-              <th className="py-2 px-3 font-semibold">Score</th>
+              <th className="py-2 px-3 font-semibold">Detection score</th>
               <th className="py-2 px-3 font-semibold">SIEM detection</th>
             </tr>
           </thead>
