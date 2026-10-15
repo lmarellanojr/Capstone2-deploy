@@ -48,3 +48,14 @@ it("can switch to every raw alert", () => {
   fireEvent.click(screen.getByRole("button", { name: "Every alert" }))
   expect(screen.getByTestId("alert-history-count")).toHaveTextContent("31 alerts")
 })
+
+it("filters past-lab alerts by search text and rule", () => {
+  render(<TriagedAlerts alerts={ALERTS} totalCount={31} scenarioId="09" />)
+  fireEvent.change(screen.getByLabelText("Search alerts"), { target: { value: "sshd" } })
+  expect(screen.getByTestId("lab-alert-filter-summary")).toHaveTextContent('Showing 1 of 31')
+  expect(screen.getByText("sshd: attempt to login using a non-existent user")).toBeInTheDocument()
+  expect(screen.queryByText(/Only background alerts/)).not.toBeInTheDocument()
+
+  fireEvent.change(screen.getByLabelText("Filter by rule"), { target: { value: "19007" } })
+  expect(screen.getByText(/No alerts match/)).toBeInTheDocument()
+})

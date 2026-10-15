@@ -24,6 +24,12 @@ jest.mock("./LabHistory", () => ({
   ),
 }))
 
+jest.mock("./MilestoneScoreStrip", () => ({
+  MilestoneScoreStrip: ({ milestones }: { milestones: { status: string }[] }) => (
+    <div data-testid="score-strip">{milestones.map((m) => m.status).join(",")}</div>
+  ),
+}))
+
 function pod(overrides: Partial<InstructorPod> = {}): InstructorPod {
   return {
     id: 1,
@@ -68,5 +74,19 @@ describe("StudentAlertsPanel", () => {
     render(<StudentAlertsPanel studentId="alice" activePod={null} scenarioId={9} />)
     expect(screen.getByText("Past labs")).toBeInTheDocument()
     expect(screen.getByTestId("history")).toHaveTextContent("alice:9")
+  })
+
+  it("shows milestone scores above the logs when provided", () => {
+    render(
+      <StudentAlertsPanel
+        studentId="alice"
+        activePod={null}
+        milestones={[
+          { scenario_id: 6, milestone_id: 4, status: "PASS", detection_score: 0 },
+          { scenario_id: 9, milestone_id: 1, status: "FAIL", detection_score: 1 },
+        ]}
+      />,
+    )
+    expect(screen.getByTestId("score-strip")).toHaveTextContent("PASS,FAIL")
   })
 })

@@ -115,7 +115,13 @@ export function LabHistory({ studentId, scenarioId }: LabHistoryProps) {
                         lab or the 8-hour limit.
                       </p>
                     )}
-                    <TriagedAlerts alerts={result.alerts} totalCount={result.total_count} scenarioId={lab.scenario_id} />
+                    <TriagedAlerts
+                      alerts={result.alerts}
+                      totalCount={result.total_count}
+                      scenarioId={lab.scenario_id}
+                      studentId={studentId}
+                      exportLabel={`pod${lab.pod_id}_${String(lab.started_at).replace(/[^\d]/g, "").slice(0, 14)}`}
+                    />
                   </>
                 ) : null}
               </div>
