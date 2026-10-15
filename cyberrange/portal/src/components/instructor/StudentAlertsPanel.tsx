@@ -2,15 +2,18 @@
 
 import { ShieldAlert } from "lucide-react";
 import { SiemAlertViewer } from "@/components/scenario/SiemAlertViewer";
-import type { InstructorPod } from "@/lib/api";
+import type { InstructorMilestone, InstructorPod } from "@/lib/api";
 import { formatScenarioNumber } from "@/lib/scenarioLabels";
 import { LabHistory } from "./LabHistory";
+import { MilestoneScoreStrip } from "./MilestoneScoreStrip";
 
 interface StudentAlertsPanelProps {
   studentId: string;
   activePod: InstructorPod | null | undefined;
   /** When set (review detail), note if the running lab is a different scenario. */
   scenarioId?: number | string | null;
+  /** Milestone scores shown above the alert stream for side-by-side checking. */
+  milestones?: InstructorMilestone[];
 }
 
 /**
@@ -18,7 +21,12 @@ interface StudentAlertsPanelProps {
  * live, plus every earlier lab from the Wazuh daily archives. Same pod-scoped,
  * allowlisted fields the student sees — never the raw Wazuh dashboard.
  */
-export function StudentAlertsPanel({ studentId, activePod, scenarioId }: StudentAlertsPanelProps) {
+export function StudentAlertsPanel({
+  studentId,
+  activePod,
+  scenarioId,
+  milestones,
+}: StudentAlertsPanelProps) {
   const running = activePod && activePod.status === "ACTIVE" ? activePod : null;
   const otherScenario =
     running && scenarioId != null && running.scenario_id != null && Number(running.scenario_id) !== Number(scenarioId);
@@ -35,9 +43,12 @@ export function StudentAlertsPanel({ studentId, activePod, scenarioId }: Student
         </span>
       </div>
       <p className="text-xs text-text-muted mb-4">
-        The Wazuh alerts that fired on this student&apos;s current lab, the same view they see. Compare the
-        rule IDs and times in their report with what actually fired.
+        The Wazuh alerts that fired on this student&apos;s current lab, the same view they see. Filter by
+        search text, rule, agent, or severity to check specific log lines against their report. Download
+        filtered rows from the alert table, or use Download scores &amp; logs above for milestones plus live alerts.
       </p>
+
+      {milestones && <MilestoneScoreStrip milestones={milestones} />}
 
       {running ? (
         <>
@@ -46,7 +57,7 @@ export function StudentAlertsPanel({ studentId, activePod, scenarioId }: Student
               Their running lab is {formatScenarioNumber(running.scenario_id)}, not the scenario in this report.
             </p>
           )}
-          <SiemAlertViewer podId={running.pod_id} source="staff" />
+          <SiemAlertViewer podId={running.pod_id} source="staff" exportStudentId={studentId} />
         </>
       ) : (
         <p className="text-sm text-text-muted">No lab running right now. Earlier labs are under Past labs.</p>
@@ -54,7 +65,8 @@ export function StudentAlertsPanel({ studentId, activePod, scenarioId }: Student
 
       <h3 className="text-sm font-semibold text-text-main mt-6 mb-2">Past labs</h3>
       <p className="text-xs text-text-muted mb-3">
-        Alerts from any lab this student has run, read from the SIEM&apos;s daily archives.
+        Alerts from any lab this student has run, read from the SIEM&apos;s daily archives. Open a lab,
+        then use the same search and rule/agent/severity filters as the live view.
       </p>
       <LabHistory studentId={studentId} scenarioId={scenarioId} />
     </section>

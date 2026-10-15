@@ -5,9 +5,10 @@ import { instructor, provisioning, type SiemAlert } from '@/lib/api'
 import { Button } from '@/components/ui'
 import { copyToClipboard } from '@/lib/copyToClipboard'
 import { useToastContext } from '@/context/ToastContext'
+import { AlertFilterBar } from '@/components/scenario/AlertFilterBar'
+import { AlertRowsDownload } from '@/components/instructor/StudentProgressDownload'
 import {
   alertsQuery,
-  describeFilters,
   emptyAlertsCopy,
   filterAlerts,
   filteredEmptyCopy,
@@ -15,10 +16,8 @@ import {
   formatAlertTime,
   formatAlertTimestampUtc,
   groupAlertsByRule,
-  hasActiveFilters,
   NO_FILTERS,
   POLL_MS,
-  SEVERITY_OPTIONS,
   severityBand,
   SIEM_TABLE_CLASS,
   SIEM_TABLE_VIEWPORT_CLASS,
@@ -38,9 +37,6 @@ function levelClass(level: number): string {
   return SEVERITY_CLASS[severityBand(level)]
 }
 
-const FILTER_SELECT_CLASS =
-  'text-xs bg-secondary border border-border rounded px-1.5 py-1 text-text-main max-w-[14rem] disabled:opacity-60'
-
 function isTabHidden(): boolean {
   return typeof document !== 'undefined' && document.visibilityState === 'hidden'
 }
@@ -48,10 +44,13 @@ function isTabHidden(): boolean {
 export function SiemAlertViewer({
   podId,
   source = 'student',
+  exportStudentId,
 }: {
   podId: number
   /** 'staff' reads the Instructor/Admin route (any student's pod, same safe fields). */
   source?: 'student' | 'staff'
+  /** When set, show a CSV download for the currently filtered alert rows. */
+  exportStudentId?: string
 }) {
   const { success, warning } = useToastContext()
   const [alerts, setAlerts] = useState<SiemAlert[]>([])
@@ -126,10 +125,6 @@ export function SiemAlertViewer({
   )
   const visible = useMemo(() => filterAlerts(alerts, effectiveFilters), [alerts, effectiveFilters])
   const options = useMemo(() => filterOptions(alerts, effectiveFilters), [alerts, effectiveFilters])
-  const filtersActive = hasActiveFilters(effectiveFilters)
-
-  const setFilter = <K extends keyof AlertFilters>(key: K, value: AlertFilters[K]) =>
-    setFilters((cur) => ({ ...cur, [key]: value }))
 
   const copyEvent = useCallback(
     async (timestamp: string, ruleId: string) => {
@@ -190,62 +185,19 @@ export function SiemAlertViewer({
         </label>
         {status}
       </div>
-      <div className="flex flex-wrap items-center gap-2 mb-2">
-        <select
-          aria-label="Filter by rule"
-          className={FILTER_SELECT_CLASS}
-          value={only5710 ? '5710' : filters.ruleId}
-          disabled={only5710}
-          onChange={(e) => setFilter('ruleId', e.target.value)}
-        >
-          {only5710 ? (
-            <option value="5710">Rule 5710 (shortcut on)</option>
-          ) : (
-            <>
-              <option value="">All rules</option>
-              {options.rules.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.description ? `${r.id} — ${r.description}` : r.id}
-                </option>
-              ))}
-            </>
-          )}
-        </select>
-        <select
-          aria-label="Filter by agent"
-          className={FILTER_SELECT_CLASS}
-          value={filters.agent}
-          onChange={(e) => setFilter('agent', e.target.value)}
-        >
-          <option value="">All agents</option>
-          {options.agents.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Filter by severity"
-          className={FILTER_SELECT_CLASS}
-          value={filters.severity}
-          onChange={(e) => setFilter('severity', e.target.value as AlertFilters['severity'])}
-        >
-          <option value="">All severities</option>
-          {SEVERITY_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        {filtersActive && (
-          <>
-            <span className="text-xs text-text-muted" data-testid="siem-filter-summary">
-              Showing {visible.length} of {alerts.length} · {describeFilters(effectiveFilters)}
-            </span>
-            <Button size="sm" variant="secondary" onClick={() => setFilters(NO_FILTERS)}>
-              Clear filters
-            </Button>
-          </>
+      <div className="flex flex-wrap items-start gap-2 mb-2">
+        <div className="min-w-0 flex-1">
+          <AlertFilterBar
+            filters={only5710 ? { ...filters, ruleId: '' } : filters}
+            options={options}
+            totalCount={alerts.length}
+            visibleCount={visible.length}
+            onChange={(next) => setFilters(only5710 ? { ...next, ruleId: '' } : next)}
+            ruleLocked={only5710}
+          />
+        </div>
+        {exportStudentId && (
+          <AlertRowsDownload studentId={exportStudentId} alerts={visible} label="live_filtered" />
         )}
       </div>
       <div className={SIEM_TABLE_VIEWPORT_CLASS}>

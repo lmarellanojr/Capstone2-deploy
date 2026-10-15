@@ -80,9 +80,16 @@ describe("filterAlerts", () => {
   })
 
   it("combines dimensions with AND", () => {
-    const f = { ruleId: "5710", agent: "pod-alice-meta", severity: "medium" as const }
+    const f = { ...NO_FILTERS, ruleId: "5710", agent: "pod-alice-meta", severity: "medium" as const }
     expect(filterAlerts(rows, f)).toHaveLength(1)
     expect(filterAlerts(rows, { ...f, severity: "high" })).toHaveLength(0)
+  })
+
+  it("matches text against rule id, description, or agent", () => {
+    expect(filterAlerts(rows, { ...NO_FILTERS, query: "sshd" }).map((a) => a.rule_id)).toEqual(["5710", "5710"])
+    expect(filterAlerts(rows, { ...NO_FILTERS, query: "DVWA" })).toHaveLength(2)
+    expect(filterAlerts(rows, { ...NO_FILTERS, query: "19007" })).toHaveLength(1)
+    expect(filterAlerts(rows, { ...NO_FILTERS, query: "nope" })).toHaveLength(0)
   })
 })
 
@@ -94,7 +101,7 @@ describe("filterOptions", () => {
   })
 
   it("keeps a selected value that is no longer in the fetched rows", () => {
-    const opts = filterOptions(rows, { ruleId: "5503", agent: "pod-alice-kali", severity: "" })
+    const opts = filterOptions(rows, { ...NO_FILTERS, ruleId: "5503", agent: "pod-alice-kali" })
     expect(opts.rules.map((r) => r.id)).toContain("5503")
     expect(opts.agents).toContain("pod-alice-kali")
   })
@@ -104,11 +111,12 @@ describe("empty-state copy", () => {
   it("distinguishes 'no alerts fetched' from 'filters hide everything'", () => {
     expect(emptyAlertsCopy(false)).toMatch(/No alerts yet/)
     expect(emptyAlertsCopy(true)).toMatch(/No rule 5710/)
-    const f = { ruleId: "510", agent: "pod-alice-meta", severity: "high" as const }
+    const f = { ...NO_FILTERS, ruleId: "510", agent: "pod-alice-meta", severity: "high" as const }
     expect(describeFilters(f)).toBe("rule 510, agent pod-alice-meta, severity High (7+)")
     expect(filteredEmptyCopy(f, 4)).toBe(
       "No alerts match rule 510, agent pod-alice-meta, severity High (7+). 4 alerts hidden by filters."
     )
     expect(filteredEmptyCopy({ ...NO_FILTERS, severity: "low" }, 1)).toMatch(/1 alert hidden/)
+    expect(describeFilters({ ...NO_FILTERS, query: "ssh" })).toBe('text "ssh"')
   })
 })
