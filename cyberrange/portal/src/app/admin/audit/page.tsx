@@ -6,7 +6,7 @@ import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, Button, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
 import { useAuditLog } from "@/hooks/useAuditLog";
-import { auditEventLabel, auditResultVariant, parseAuditDetail } from "@/lib/auditEvents";
+import { auditActor, auditEventLabel, auditResultVariant } from "@/lib/auditEvents";
 import { formatSqliteDate } from "@/lib/sqliteTime";
 
 const RESULTS = ["OK", "FAILED", "DENIED"];
@@ -140,7 +140,7 @@ export default function AdminAuditLogPage() {
               </thead>
               <tbody>
                 {events.map((e) => {
-                  const { actor, facts } = parseAuditDetail(e.detail);
+                  const { actor, system, facts } = auditActor(e);
                   return (
                     <tr key={e.id} className="border-b border-border last:border-0 hover:bg-muted/20 align-top">
                       <td className="py-3 px-4 text-text-muted whitespace-nowrap tabular-nums">{formatSqliteDate(e.timestamp)}</td>
@@ -150,7 +150,13 @@ export default function AdminAuditLogPage() {
                           <p className="text-[11px] font-mono text-text-faint">{e.event_type}</p>
                         )}
                       </td>
-                      <td className="py-3 px-4 font-mono text-xs text-text-main">{actor ?? "—"}</td>
+                      <td className="py-3 px-4">
+                        {system ? (
+                          <span className="text-xs italic text-text-muted">{actor}</span>
+                        ) : (
+                          <span className="font-mono text-xs text-text-main">{actor}</span>
+                        )}
+                      </td>
                       <td className="py-3 px-4">
                         <p className="font-mono text-xs text-text-main">{e.student_id || "—"}</p>
                         {e.pod_id != null && <p className="text-xs text-text-muted">Pod {e.pod_id}</p>}
