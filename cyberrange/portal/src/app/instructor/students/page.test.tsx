@@ -34,12 +34,18 @@ jest.mock("@/hooks/useInstructorStudents", () => ({
 it("shows per-scenario chips and expands task-level detail", () => {
   render(<Page />)
   expect(screen.getByText("Progress by scenario")).toBeInTheDocument()
-  expect(screen.getByText(/S1/)).toBeInTheDocument()
-  expect(screen.getByText(/S2/)).toBeInTheDocument()
-  // Scenario 1 M1 (50) + Scenario 2 M4 (75)
+  // Scenario 1 M1 (50) + Scenario 2 M4 (75); FAIL on S2 M1 does not add points.
   expect(screen.getByText("125")).toBeInTheDocument()
+  const s1Chip = screen.getByTitle(/Network Reconnaissance/i)
+  expect(s1Chip).toHaveTextContent("S1")
+  expect(s1Chip).toHaveTextContent("1/5")
+  expect(s1Chip).toHaveTextContent("50 pts")
+  const s2Chip = screen.getByTitle(/SQL Injection|Web Application/i)
+  expect(s2Chip).toHaveTextContent("S2")
+  expect(s2Chip).toHaveTextContent("1/5")
+  expect(s2Chip).toHaveTextContent("75 pts")
 
   fireEvent.click(screen.getByRole("button", { name: /Expand srivera/i }))
-  expect(screen.getByText(/Host Discovery|Hosts/i)).toBeTruthy()
+  expect(screen.getByText("M1 · Host Discovery")).toBeInTheDocument()
   expect(screen.getByText(/Open full student detail/i)).toBeInTheDocument()
 })

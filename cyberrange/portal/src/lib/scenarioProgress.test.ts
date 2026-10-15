@@ -33,6 +33,19 @@ describe("catalogMilestonePoints / earnedPointsForAttempt", () => {
     expect(catalogMilestonePoints(6, 99, S)).toBeNull()
     expect(earnedPointsForAttempt({ scenario_id: 6, milestone_id: 1, status: "PASS" }, S)).toBe(100)
     expect(earnedPointsForAttempt({ scenario_id: 6, milestone_id: 1, status: "FAIL" }, S)).toBe(0)
+    expect(earnedPointsForAttempt({ scenario_id: 6, milestone_id: 99, status: "PASS" }, S)).toBeNull()
+  })
+
+  it("credits duplicate PASS rows only once when a seen set is shared", () => {
+    const seen = new Set<string>()
+    const rows = [
+      { scenario_id: 6, milestone_id: 1, status: "PASS" },
+      { scenario_id: 6, milestone_id: 1, status: "PASS" },
+      { scenario_id: 1, milestone_id: 1, status: "PASS" },
+    ]
+    const col = rows.map((r) => earnedPointsForAttempt(r, S, seen))
+    expect(col).toEqual([100, 0, 50])
+    expect(col.reduce<number>((a, b) => a + (b ?? 0), 0)).toBe(150)
   })
 })
 

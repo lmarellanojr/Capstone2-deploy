@@ -146,7 +146,11 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {student.milestones.map((m, idx) => (
+                    {(() => {
+                      const seenPoints = new Set<string>()
+                      return student.milestones.map((m, idx) => {
+                        const points = earnedPointsForAttempt(m, SCENARIOS, seenPoints)
+                        return (
                       <tr key={`${m.scenario_id}-${m.milestone_id}-${idx}`} className="border-b border-border last:border-0">
                         <td className="py-3 px-6 text-text-main">{formatScenarioNumber(m.scenario_id)}</td>
                         <td className="py-3 px-4 text-text-muted">{m.milestone_id}</td>
@@ -154,7 +158,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                           <Badge variant={milestoneBadgeVariant(m.status)}>{m.status}</Badge>
                         </td>
                         <td className="py-3 px-4 tabular-nums text-text-main">
-                          {earnedPointsForAttempt(m, SCENARIOS)}
+                          {points == null ? "—" : points}
                         </td>
                         <td className="py-3 px-4 tabular-nums text-text-main">
                           {m.detection_score == null ? "—" : m.detection_score}
@@ -164,7 +168,9 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                           {parseSqliteUtc(m.verified_at)?.toLocaleString() ?? "—"}
                         </td>
                       </tr>
-                    ))}
+                        )
+                      })
+                    })()}
                   </tbody>
                 </table>
               </div>

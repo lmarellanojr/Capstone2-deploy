@@ -73,11 +73,13 @@ export function latestMilestoneStatuses(
       })
     }
   }
+  // Array.from avoids TS2802 (MapIterator + default ES5 target / no downlevelIteration).
   return new Map(
-    [...out.entries()].map(([k, v]) => [k, { status: v.status, detectionScore: v.detectionScore }]),
+    Array.from(out, ([k, v]) => [k, { status: v.status, detectionScore: v.detectionScore }]),
   )
 }
 
+/** Catalog scenario progress for every portal lab (includes untouched with empty statuses). */
 export function scenarioProgressDetails(
   rows: InstructorMilestone[],
   scenarios: ScenarioLike[],
@@ -86,36 +88,34 @@ export function scenarioProgressDetails(
   const latest = latestMilestoneStatuses(rows)
   const ordered = [...scenarios].sort((a, b) => a.displayNumber - b.displayNumber)
 
-  return ordered
-    .map((s) => {
-      const milestones: MilestoneDetail[] = s.milestones.map((m) => {
-        const hit = latest.get(`${s.id}:${m.id}`)
-        const status =
-          hit?.status === "PASS" ? "PASS" : hit?.status === "FAIL" ? "FAIL" : "—"
-        return {
-          milestoneId: m.id,
-          name: m.name,
-          points: m.points,
-          status,
-          detectionScore: hit?.detectionScore ?? null,
-        }
-      })
-      const passed = milestones.filter((m) => m.status === "PASS").length
-      const pointsEarned = earned[s.id] ?? 0
-      const pointsTotal = scenarioTotalPoints(s)
+  return ordered.map((s) => {
+    const milestones: MilestoneDetail[] = s.milestones.map((m) => {
+      const hit = latest.get(`${s.id}:${m.id}`)
+      const status =
+        hit?.status === "PASS" ? "PASS" : hit?.status === "FAIL" ? "FAIL" : "—"
       return {
-        scenarioId: s.id,
-        displayNumber: s.displayNumber,
-        label: formatScenarioNumber(Number(s.id)),
-        name: s.name,
-        passed,
-        total: milestones.length,
-        pointsEarned,
-        pointsTotal,
-        milestones,
+        milestoneId: m.id,
+        name: m.name,
+        points: m.points,
+        status,
+        detectionScore: hit?.detectionScore ?? null,
       }
     })
-    .filter((s) => s.passed > 0 || s.milestones.some((m) => m.status !== "—") || rows.some((r) => String(r.scenario_id).padStart(2, "0") === s.scenarioId))
+    const passed = milestones.filter((m) => m.status === "PASS").length
+    const pointsEarned = earned[s.id] ?? 0
+    const pointsTotal = scenarioTotalPoints(s)
+    return {
+      scenarioId: s.id,
+      displayNumber: s.displayNumber,
+      label: formatScenarioNumber(Number(s.id)),
+      name: s.name,
+      passed,
+      total: milestones.length,
+      pointsEarned,
+      pointsTotal,
+      milestones,
+    }
+  })
 }
 
 /** Compact chips for the roster table: only scenarios the student has touched. */
@@ -123,19 +123,32 @@ export function touchedScenarioSummaries(
   rows: InstructorMilestone[],
   scenarios: ScenarioLike[],
 ): ScenarioProgressDetail[] {
-  const details = scenarioProgressDetails(rows, scenarios)
   const touched = new Set(rows.map((r) => String(r.scenario_id).padStart(2, "0")))
-  return details.filter((d) => touched.has(d.scenarioId))
+  return scenarioProgressDetails(rows, scenarios).filter((d) => touched.has(d.scenarioId))
 }
 
-export function overallPassedAttempted(rows: InstructorMilestone[]): {
+function catalogKeys(scenarios: ScenarioLike[]): Set<string> {
+  const keys = new Set<string>()
+  for (const s of scenarios) {
+    for (const m of s.milestones) keys.add(`${s.id}:${m.id}`)
+  }
+  return keys
+}
+
+/** Distinct passed/attempted counts, limited to portal-catalog milestones. */
+export function overallPassedAttempted(
+  rows: InstructorMilestone[],
+  scenarios: ScenarioLike[],
+): {
   passed: number
   attempted: number
 } {
+  const catalog = catalogKeys(scenarios)
   const attempted = new Set<string>()
   const passed = new Set<string>()
   for (const m of rows) {
-    const key = `${m.scenario_id}:${m.milestone_id}`
+    const key = `${String(m.scenario_id).padStart(2, "0")}:${m.milestone_id}`
+    if (!catalog.has(key)) continue
     attempted.add(key)
     if (m.status === "PASS") passed.add(key)
   }

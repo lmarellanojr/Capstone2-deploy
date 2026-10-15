@@ -6,18 +6,22 @@ import { earnedPointsForAttempt } from "@/lib/scenarioProgress"
 import { rowsToCsv } from "@/lib/csvExport"
 
 export function milestoneCsvRows(milestones: InstructorMilestone[]): Array<Array<unknown>> {
-  return milestones.map((m) => [
+  const seenPoints = new Set<string>()
+  return milestones.map((m) => {
+    const points = earnedPointsForAttempt(m, SCENARIOS, seenPoints)
+    return [
     formatScenarioNumber(m.scenario_id),
     m.scenario_id,
     m.milestone_id,
     m.status,
-    earnedPointsForAttempt(m, SCENARIOS),
+    points == null ? "" : points,
     m.detection_score ?? "",
     describeSiemDetection(m.scenario_id, m.milestone_id, m.detection_score),
     m.detection_data ?? "",
     m.pod_id ?? "",
     m.verified_at ?? "",
-  ])
+  ]
+  })
 }
 
 export const MILESTONE_CSV_HEADERS = [

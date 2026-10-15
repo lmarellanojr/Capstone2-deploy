@@ -44,7 +44,11 @@ export function MilestoneScoreStrip({ milestones }: { milestones: InstructorMile
             </tr>
           </thead>
           <tbody>
-            {recent.map((m, idx) => (
+            {(() => {
+              const seenPoints = new Set<string>()
+              return recent.map((m, idx) => {
+                const points = earnedPointsForAttempt(m, SCENARIOS, seenPoints)
+                return (
               <tr key={`${m.scenario_id}-${m.milestone_id}-${idx}`} className="border-t border-border">
                 <td className="py-2 px-3 text-text-main">{formatScenarioNumber(m.scenario_id)}</td>
                 <td className="py-2 px-3 text-text-muted">{m.milestone_id}</td>
@@ -52,7 +56,7 @@ export function MilestoneScoreStrip({ milestones }: { milestones: InstructorMile
                   <Badge variant={statusVariant(m.status)}>{m.status}</Badge>
                 </td>
                 <td className="py-2 px-3 tabular-nums text-text-main">
-                  {earnedPointsForAttempt(m, SCENARIOS)}
+                  {points == null ? "—" : points}
                 </td>
                 <td className="py-2 px-3 tabular-nums text-text-main">
                   {m.detection_score == null ? "—" : m.detection_score}
@@ -61,7 +65,9 @@ export function MilestoneScoreStrip({ milestones }: { milestones: InstructorMile
                   {describeSiemDetection(m.scenario_id, m.milestone_id, m.detection_score)}
                 </td>
               </tr>
-            ))}
+                )
+              })
+            })()}
           </tbody>
         </table>
       </div>

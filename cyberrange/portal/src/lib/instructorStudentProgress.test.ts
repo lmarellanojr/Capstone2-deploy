@@ -35,8 +35,13 @@ const rows: InstructorMilestone[] = [
 ]
 
 describe("instructorStudentProgress", () => {
-  it("counts distinct passed / attempted like the old roster column", () => {
-    expect(overallPassedAttempted(rows)).toEqual({ passed: 2, attempted: 3 })
+  it("counts distinct passed / attempted for catalog milestones only", () => {
+    expect(overallPassedAttempted(rows, S)).toEqual({ passed: 2, attempted: 3 })
+    const withLegacy = [
+      ...rows,
+      { scenario_id: 99, milestone_id: 1, status: "PASS", detection_score: 0, verified_at: "2026-10-15 03:00:00" },
+    ]
+    expect(overallPassedAttempted(withLegacy, S)).toEqual({ passed: 2, attempted: 3 })
   })
 
   it("sums catalog points the same way the student dashboard does", () => {

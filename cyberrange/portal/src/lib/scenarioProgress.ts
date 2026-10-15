@@ -30,13 +30,33 @@ export function catalogMilestonePoints(
   return m ? m.points : null
 }
 
-/** Points a student earns from this attempt row: catalog points on PASS, otherwise 0. */
+function attemptKey(row: ProgressRow): string {
+  return `${String(row.scenario_id).padStart(2, "0")}:${row.milestone_id}`
+}
+
+/**
+ * Points shown on one attempt row.
+ * - `null` = milestone not in the portal catalog (render as —)
+ * - `0` = not PASS, or a later duplicate PASS for a milestone already credited
+ * - `>0` = first PASS for that catalog milestone
+ *
+ * Pass the same `seen` Set while mapping a list so the column sums to
+ * `earnedByScenario` / student-dashboard totals.
+ */
 export function earnedPointsForAttempt(
   row: ProgressRow,
   scenarios: ScenarioLike[],
-): number {
+  seen?: Set<string>,
+): number | null {
+  const catalogPts = catalogMilestonePoints(row.scenario_id, row.milestone_id, scenarios)
+  if (catalogPts == null) return null
   if (row.status !== "PASS") return 0
-  return catalogMilestonePoints(row.scenario_id, row.milestone_id, scenarios) ?? 0
+  if (seen) {
+    const key = attemptKey(row)
+    if (seen.has(key)) return 0
+    seen.add(key)
+  }
+  return catalogPts
 }
 
 /** Points earned per catalog id ("01", "06", ...). Each milestone counts once,

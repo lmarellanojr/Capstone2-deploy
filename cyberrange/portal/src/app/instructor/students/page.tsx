@@ -167,7 +167,7 @@ export default function InstructorStudentsPage() {
               </thead>
               <tbody>
                 {students.map((s) => {
-                  const { passed, attempted } = overallPassedAttempted(s.milestones);
+                  const { passed, attempted } = overallPassedAttempted(s.milestones, SCENARIOS);
                   const chips = touchedScenarioSummaries(s.milestones, SCENARIOS);
                   const points = totalPointsEarned(s.milestones, SCENARIOS);
                   const lastActivity = s.milestones[0]?.verified_at ?? s.active_pod?.last_heartbeat ?? null;

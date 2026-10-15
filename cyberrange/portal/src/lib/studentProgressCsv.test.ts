@@ -56,6 +56,16 @@ describe("studentProgressCsv", () => {
     expect(rows[1][6]).toBe("Detected")
   })
 
+  it("dedupes points across duplicate PASS rows so the column sums to totalPointsEarned", () => {
+    const dupes: InstructorMilestone[] = [
+      { scenario_id: 6, milestone_id: 4, status: "PASS", detection_score: 0, verified_at: "2026-10-15 01:00:00" },
+      { scenario_id: 6, milestone_id: 4, status: "PASS", detection_score: 0, verified_at: "2026-10-15 01:05:00" },
+    ]
+    const col = milestoneCsvRows(dupes).map((r) => Number(r[4] || 0))
+    expect(col).toEqual([75, 0])
+    expect(col.reduce((a, b) => a + b, 0)).toBe(75)
+  })
+
   it("includes review scores", () => {
     expect(reviewCsvRows(reviews)[0][5]).toBe(80)
   })
