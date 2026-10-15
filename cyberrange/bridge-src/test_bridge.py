@@ -69,8 +69,8 @@ def test_tmux_resize_command_targets_lab_clients_of_role_user():
     assert argv[:7] == ["lxc", "--project", "default", "exec", "pod-lenie-kali", "--", "sh"]
     script = argv[-1]
     assert "/tmp/tmux-$(id -u student)/default" in script
-    assert 'list-clients -t lab -F "#{client_tty}"' in script
-    assert "stty -F \"$t\" rows 24 cols 46" in script
+    assert 'list-clients -t lab -F "#{client_tty} #{client_pid}"' in script
+    assert 'stty -F "$t" rows 24 cols 46 && kill -WINCH "$p"' in script
     assert "msfadmin" in mod.tmux_resize_command_for("meta", "c", 24, 80)[-1]
     # Sizes are clamped even if a caller skips parse_client_message.
     assert "rows 200 cols 500" in mod.tmux_resize_command_for("kali", "c", 10**6, 10**6)[-1]

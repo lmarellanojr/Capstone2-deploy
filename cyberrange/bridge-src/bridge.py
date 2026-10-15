@@ -84,13 +84,15 @@ def tmux_resize_command_for(pod_type: str, container: str, rows: int, cols: int)
     """argv that resizes the pod-side TTY of every client attached to the 'lab' tmux
     session. `lxc exec` does not forward mid-session resizes into the pod (confirmed
     live 2026-10-16: browser at ~46 cols, tmux still 80), so set the inner TTY size
-    directly; the kernel then SIGWINCHes the tmux client like a real terminal resize.
-    Runs as root in the container (the TTY is root-owned) against the role user's socket."""
+    directly, then SIGWINCH the tmux client: the kernel's own SIGWINCH goes to the TTY's
+    foreground process group, which under `su -c` is not the client (also confirmed
+    live: stty alone left tmux at 80x24). Runs as root in the container (the TTY is
+    root-owned, mode 600) against the role user's socket."""
     user = POD_USERS[pod_type]
     rows, cols = clamp_size(int(rows), int(cols))
     script = (f'S=/tmp/tmux-$(id -u {user})/default; '
-              f'for t in $(tmux -S "$S" list-clients -t lab -F "#{{client_tty}}" 2>/dev/null); do '
-              f'stty -F "$t" rows {rows} cols {cols}; done')
+              f'tmux -S "$S" list-clients -t lab -F "#{{client_tty}} #{{client_pid}}" 2>/dev/null | '
+              f'while read t p; do stty -F "$t" rows {rows} cols {cols} && kill -WINCH "$p"; done')
     return ["lxc", "--project", LXD_PROJECT, "exec", container, "--", "sh", "-c", script]
 
 
