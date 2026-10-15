@@ -119,6 +119,67 @@ def test_resize_coalescer_survives_a_failing_apply():
     assert calls == [(24, 80), (24, 46)]
 
 
+class _FakeProc:
+    def __init__(self, exits_after=None):
+        self.returncode = None
+        self.killed = False
+        self._done = asyncio.Event()
+        self._exits_after = exits_after
+
+    async def wait(self):
+        if self._exits_after is not None:
+            await asyncio.sleep(self._exits_after)
+            self.returncode = 0
+            self._done.set()
+        await self._done.wait()
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+        self._done.set()
+
+
+def _patch_spawn(monkeypatch, mod, proc, seen):
+    async def fake_exec(*argv, **kw):
+        seen.update(kw)
+        return proc
+    monkeypatch.setattr(mod.asyncio, "create_subprocess_exec", fake_exec)
+
+
+def test_tmux_resize_kills_and_reaps_a_hung_lxc_exec(monkeypatch):
+    mod = _load()
+    proc, seen = _FakeProc(), {}
+    _patch_spawn(monkeypatch, mod, proc, seen)
+    asyncio.run(mod._run_tmux_resize("c", "kali", 24, 80, timeout=0.01))
+    assert proc.killed and proc.returncode == -9
+    assert seen["stdin"] == asyncio.subprocess.DEVNULL
+
+
+def test_tmux_resize_reaps_when_session_teardown_cancels_it(monkeypatch):
+    mod = _load()
+    proc, seen = _FakeProc(), {}
+    _patch_spawn(monkeypatch, mod, proc, seen)
+
+    async def scenario():
+        task = asyncio.create_task(mod._run_tmux_resize("c", "kali", 24, 80))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert proc.killed
+
+
+def test_tmux_resize_leaves_a_finished_process_alone(monkeypatch):
+    mod = _load()
+    proc, seen = _FakeProc(exits_after=0), {}
+    _patch_spawn(monkeypatch, mod, proc, seen)
+    asyncio.run(mod._run_tmux_resize("c", "kali", 24, 80))
+    assert not proc.killed and proc.returncode == 0
+
+
 class _FakeWs:
     def __init__(self, messages, delay=0.0):
         self._messages = list(messages)

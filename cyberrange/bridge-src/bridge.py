@@ -276,29 +276,39 @@ async def _first_client_size(ws, timeout: float = 1.0):
     return (24, 80), [rest[0]]
 
 
-async def _run_tmux_resize(container: str, pod_type: str, rows: int, cols: int):
+async def _run_tmux_resize(container: str, pod_type: str, rows: int, cols: int,
+                           timeout: float = 5):
     proc = await asyncio.create_subprocess_exec(
         *tmux_resize_command_for(pod_type, container, rows, cols),
+        stdin=asyncio.subprocess.DEVNULL,  # never let lxc exec see a TTY and go interactive
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         env={**os.environ, "HOME": "/home/llms_admin"},
     )
     try:
-        await asyncio.wait_for(proc.wait(), timeout=5)
+        await asyncio.wait_for(proc.wait(), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
+        pass
+    finally:
+        # Also covers session teardown cancelling us mid-resize: never leave it unreaped.
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
 
 
 async def run_pty_session(ws, container: str, pod_type: str):
     import pty  # Unix-only; lazy
-    await _evict_existing_session(container)
+    # Wait for the browser's size first, so eviction and registration below stay adjacent
+    # (a second connection in between would otherwise both see nothing to evict).
     (rows, cols), pending_input = await _first_client_size(ws)
+    await _evict_existing_session(container)
     argv = [a.replace("{container}", container) for a in launch_command_for(pod_type)]
     master, slave = pty.openpty()
     _set_winsize(master, rows, cols)
 
     def _child_setctty():
         # Make the pty slave (fd 0 after dup2) the controlling terminal so the kernel
-        # delivers SIGWINCH to `lxc exec` on resize -> it forwards the size into the pod.
+        # delivers SIGWINCH to `lxc exec` on resize (host side only; lxc exec doesn't
+        # carry it into the pod, so the pod-side size is set by tmux_resize_command_for).
         import fcntl as _f, termios as _t
         _f.ioctl(0, _t.TIOCSCTTY, 0)
 
