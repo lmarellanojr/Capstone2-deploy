@@ -93,11 +93,14 @@ const RESULT_LABELS: Record<string, string> = {
   ESCALATED: "Needs review",
   PENDING: "Pending",
   INCOMPLETE: "Incomplete",
+  RETRY: "Try again",
+  UNKNOWN: "Unknown",
 }
 
 /** The row's result, or the outcome carried in the event name when the
- *  writer left result empty (PROVISION_FAILED, DVWA_READY_OK, ...). Mirrors
- *  the result filter in audit_router.py. */
+ *  writer left result empty (PROVISION_FAILED, DVWA_READY_OK, ...). The
+ *  Result filter (audit_router._RESULT_GROUPS / _NAME_SUFFIXES) must return
+ *  every row this badges OK or Failed; change both together. */
 export function auditResult(event: { event_type: string; result: string | null }): string | null {
   if (event.result) return event.result.toUpperCase()
   if (/_(OK|SUCCESS)$/.test(event.event_type)) return "OK"
@@ -124,6 +127,7 @@ export function auditResultVariant(result: string | null): "success" | "danger" 
     case "ESCALATED":
     case "INCOMPLETE":
     case "PENDING":
+    case "RETRY":
       return "warning"
     default:
       return "default"

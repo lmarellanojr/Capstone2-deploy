@@ -126,3 +126,23 @@ def test_result_filter_matches_outcome_in_event_name(client):
     assert [e["student_id"] for e in ok["events"]] == ["e", "c"]
     denied = client.get("/admin/audit-log", params={"result": "DENIED"}).json()
     assert denied["events"] == []
+
+
+def test_result_filter_matches_scoring_results(client):
+    # scoring.py writes MILESTONE_VERIFIED with PASS / FAIL / UNKNOWN / ERROR;
+    # the portal badges FAIL and ERROR as failed and PASS as OK.
+    seed(
+        ("MILESTONE_VERIFIED", "a", "FAIL"),
+        ("MILESTONE_VERIFIED", "b", "ERROR"),
+        ("MILESTONE_VERIFIED", "c", "PASS"),
+        ("MILESTONE_VERIFIED", "d", "UNKNOWN"),
+        ("REVIEW_CASE_RESOLVED", "e", "RETRY"),
+    )
+    as_caller(claims("admin_demo", "admin"))
+    failed = client.get("/admin/audit-log", params={"result": "FAILED"}).json()
+    assert [e["student_id"] for e in failed["events"]] == ["b", "a"]
+    ok = client.get("/admin/audit-log", params={"result": "OK"}).json()
+    assert [e["student_id"] for e in ok["events"]] == ["c"]
+    # Values outside the OK / Failed groups still match exactly.
+    retry = client.get("/admin/audit-log", params={"result": "retry"}).json()
+    assert [e["student_id"] for e in retry["events"]] == ["e"]

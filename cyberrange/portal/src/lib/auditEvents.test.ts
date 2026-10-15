@@ -52,9 +52,10 @@ describe("labels and result colors", () => {
     expect(auditResultVariant("ESCALATED")).toBe("warning")
     expect(auditResultVariant(null)).toBe("default")
     expect(auditResultLabel("ESCALATED")).toBe("Needs review")
+    expect(auditResultVariant("RETRY")).toBe("warning")
+    expect(auditResultLabel("RETRY")).toBe("Try again")
     expect(auditResultLabel("WEIRD")).toBe("WEIRD")
   })
-
   it("reads the outcome from the event name when result is empty", () => {
     expect(auditResult({ event_type: "PROVISION_FAILED", result: null })).toBe("FAILED")
     expect(auditResult({ event_type: "DVWA_READY_FAIL", result: null })).toBe("FAILED")

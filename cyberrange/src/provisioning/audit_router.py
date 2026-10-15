@@ -18,10 +18,15 @@ router = APIRouter()
 MAX_LIMIT = 500
 MAX_EVENT_TYPES = 64
 
-# Provisioning writers record success/failure only in the event name
-# (PROVISION_FAILED, DVWA_READY_OK, ...) and leave `result` NULL. A result
-# filter also matches those rows so "FAILED" does not hide failed lab starts.
-# The portal derives the same badge (auditEvents.auditResult).
+# The Result filter matches every row whose badge reads OK / Failed, which is
+# more than `result = ?`: scoring writes PASS / FAIL / ERROR, and provisioning
+# writers record the outcome only in the event name (PROVISION_FAILED,
+# DVWA_READY_OK, ...) with `result` NULL. Keep in step with
+# RESULT_FILTER_GROUPS / auditResult in portal/src/lib/auditEvents.ts.
+_RESULT_GROUPS = {
+    "OK": ("OK", "PASS"),
+    "FAILED": ("FAILED", "FAIL", "ERROR"),
+}
 _NAME_SUFFIXES = {
     "OK": ("_OK", "_SUCCESS"),
     "FAILED": ("_FAIL", "_FAILED"),
@@ -67,11 +72,12 @@ def admin_list_audit_log(
         params.append(student_id.strip())
     if result:
         wanted = result.strip().upper()
-        suffixes = _NAME_SUFFIXES.get(wanted, ())
-        if suffixes:
+        if wanted in _RESULT_GROUPS:
+            values = _RESULT_GROUPS[wanted]
+            suffixes = _NAME_SUFFIXES[wanted]
             by_name = " OR ".join("event_type LIKE ? ESCAPE '\\'" for _ in suffixes)
-            where.append(f"(result = ? OR (result IS NULL AND ({by_name})))")
-            params.extend([wanted, *(_like_suffix(s) for s in suffixes)])
+            where.append(f"(result IN ({','.join('?' * len(values))}) OR (result IS NULL AND ({by_name})))")
+            params.extend([*values, *(_like_suffix(s) for s in suffixes)])
         else:
             where.append("result = ?")
             params.append(wanted)
