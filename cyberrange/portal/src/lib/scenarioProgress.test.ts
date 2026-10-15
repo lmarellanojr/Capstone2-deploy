@@ -1,4 +1,11 @@
-import { earnedByScenario, progressStatus, recommendedScenarioId, scenarioTotalPoints } from "./scenarioProgress"
+import {
+  catalogMilestonePoints,
+  earnedByScenario,
+  earnedPointsForAttempt,
+  progressStatus,
+  recommendedScenarioId,
+  scenarioTotalPoints,
+} from "./scenarioProgress"
 
 const S = [
   { id: "01", displayNumber: 1, milestones: [{ id: 1, points: 50 }, { id: 2, points: 50 }] },
@@ -16,6 +23,29 @@ describe("earnedByScenario", () => {
       { scenario_id: 6, milestone_id: 99, status: "PASS" }, // not in catalog
     ]
     expect(earnedByScenario(rows, S)).toEqual({ "01": 50, "06": 100 })
+  })
+})
+
+describe("catalogMilestonePoints / earnedPointsForAttempt", () => {
+  it("looks up catalog points and awards them only on PASS", () => {
+    expect(catalogMilestonePoints(1, 1, S)).toBe(50)
+    expect(catalogMilestonePoints("06", 1, S)).toBe(100)
+    expect(catalogMilestonePoints(6, 99, S)).toBeNull()
+    expect(earnedPointsForAttempt({ scenario_id: 6, milestone_id: 1, status: "PASS" }, S)).toBe(100)
+    expect(earnedPointsForAttempt({ scenario_id: 6, milestone_id: 1, status: "FAIL" }, S)).toBe(0)
+    expect(earnedPointsForAttempt({ scenario_id: 6, milestone_id: 99, status: "PASS" }, S)).toBeNull()
+  })
+
+  it("credits duplicate PASS rows only once when a seen set is shared", () => {
+    const seen = new Set<string>()
+    const rows = [
+      { scenario_id: 6, milestone_id: 1, status: "PASS" },
+      { scenario_id: 6, milestone_id: 1, status: "PASS" },
+      { scenario_id: 1, milestone_id: 1, status: "PASS" },
+    ]
+    const col = rows.map((r) => earnedPointsForAttempt(r, S, seen))
+    expect(col).toEqual([100, 0, 50])
+    expect(col.reduce<number>((a, b) => a + (b ?? 0), 0)).toBe(150)
   })
 })
 

@@ -37,20 +37,33 @@ const alerts: SiemAlert[] = [
 ]
 
 describe("studentProgressCsv", () => {
-  it("includes milestone status, numeric score, and SIEM label", () => {
+  it("includes milestone status, catalog points, detection score, and SIEM label", () => {
     const rows = milestoneCsvRows(milestones)
+    // Scenario 2 / id 6 M4 is 75 pts in the portal catalog when PASS.
     expect(rows[0]).toEqual([
       "Scenario 2",
       6,
       4,
       "PASS",
+      75,
       0,
       "Not configured",
       "",
       "",
       "2026-10-15 01:00:00",
     ])
-    expect(rows[1][5]).toBe("Detected")
+    expect(rows[1][4]).toBe(0) // FAIL → 0 points
+    expect(rows[1][6]).toBe("Detected")
+  })
+
+  it("dedupes points across duplicate PASS rows so the column sums to totalPointsEarned", () => {
+    const dupes: InstructorMilestone[] = [
+      { scenario_id: 6, milestone_id: 4, status: "PASS", detection_score: 0, verified_at: "2026-10-15 01:00:00" },
+      { scenario_id: 6, milestone_id: 4, status: "PASS", detection_score: 0, verified_at: "2026-10-15 01:05:00" },
+    ]
+    const col = milestoneCsvRows(dupes).map((r) => Number(r[4] || 0))
+    expect(col).toEqual([75, 0])
+    expect(col.reduce((a, b) => a + b, 0)).toBe(75)
   })
 
   it("includes review scores", () => {

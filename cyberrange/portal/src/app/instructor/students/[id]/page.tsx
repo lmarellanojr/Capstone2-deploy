@@ -9,6 +9,8 @@ import { podBadgeVariant } from "@/lib/instructorBadges";
 import { parseSqliteUtc } from "@/lib/sqliteTime";
 import { formatScenarioNumber } from "@/lib/scenarioLabels";
 import { describeSiemDetection } from "@/lib/siemDetection";
+import { SCENARIOS } from "@/hooks/useScenarios";
+import { earnedPointsForAttempt } from "@/lib/scenarioProgress";
 import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
 import { StudentProgressDownload } from "@/components/instructor/StudentProgressDownload";
 
@@ -70,8 +72,9 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
             <h1 className="text-3xl font-bold text-text-main">{student.student_id}</h1>
             <p className="text-text-muted mt-1">Milestone progress, active pod, and review history</p>
             <p className="text-xs text-text-muted mt-1 mb-3">
-              Milestones below list every verification attempt with detection score. Review scores (0-100) are per
-              review case. Download packs milestones, reviews, and live alerts into one CSV.
+              Milestones below are verification attempts: catalog Points (same as the student dashboard on PASS),
+              plus SIEM detection score (0 or 1). Review scores (0-100) are per review case. Download packs
+              milestones, reviews, and live alerts into one CSV.
             </p>
             <StudentProgressDownload
               studentId={student.student_id}
@@ -120,8 +123,9 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
           <div className="card-surface overflow-hidden mb-6">
             <h2 className="text-lg font-bold text-text-main p-6 pb-4">Milestones (attempt history)</h2>
             <p className="text-sm text-text-muted px-6 pb-4">
-              Status is task completion. Score is the numeric SIEM detection score for that attempt.
-              {" "}SIEM detection is the plain-language label for that score.
+              Points are the same catalog values the student dashboard uses (awarded on PASS).
+              {" "}Detection score is SIEM corroboration only (usually 0 or 1), separate from points.
+              {" "}SIEM detection is the plain-language label for that detection score.
               {" "}Not configured means no detection rule is currently configured for that milestone.
               {" "}Not detected means no matching alert was recorded, or the check did not run.
             </p>
@@ -135,18 +139,26 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                       <th className="py-3 px-6 font-semibold">Scenario</th>
                       <th className="py-3 px-4 font-semibold">Milestone</th>
                       <th className="py-3 px-4 font-semibold">Status</th>
-                      <th className="py-3 px-4 font-semibold">Score</th>
+                      <th className="py-3 px-4 font-semibold">Points</th>
+                      <th className="py-3 px-4 font-semibold">Detection score</th>
                       <th className="py-3 px-4 font-semibold">SIEM detection</th>
                       <th className="py-3 px-4 font-semibold">Verified At</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {student.milestones.map((m, idx) => (
+                    {(() => {
+                      const seenPoints = new Set<string>()
+                      return student.milestones.map((m, idx) => {
+                        const points = earnedPointsForAttempt(m, SCENARIOS, seenPoints)
+                        return (
                       <tr key={`${m.scenario_id}-${m.milestone_id}-${idx}`} className="border-b border-border last:border-0">
                         <td className="py-3 px-6 text-text-main">{formatScenarioNumber(m.scenario_id)}</td>
                         <td className="py-3 px-4 text-text-muted">{m.milestone_id}</td>
                         <td className="py-3 px-4">
                           <Badge variant={milestoneBadgeVariant(m.status)}>{m.status}</Badge>
+                        </td>
+                        <td className="py-3 px-4 tabular-nums text-text-main">
+                          {points == null ? "—" : points}
                         </td>
                         <td className="py-3 px-4 tabular-nums text-text-main">
                           {m.detection_score == null ? "—" : m.detection_score}
@@ -156,7 +168,9 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                           {parseSqliteUtc(m.verified_at)?.toLocaleString() ?? "—"}
                         </td>
                       </tr>
-                    ))}
+                        )
+                      })
+                    })()}
                   </tbody>
                 </table>
               </div>
