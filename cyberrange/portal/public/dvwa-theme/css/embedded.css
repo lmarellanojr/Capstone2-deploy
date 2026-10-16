@@ -1,0 +1,76 @@
+/*
+ * Finding A: fluid DVWA layout for the narrow Scenario 2 iframe.
+ * Applied only below 920px so Open-in-new-tab / wide viewports keep stock fixed widths.
+ * Selectors limited to shell + login form; vulnerability module markup is untouched.
+ */
+
+@media (max-width: 920px) {
+	body {
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
+	div#container {
+		width: 100%;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
+	div#header,
+	div#footer,
+	div#system_info {
+		box-sizing: border-box;
+		max-width: 100%;
+	}
+
+	div#main_menu {
+		width: 140px;
+		max-width: 36%;
+		box-sizing: border-box;
+	}
+
+	div#main_body {
+		width: calc(100% - 140px);
+		max-width: calc(100% - 120px);
+		box-sizing: border-box;
+	}
+
+	div#main_menu_padded {
+		padding: 8px;
+	}
+
+	div.body_padded {
+		padding-left: 12px;
+		padding-right: 12px;
+	}
+
+	/* login.php (login.css) — keep credentials form inside the iframe */
+	fieldset {
+		width: auto;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
+	.loginInput {
+		width: 100%;
+		max-width: 320px;
+		box-sizing: border-box;
+	}
+
+	label {
+		float: none;
+		text-align: left;
+		padding-right: 0;
+		margin-bottom: 4px;
+	}
+}
+
+@media (max-width: 480px) {
+	div#main_menu,
+	div#main_body {
+		float: none;
+		width: 100%;
+		max-width: 100%;
+	}
+}

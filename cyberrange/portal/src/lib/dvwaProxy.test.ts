@@ -5,6 +5,8 @@ import {
   stripDisallowedDvwaMenu,
   DVWA_PREFIX,
   DVWA_THEME_PUBLIC_PREFIX,
+  DVWA_EMBEDDED_CSS_HREF,
+  injectDvwaEmbeddedStyles,
   rewriteSandboxedThemeUrls,
 } from './dvwaProxy'
 
@@ -108,6 +110,46 @@ describe('dvwaProxy access control', () => {
       expect(dvwaContentSecurityPolicy('/login.php')).toBeNull()
       expect(dvwaContentSecurityPolicy('/favicon.ico')).toBeNull()
       expect(dvwaContentSecurityPolicy('/dvwa/css/main.css')).toBeNull()
+    })
+  })
+
+  describe('injectDvwaEmbeddedStyles', () => {
+    it('inserts embedded.css after the last stylesheet link', () => {
+      const html = [
+        '<html><head>',
+        `<link rel="stylesheet" href="${DVWA_PREFIX}/dvwa/css/main.css">`,
+        '<link rel="icon" href="/favicon.ico">',
+        '</head><body>ok</body></html>',
+      ].join('')
+      const out = injectDvwaEmbeddedStyles(html)
+      expect(out).toContain(`href="${DVWA_EMBEDDED_CSS_HREF}"`)
+      const mainAt = out.indexOf(`${DVWA_PREFIX}/dvwa/css/main.css`)
+      const embeddedAt = out.indexOf(DVWA_EMBEDDED_CSS_HREF)
+      expect(mainAt).toBeGreaterThanOrEqual(0)
+      expect(embeddedAt).toBeGreaterThan(mainAt)
+    })
+
+    it('inserts into <head> when no stylesheet link exists', () => {
+      const html = '<html><head><title>DVWA</title></head><body></body></html>'
+      const out = injectDvwaEmbeddedStyles(html)
+      expect(out).toMatch(
+        new RegExp(`<head><link rel="stylesheet" type="text/css" href="${DVWA_EMBEDDED_CSS_HREF}">`)
+      )
+    })
+
+    it('is idempotent when the override is already linked', () => {
+      const once = injectDvwaEmbeddedStyles('<html><head></head><body></body></html>')
+      const twice = injectDvwaEmbeddedStyles(once)
+      expect(twice).toBe(once)
+      expect(twice.split(DVWA_EMBEDDED_CSS_HREF)).toHaveLength(2)
+    })
+
+    it('does not rewrite form actions or menu hrefs', () => {
+      const html = `<form action="${DVWA_PREFIX}/vulnerabilities/sqli/" method="GET"><a href="${DVWA_PREFIX}/login.php">Login</a></form>`
+      const out = injectDvwaEmbeddedStyles(html)
+      expect(out).toContain(`action="${DVWA_PREFIX}/vulnerabilities/sqli/"`)
+      expect(out).toContain(`href="${DVWA_PREFIX}/login.php"`)
+      expect(out).toContain(DVWA_EMBEDDED_CSS_HREF)
     })
   })
 

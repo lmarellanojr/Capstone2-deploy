@@ -10,6 +10,7 @@ import {
   isAllowedDvwaLabPath,
   isDestroyedPhpSession,
   isVulnerableDvwaLabPath,
+  injectDvwaEmbeddedStyles,
   rewriteCookie,
   rewriteHtml,
   rewriteLocation,
@@ -231,6 +232,9 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     let html = rewriteHtml(stripDisallowedDvwaMenu(text))
     if (isVulnerableDvwaLabPath(upstreamPath)) {
       html = rewriteSandboxedThemeUrls(html)
+    }
+    if ((upType || '').toLowerCase().includes('text/html')) {
+      html = injectDvwaEmbeddedStyles(html)
     }
     return new NextResponse(html, {
       status: up.status,
