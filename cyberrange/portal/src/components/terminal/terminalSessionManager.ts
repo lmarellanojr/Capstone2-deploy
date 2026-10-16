@@ -10,6 +10,8 @@ export interface TermSession {
   ws: WebSocket;
   host: HTMLDivElement; // persistent; term.open(host) called once
   onError?: (msg: string | null) => void;
+  onClose?: () => void;
+  onOpen?: () => void;
 }
 
 const sessions = new Map<string, TermSession>();
@@ -22,7 +24,30 @@ export function getSession(key: string): TermSession | undefined {
   return sessions.get(key);
 }
 
+/** True when a session exists and its WebSocket is still connecting or open. */
+export function isSessionLive(key: string): boolean {
+  const s = sessions.get(key);
+  if (!s) return false;
+  return s.ws.readyState === WebSocket.CONNECTING || s.ws.readyState === WebSocket.OPEN;
+}
+
+function disposeSessionResources(session: TermSession): void {
+  try { session.term.dispose(); } catch { /* noop */ }
+  try { session.host.remove(); } catch { /* noop */ }
+}
+
+function removeDeadSession(session: TermSession): void {
+  if (sessions.get(session.key) !== session) return;
+  sessions.delete(session.key);
+  disposeSessionResources(session);
+}
+
 export function createSession(key: string, wsUrl: string): TermSession {
+  // Reconnect / replace must not leave a prior socket or xterm instance alive.
+  if (sessions.has(key)) {
+    destroySession(key);
+  }
+
   const term: any = new Terminal({
     cursorBlink: true,
     theme: { background: '#000000', foreground: '#ffffff' },
@@ -65,8 +90,8 @@ export function createSession(key: string, wsUrl: string): TermSession {
     if (e.type !== 'keydown') return true;
     const mod = e.ctrlKey || e.metaKey;
     if (!mod) return true;
-    const key = e.key.toLowerCase();
-    if (key === 'c') {
+    const keyName = e.key.toLowerCase();
+    if (keyName === 'c') {
       const sel = term.getSelection();
       if (e.shiftKey) {
         if (sel) writeClip(sel);
@@ -81,6 +106,7 @@ export function createSession(key: string, wsUrl: string): TermSession {
 
   ws.onopen = () => {
     term.writeln('\x1b[32m[Client] Connecting to SSH proxy...\x1b[0m');
+    session.onOpen?.();
     setTimeout(() => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
@@ -99,10 +125,16 @@ export function createSession(key: string, wsUrl: string): TermSession {
   };
 
   ws.onclose = () => {
+    // Intentional destroySession already removed this entry and cleared callbacks.
+    if (sessions.get(key) !== session) return;
     term.writeln('\r\n\x1b[31m[Client] Connection closed.\x1b[0m');
+    const onClose = session.onClose;
+    removeDeadSession(session);
+    onClose?.();
   };
 
   ws.onerror = () => {
+    if (sessions.get(key) !== session) return;
     session.onError?.('WebSocket connection error.');
     term.writeln('\r\n\x1b[31m[Client] WebSocket error.\x1b[0m');
   };
@@ -140,8 +172,18 @@ export function refit(session: TermSession): void {
 export function destroySession(key: string): void {
   const s = sessions.get(key);
   if (!s) return;
-  try { s.ws.close(); } catch { /* noop */ }
-  try { s.term.dispose(); } catch { /* noop */ }
-  try { s.host.remove(); } catch { /* noop */ }
+  // Clear UI callbacks before close so intentional teardown does not trigger reconnect UX.
+  s.onClose = undefined;
+  s.onError = undefined;
+  s.onOpen = undefined;
   sessions.delete(key);
+  try { s.ws.close(); } catch { /* noop */ }
+  disposeSessionResources(s);
+}
+
+/** Test-only: clear the in-memory session map. */
+export function __resetSessionsForTests(): void {
+  for (const key of [...sessions.keys()]) {
+    destroySession(key);
+  }
 }
