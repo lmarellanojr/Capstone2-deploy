@@ -7,6 +7,8 @@ interface TerminalSideCueProps {
   taskId: number
   cueText?: string
   variant?: 'info' | 'warning'
+  /** overlay floats over the lab pane; inline sits in document flow (DVWA header strip). */
+  placement?: 'overlay' | 'inline'
 }
 
 // Labels say "Lab", not "Terminal": the cue also floats over the DVWA pane.
@@ -43,7 +45,12 @@ function renderInline(text: string): React.ReactNode[] {
   })
 }
 
-export function TerminalSideCue({ taskId, cueText, variant = 'info' }: TerminalSideCueProps) {
+export function TerminalSideCue({
+  taskId,
+  cueText,
+  variant = 'info',
+  placement = 'overlay',
+}: TerminalSideCueProps) {
   const [dismissedTaskIds, setDismissedTaskIds] = useState<Set<number>>(new Set())
 
   // Reset or check dismissal state per task
@@ -63,14 +70,26 @@ export function TerminalSideCue({ taskId, cueText, variant = 'info' }: TerminalS
   const style = VARIANT_STYLES[resolvedVariant]
   const { Icon } = style
 
+  const wrapperClass =
+    placement === 'inline'
+      ? 'relative shrink-0 w-full px-3 py-2 border-b border-border bg-muted/40 transition-opacity duration-200 motion-reduce:transition-none'
+      : 'absolute bottom-4 right-3 left-3 sm:left-auto z-[5] sm:max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none'
+
+  const cardClass =
+    placement === 'inline'
+      ? `flex items-start gap-2.5 p-2.5 rounded-lg border text-xs ${style.card}`
+      : `pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-overlay text-xs ${style.card}`
+
   return (
     <div
-      className="absolute bottom-4 right-3 left-3 sm:left-auto z-[5] sm:max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none"
+      className={wrapperClass}
       role="complementary"
       aria-label={style.label}
       data-variant={resolvedVariant}
+      data-placement={placement}
+      data-testid="lab-side-cue"
     >
-      <div className={`pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-overlay text-xs ${style.card}`}>
+      <div className={cardClass}>
         <Icon size={16} className={`${style.icon} shrink-0 mt-0.5`} aria-hidden="true" />
         <p className="flex-1 leading-relaxed text-text-main select-text">
           {renderInline(cueText)}
