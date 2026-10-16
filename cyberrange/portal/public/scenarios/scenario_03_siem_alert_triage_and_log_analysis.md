@@ -166,7 +166,7 @@ cat /home/msfadmin/incident_timeline.md
 
 **Done when:** the timeline includes your observed failed-login event with its real rule and time, events are ordered correctly, and **Build the timeline** is credited.
 
-> **Troubleshooting:** Copy the individual rule-5710 event timestamp and check the meta path. SIEM displays UTC (`…Z`). Scoring matches the claimed clock time to a genuine invalid-user line in meta's auth log (±5 minutes, with whole-hour timezone tolerance). Prefer the copied SIEM timestamp.
+> **Troubleshooting:** Copy the individual rule-5710 event timestamp and check the meta path. SIEM displays UTC (`…Z`). Scoring matches the claimed clock time to a genuine invalid-user line in meta's auth log (±5 minutes). Prefer the copied SIEM timestamp, and put it first: only your first timestamp gets whole-hour timezone tolerance, and only within ±1 minute.
 
 ### Task 3: Write the incident report
 
