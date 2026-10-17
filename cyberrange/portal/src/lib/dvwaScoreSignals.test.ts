@@ -1,4 +1,10 @@
-import { browserScoreLabel, detectBrowserMilestone, idValue } from './dvwaScoreSignals'
+import {
+  browserScoreFailureHint,
+  browserScoreLabel,
+  detectBrowserMilestone,
+  idValue,
+  injectScoreNotice,
+} from './dvwaScoreSignals'
 
 const sqli = '/vulnerabilities/sqli/'
 const xssr = '/vulnerabilities/xss_r/'
@@ -125,5 +131,30 @@ describe('dvwaScoreSignals', () => {
     it('keeps an unencoded equals sign inside id', () => {
       expect(idValue("?id=1'+OR+'1'='1&Submit=Submit", '')).toBe("1' OR '1'='1")
     })
+  })
+})
+
+describe('browserScoreFailureHint', () => {
+  it('names Scenario 2 when the active lab is another scenario', () => {
+    expect(browserScoreFailureHint(409, 'Pod is not on scenario 06')).toMatch(/different scenario.*Start Scenario 2/)
+  })
+  it('explains an inactive lab', () => {
+    expect(browserScoreFailureHint(409, 'Pod not active (status: EXPIRED)')).toMatch(/not active/)
+  })
+  it.each([401, 503, 500, null])('falls back to a service message for %p', (status) => {
+    expect(browserScoreFailureHint(status)).toMatch(/scoring service did not respond/)
+  })
+})
+
+describe('injectScoreNotice', () => {
+  it('inserts the notice right after <body>', () => {
+    const out = injectScoreNotice('<html><body class="home"><h1>x</h1></body></html>', 'hi')
+    expect(out).toMatch(/<body class="home"><div role="alert" data-cr-score-notice[^>]*><strong>Score not updated.<\/strong> hi<\/div><h1>/)
+  })
+  it('prepends when there is no <body>', () => {
+    expect(injectScoreNotice('<pre>x</pre>', 'hi')).toMatch(/^<div role="alert"[\s\S]*<\/div><pre>x<\/pre>$/)
+  })
+  it('escapes the message', () => {
+    expect(injectScoreNotice('<body>', '<b>"x"</b>')).toContain('&lt;b&gt;&quot;x&quot;&lt;/b&gt;')
   })
 })

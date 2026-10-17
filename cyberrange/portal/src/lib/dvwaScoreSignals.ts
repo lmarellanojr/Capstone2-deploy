@@ -75,3 +75,33 @@ export function detectBrowserMilestone(input: {
 
   return null
 }
+
+/** Student-facing reason a detected attack did not earn points.
+ *  `status` is the API status, or null when the request never got an answer.
+ */
+export function browserScoreFailureHint(status: number | null, detail = ''): string {
+  if (status === 409 && /scenario/i.test(detail)) {
+    return 'Your attack worked, but your active lab is a different scenario. Start Scenario 2 to earn points for it.'
+  }
+  if (status === 409) {
+    return 'Your attack worked, but your lab is not active, so it was not scored. Start Scenario 2 again from the portal, then repeat this step.'
+  }
+  return 'Your attack worked, but the score did not update because the scoring service did not respond. Try the step again; if this keeps happening, tell your instructor.'
+}
+
+/** Put a visible notice at the top of a DVWA page. Text is escaped; the page keeps its own markup. */
+export function injectScoreNotice(html: string, message: string): string {
+  const safe = message
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+  const notice =
+    '<div role="alert" data-cr-score-notice style="margin:8px;padding:10px 12px;border:1px solid #b45309;' +
+    'border-radius:6px;background:#fffbeb;color:#78350f;font:14px/1.4 system-ui,sans-serif">' +
+    `<strong>Score not updated.</strong> ${safe}</div>`
+  const body = /<body\b[^>]*>/i.exec(html)
+  if (!body) return notice + html
+  const at = body.index + body[0].length
+  return html.slice(0, at) + notice + html.slice(at)
+}
