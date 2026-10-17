@@ -12,6 +12,12 @@ const nextConfig = {
     config.cache = false
     return config
   },
+  // `/` → `/dashboard` as a real HTTP 307. redirect() in the root page ran at
+  // build time, so `/` was prerendered as a cached 200 carrying NEXT_REDIRECT;
+  // the client router then redirected mid-hydration and threw React #310 (#219).
+  async redirects() {
+    return [{ source: '/', destination: '/dashboard', permanent: false }]
+  },
   async rewrites() {
     const apiBase = process.env.API_INTERNAL_URL || 'http://10.115.77.1:5000'
     const sshBridge = process.env.SSH_BRIDGE_URL || 'http://10.115.77.1:8765'
