@@ -42,15 +42,16 @@ function CommandHint({ text }: { text: string }) {
 
 function HintCard({ hint, index, podId }: { hint: Hint; index: number; podId?: number }) {
   const isCommand = hint.kind === "command";
+  const isExactStep = hint.kind !== "nudge";
   const text = isCommand && podId != null ? injectPodIpsIntoGuide(hint.text, podId) : hint.text;
-  const note = hint.note && podId != null ? injectPodIpsIntoGuide(hint.note, podId) : hint.note;
+  const note = hint.note;
 
   return (
     <li className="rounded-lg border border-border bg-muted/40 p-3">
       <div className="flex items-center gap-2 mb-1.5">
         <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-text-muted">
-          {isCommand ? <Lightbulb size={12} aria-hidden="true" /> : <HelpCircle size={12} aria-hidden="true" />}
-          {isCommand ? "Exact step" : `Hint ${index + 1}`}
+          {isExactStep ? <Lightbulb size={12} aria-hidden="true" /> : <HelpCircle size={12} aria-hidden="true" />}
+          {isExactStep ? "Exact step" : `Hint ${index + 1}`}
         </span>
       </div>
       {isCommand ? (
@@ -70,14 +71,13 @@ function HintCard({ hint, index, podId }: { hint: Hint; index: number; podId?: n
  * Nothing is shown until the student chooses to reveal a hint, so the task is
  * not spoiled for those who don't want help.
  */
-export function ProgressiveHints({ scenarioId, milestoneId, podId, className = "" }: ProgressiveHintsProps) {
+export function ProgressiveHints(props: ProgressiveHintsProps) {
+  return <TaskHints key={`${props.scenarioId}:${props.milestoneId}`} {...props} />;
+}
+
+function TaskHints({ scenarioId, milestoneId, podId, className = "" }: ProgressiveHintsProps) {
   const hints = hintsForTask(scenarioId, milestoneId);
   const [revealed, setRevealed] = useState(0);
-
-  // Reset when the student moves to another task.
-  useEffect(() => {
-    setRevealed(0);
-  }, [scenarioId, milestoneId]);
 
   if (hints.length === 0) return null;
   const remaining = hints.length - revealed;
@@ -112,7 +112,7 @@ export function ProgressiveHints({ scenarioId, milestoneId, podId, className = "
             ? hints.length === 1
               ? "Show a hint"
               : "Show a hint (nudge first)"
-            : hints[revealed]?.kind === "command"
+            : hints[revealed]?.kind !== "nudge"
               ? "Show the exact step"
               : "Show the next hint"}
         </button>

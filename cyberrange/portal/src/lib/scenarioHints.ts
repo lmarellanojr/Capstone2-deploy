@@ -8,11 +8,11 @@
 // same $TARGET_* placeholders as the guides; the UI swaps in this pod's real
 // addresses. Copy is drawn from the command blocks in public/scenarios/*.md.
 
-export type HintKind = "nudge" | "command";
+export type HintKind = "nudge" | "command" | "instruction";
 
 export interface Hint {
   kind: HintKind;
-  /** Nudge: a sentence. Command: the exact line (or lines) to run/enter. */
+  /** Nudge: a sentence. Command: lines to run/enter. Instruction: a concrete UI action. */
   text: string;
   /** Optional one-line note shown under a command hint. */
   note?: string;
@@ -69,6 +69,7 @@ const HINTS: Record<string, Hint[]> = {
   ],
   "06:5": [
     { kind: "nudge", text: "Run the XSS, dismiss the popup, then scroll inside the DVWA result page to \"Your capture-the-flag code\" and submit that code in the Status area." },
+    { kind: "instruction", text: 'After running the reflected XSS, dismiss the popup with OK. Scroll inside the DVWA result page to "Your capture-the-flag code:". Copy the displayed code into the flag field in Status and submit it.' },
   ],
 
   // Scenario 3 — SIEM Alert Triage (defensive). Generate from Kali, write files on meta.
