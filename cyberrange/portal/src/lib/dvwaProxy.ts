@@ -253,28 +253,17 @@ const DVWA_EMBEDDED_CSS_LINK = `<link rel="stylesheet" type="text/css" href="${D
  * Inject the fluid embedded stylesheet into lab HTML.
  * Safe + sandboxed pages both need it: safe pages keep proxied stock main.css;
  * sandboxed pages use the public theme mirror. Idempotent on href.
+ * Insert before the first </head> so reflected body content (e.g. xss_r Low)
+ * cannot capture the inject point. If there is no </head>, leave html unchanged.
  */
 export function injectDvwaEmbeddedStyles(html: string): string {
   if (html.includes(DVWA_EMBEDDED_CSS_HREF)) return html
 
-  const linkRe = /<link\b[^>]*\brel\s*=\s*(["']?)stylesheet\1[^>]*>/gi
-  let last: RegExpExecArray | null = null
-  let match: RegExpExecArray | null
-  while ((match = linkRe.exec(html)) !== null) {
-    last = match
-  }
-  if (last) {
-    const at = last.index + last[0].length
-    return `${html.slice(0, at)}${DVWA_EMBEDDED_CSS_LINK}${html.slice(at)}`
-  }
+  const headClose = /<\/head>/i.exec(html)
+  if (!headClose) return html
 
-  const headOpen = /<head\b[^>]*>/i.exec(html)
-  if (headOpen) {
-    const at = headOpen.index + headOpen[0].length
-    return `${html.slice(0, at)}${DVWA_EMBEDDED_CSS_LINK}${html.slice(at)}`
-  }
-
-  return `${DVWA_EMBEDDED_CSS_LINK}${html}`
+  const at = headClose.index
+  return `${html.slice(0, at)}${DVWA_EMBEDDED_CSS_LINK}${html.slice(at)}`
 }
 
 /**

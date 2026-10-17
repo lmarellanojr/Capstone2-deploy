@@ -114,7 +114,7 @@ describe('dvwaProxy access control', () => {
   })
 
   describe('injectDvwaEmbeddedStyles', () => {
-    it('inserts embedded.css after the last stylesheet link', () => {
+    it('inserts embedded.css before </head> after head stylesheets', () => {
       const html = [
         '<html><head>',
         `<link rel="stylesheet" href="${DVWA_PREFIX}/dvwa/css/main.css">`,
@@ -125,16 +125,20 @@ describe('dvwaProxy access control', () => {
       expect(out).toContain(`href="${DVWA_EMBEDDED_CSS_HREF}"`)
       const mainAt = out.indexOf(`${DVWA_PREFIX}/dvwa/css/main.css`)
       const embeddedAt = out.indexOf(DVWA_EMBEDDED_CSS_HREF)
+      const headCloseAt = out.toLowerCase().indexOf('</head>')
       expect(mainAt).toBeGreaterThanOrEqual(0)
       expect(embeddedAt).toBeGreaterThan(mainAt)
+      expect(embeddedAt).toBeLessThan(headCloseAt)
     })
 
-    it('inserts into <head> when no stylesheet link exists', () => {
+    it('inserts before </head> when no stylesheet link exists', () => {
       const html = '<html><head><title>DVWA</title></head><body></body></html>'
       const out = injectDvwaEmbeddedStyles(html)
-      expect(out).toMatch(
-        new RegExp(`<head><link rel="stylesheet" type="text/css" href="${DVWA_EMBEDDED_CSS_HREF}">`)
-      )
+      const embeddedAt = out.indexOf(DVWA_EMBEDDED_CSS_HREF)
+      const titleAt = out.indexOf('<title>DVWA</title>')
+      const headCloseAt = out.toLowerCase().indexOf('</head>')
+      expect(embeddedAt).toBeGreaterThan(titleAt)
+      expect(embeddedAt).toBeLessThan(headCloseAt)
     })
 
     it('is idempotent when the override is already linked', () => {
@@ -145,11 +149,39 @@ describe('dvwaProxy access control', () => {
     })
 
     it('does not rewrite form actions or menu hrefs', () => {
-      const html = `<form action="${DVWA_PREFIX}/vulnerabilities/sqli/" method="GET"><a href="${DVWA_PREFIX}/login.php">Login</a></form>`
+      const html = [
+        '<html><head><title>DVWA</title></head><body>',
+        `<form action="${DVWA_PREFIX}/vulnerabilities/sqli/" method="GET">`,
+        `<a href="${DVWA_PREFIX}/login.php">Login</a></form>`,
+        '</body></html>',
+      ].join('')
       const out = injectDvwaEmbeddedStyles(html)
       expect(out).toContain(`action="${DVWA_PREFIX}/vulnerabilities/sqli/"`)
       expect(out).toContain(`href="${DVWA_PREFIX}/login.php"`)
       expect(out).toContain(DVWA_EMBEDDED_CSS_HREF)
+    })
+
+    it('ignores a reflected stylesheet link inside <body>', () => {
+      const html = [
+        '<html><head>',
+        `<link rel="stylesheet" href="${DVWA_PREFIX}/dvwa/css/main.css">`,
+        '</head><body>',
+        '<textarea><link rel="stylesheet" href="x"></textarea>',
+        '</body></html>',
+      ].join('')
+      const out = injectDvwaEmbeddedStyles(html)
+      const headCloseAt = out.toLowerCase().indexOf('</head>')
+      const embeddedAt = out.indexOf(DVWA_EMBEDDED_CSS_HREF)
+      const bodyAt = out.toLowerCase().indexOf('<body>')
+      expect(embeddedAt).toBeGreaterThanOrEqual(0)
+      expect(embeddedAt).toBeLessThan(headCloseAt)
+      expect(out.indexOf(DVWA_EMBEDDED_CSS_HREF, bodyAt)).toBe(-1)
+      expect(out).toContain('<textarea><link rel="stylesheet" href="x"></textarea>')
+    })
+
+    it('leaves html unchanged when there is no </head>', () => {
+      const html = '<!DOCTYPE html><html><body>no head</body></html>'
+      expect(injectDvwaEmbeddedStyles(html)).toBe(html)
     })
   })
 
