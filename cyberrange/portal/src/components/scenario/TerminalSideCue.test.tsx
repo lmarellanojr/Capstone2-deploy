@@ -67,4 +67,24 @@ describe('TerminalSideCue', () => {
     ).toBeTruthy()
     expect(container.querySelector('.alert-warning')).toBeTruthy()
   })
+
+  it('defaults to overlay placement (absolute over the lab pane)', () => {
+    render(<TerminalSideCue taskId={1} cueText="All work is on meta" />)
+    const cue = screen.getByTestId('lab-side-cue')
+    expect(cue).toHaveAttribute('data-placement', 'overlay')
+    expect(cue.className).toMatch(/\babsolute\b/)
+  })
+
+  it('uses in-flow layout when placement is inline', () => {
+    render(
+      <TerminalSideCue
+        taskId={1}
+        cueText="⚠ Set DVWA Security to Low first — higher levels block these payloads and nothing will score."
+        placement="inline"
+      />
+    )
+    const cue = screen.getByTestId('lab-side-cue')
+    expect(cue).toHaveAttribute('data-placement', 'inline')
+    expect(cue.className).not.toMatch(/\babsolute\b/)
+  })
 })

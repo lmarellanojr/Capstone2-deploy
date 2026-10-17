@@ -1,0 +1,78 @@
+/*
+ * Finding A: fluid DVWA layout for the narrow Scenario 2 iframe.
+ * Applied at max-width 980px to cover stock body min-width: 981px (main.css).
+ * Open-in-new-tab / wide viewports above 980px keep stock fixed widths.
+ * Shell selectors cover the DVWA chrome; login form rules are scoped to
+ * #wrapper #content so module / reflected markup is not restyled.
+ */
+
+@media (max-width: 980px) {
+	body {
+		min-width: 0;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
+	div#container {
+		width: 100%;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
+	div#header,
+	div#footer,
+	div#system_info {
+		box-sizing: border-box;
+		max-width: 100%;
+	}
+
+	div#main_menu {
+		width: 140px;
+		max-width: 36%;
+		box-sizing: border-box;
+	}
+
+	div#main_body {
+		width: calc(100% - 140px);
+		max-width: calc(100% - 120px);
+		box-sizing: border-box;
+	}
+
+	div#main_menu_padded {
+		padding: 8px;
+	}
+
+	div.body_padded {
+		padding-left: 12px;
+		padding-right: 12px;
+	}
+
+	/* login.php (login.css) — scoped to login container only */
+	#wrapper #content fieldset {
+		width: auto;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
+	#wrapper #content .loginInput {
+		width: 100%;
+		max-width: 320px;
+		box-sizing: border-box;
+	}
+
+	#wrapper #content label {
+		float: none;
+		text-align: left;
+		padding-right: 0;
+		margin-bottom: 4px;
+	}
+}
+
+@media (max-width: 480px) {
+	div#main_menu,
+	div#main_body {
+		float: none;
+		width: 100%;
+		max-width: 100%;
+	}
+}

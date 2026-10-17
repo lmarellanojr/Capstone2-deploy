@@ -10,9 +10,25 @@ export interface TermSession {
   ws: WebSocket;
   host: HTMLDivElement; // persistent; term.open(host) called once
   onError?: (msg: string | null) => void;
+  /** Fired on remote/local socket close with the WebSocket close code when available. */
+  onClose?: (code?: number) => void;
+  /** Fired when the socket upgrades (handshake). Does not mean the bridge accepted the session. */
+  onOpen?: () => void;
+  /** Fired when the bridge confirms auth (`[term] Authenticated…`). Safe to reset reconnect backoff. */
+  onReady?: () => void;
+  /** Last bridge/server `Error: …` line seen on this socket (if any). */
+  lastServerError?: string;
+  /** True after the bridge sent `[term] Authenticated…` on this socket. */
+  bridgeReady?: boolean;
 }
 
 const sessions = new Map<string, TermSession>();
+
+/** Bridge errors are their own ws.send line; do not match mid-chunk shell noise. */
+const BRIDGE_ERROR_RE = /^\s*Error: [^\r\n]*/i;
+/** After auth, only this bridge catch-all is still recorded (shell `Error:` lines are ignored). */
+const BRIDGE_POST_AUTH_ERROR_RE = /^\s*Error: Internal server error\b/i;
+const BRIDGE_AUTH_RE = /\[term\]\s*Authenticated/i;
 
 export function sessionKey(podId: number, podType: string): string {
   return `${podId}:${podType}`;
@@ -22,7 +38,43 @@ export function getSession(key: string): TermSession | undefined {
   return sessions.get(key);
 }
 
+/** True when a session exists and its WebSocket is still connecting or open. */
+export function isSessionLive(key: string): boolean {
+  const s = sessions.get(key);
+  if (!s) return false;
+  return s.ws.readyState === WebSocket.CONNECTING || s.ws.readyState === WebSocket.OPEN;
+}
+
+function disposeSessionResources(session: TermSession): void {
+  try { session.term.dispose(); } catch { /* noop */ }
+  try { session.host.remove(); } catch { /* noop */ }
+}
+
+/**
+ * Drop the Map entry so a new createSession can run, but keep the xterm host
+ * attached until the UI replaces it — preserves scrollback and bridge Error lines.
+ */
+function retireSessionKeepTerminal(session: TermSession): void {
+  if (sessions.get(session.key) !== session) return;
+  sessions.delete(session.key);
+}
+
+function noteServerError(session: TermSession, text: string): void {
+  if (session.bridgeReady) {
+    const post = text.match(BRIDGE_POST_AUTH_ERROR_RE);
+    if (post) session.lastServerError = post[0].trim();
+    return;
+  }
+  const match = text.match(BRIDGE_ERROR_RE);
+  if (match) session.lastServerError = match[0].trim();
+}
+
 export function createSession(key: string, wsUrl: string): TermSession {
+  // Reconnect / replace must not leave a prior socket or xterm instance alive.
+  if (sessions.has(key)) {
+    destroySession(key);
+  }
+
   const term: any = new Terminal({
     cursorBlink: true,
     theme: { background: '#000000', foreground: '#ffffff' },
@@ -65,8 +117,8 @@ export function createSession(key: string, wsUrl: string): TermSession {
     if (e.type !== 'keydown') return true;
     const mod = e.ctrlKey || e.metaKey;
     if (!mod) return true;
-    const key = e.key.toLowerCase();
-    if (key === 'c') {
+    const keyName = e.key.toLowerCase();
+    if (keyName === 'c') {
       const sel = term.getSelection();
       if (e.shiftKey) {
         if (sel) writeClip(sel);
@@ -81,6 +133,7 @@ export function createSession(key: string, wsUrl: string): TermSession {
 
   ws.onopen = () => {
     term.writeln('\x1b[32m[Client] Connecting to SSH proxy...\x1b[0m');
+    session.onOpen?.();
     setTimeout(() => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
@@ -90,19 +143,45 @@ export function createSession(key: string, wsUrl: string): TermSession {
 
   ws.onmessage = (event) => {
     if (typeof event.data === 'string') {
+      noteServerError(session, event.data);
+      if (BRIDGE_AUTH_RE.test(event.data)) {
+        session.bridgeReady = true;
+        session.onReady?.();
+      }
       term.write(event.data);
     } else {
       const reader = new FileReader();
-      reader.onload = () => term.write(reader.result as string);
+      reader.onload = () => {
+        const text = reader.result as string;
+        noteServerError(session, text);
+        if (BRIDGE_AUTH_RE.test(text)) {
+          session.bridgeReady = true;
+          session.onReady?.();
+        }
+        term.write(text);
+      };
       reader.readAsText(event.data);
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev?: CloseEvent) => {
+    // Intentional destroySession already removed this entry and cleared callbacks.
+    if (sessions.get(key) !== session) return;
     term.writeln('\r\n\x1b[31m[Client] Connection closed.\x1b[0m');
+    const code = typeof ev?.code === 'number' ? ev.code : undefined;
+    const onClose = session.onClose;
+    retireSessionKeepTerminal(session);
+    if (onClose) {
+      // UI is attached — keep terminal/scrollback until replacement or unmount dispose.
+      onClose(code);
+    } else {
+      // No UI listener (tab hidden / callbacks cleared) — dispose immediately.
+      disposeSessionResources(session);
+    }
   };
 
   ws.onerror = () => {
+    if (sessions.get(key) !== session) return;
     session.onError?.('WebSocket connection error.');
     term.writeln('\r\n\x1b[31m[Client] WebSocket error.\x1b[0m');
   };
@@ -140,8 +219,19 @@ export function refit(session: TermSession): void {
 export function destroySession(key: string): void {
   const s = sessions.get(key);
   if (!s) return;
-  try { s.ws.close(); } catch { /* noop */ }
-  try { s.term.dispose(); } catch { /* noop */ }
-  try { s.host.remove(); } catch { /* noop */ }
+  // Clear UI callbacks before close so intentional teardown does not trigger reconnect UX.
+  s.onClose = undefined;
+  s.onError = undefined;
+  s.onOpen = undefined;
+  s.onReady = undefined;
   sessions.delete(key);
+  try { s.ws.close(); } catch { /* noop */ }
+  disposeSessionResources(s);
+}
+
+/** Test-only: clear the in-memory session map. */
+export function __resetSessionsForTests(): void {
+  for (const key of Array.from(sessions.keys())) {
+    destroySession(key);
+  }
 }

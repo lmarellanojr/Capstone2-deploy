@@ -147,7 +147,7 @@ describe('DvwaView presentation component', () => {
     window.open = originalOpen
   })
 
-  it('renders the floating side cue when provided', () => {
+  it('renders the task tip inline (not overlaying the iframe) when provided', () => {
     render(
       <DvwaView
         pod={mockPod}
@@ -157,6 +157,28 @@ describe('DvwaView presentation component', () => {
       />
     )
     expect(screen.getByText(/Set DVWA Security to Low first/i)).toBeInTheDocument()
+    const cue = screen.getByTestId('lab-side-cue')
+    expect(cue).toHaveAttribute('data-placement', 'inline')
+    expect(cue.className).not.toMatch(/\babsolute\b/)
+
+    // Cue is the in-flow strip directly under the module nav (outside the iframe frame).
+    expect(screen.getByTestId('dvwa-module-nav').nextElementSibling).toBe(cue)
+  })
+
+  it('keeps the Security Low tip visible while navigating to the Login module', () => {
+    render(
+      <DvwaView
+        pod={mockPod}
+        scenario={scen2}
+        currentTaskId={1}
+        currentTaskCue="⚠ Set DVWA Security to Low first — higher levels block these payloads and nothing will score."
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Login' }))
+    expect(screen.getByText(/Set DVWA Security to Low first/i)).toBeInTheDocument()
+    expect(screen.getByTestId('lab-side-cue')).toHaveAttribute('data-placement', 'inline')
+    const iframe = screen.getByTitle('DVWA - Damn Vulnerable Web Application') as HTMLIFrameElement
+    expect(iframe.src).toContain('/lab/dvwa/login.php')
   })
 
   it('displays the target IP computed from pod_id in the card header', () => {

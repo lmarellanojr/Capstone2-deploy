@@ -239,9 +239,13 @@ export function DvwaView({
             })}
           </nav>
 
-          {/* Floating Side Cue for current task */}
+          {/* Inline task tip — in flow under the nav so it never covers the iframe Login button */}
           {currentTaskId && currentTaskCue && isPodActive && (
-            <TerminalSideCue taskId={currentTaskId} cueText={currentTaskCue} />
+            <TerminalSideCue
+              taskId={currentTaskId}
+              cueText={currentTaskCue}
+              placement="inline"
+            />
           )}
 
           {/* Sandboxed DVWA Frame or External Module Card */}

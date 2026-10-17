@@ -20,6 +20,8 @@ Follow **Kali Linux (CLI): generate activity → Open SIEM: inspect alerts → T
 
 A **SIEM** (Security Information and Event Management) collects security logs and highlights events matching detection rules. Here it is **Wazuh**. An **alert** is a recorded detection, not proof of successful access. An **agent** sends logs from a monitored host to Wazuh. **Triage** means examining evidence and deciding what needs investigation or response.
 
+Lab event times are in **UTC** (Coordinated Universal Time), shown with a trailing `Z` (for example `2026-10-10T06:32:00Z`). Your own clock may differ: in the Philippines (UTC+8) it is 8 hours ahead, so a lab event at `19:37Z` happens at 03:37 the next day on your clock. This is expected, not a lab error. The only local time in **Open SIEM** is the **Updated** clock in the header; event times are UTC. Record the event's UTC value exactly as SIEM shows it, not your local time.
+
 You will generate a failed login as a nonexistent SSH user, record the alert, build a timeline, and write a report. An accurately detected failed login is a **true positive** for that detection; it does not establish compromise. Routine configuration findings may also be accurate, even when unrelated to this attempt.
 
 ## 1. The tools and files you'll use
@@ -98,7 +100,7 @@ ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 nosuchuser@$TARGET_META exit
 | `description` | The event's Description. |
 | `agent` | Your event's actual Agent name. |
 | `classification` | Your assessment: for example `true_positive` for a correctly detected failed login, or `needs_investigation` if evidence is insufficient. No checker enum is enforced. |
-| `notes` | Actual timestamp and timezone, evidence, and limits of your conclusion. |
+| `notes` | Actual timestamp and timezone (e.g. `2026-10-10T06:32:00Z (UTC)`), evidence, and limits of your conclusion. |
 
 2. In the meta shell, open the file with `vi`:
 
