@@ -3,9 +3,14 @@
 // scenario landing page so students know what the lab takes for granted before
 // they start (SUS Q10 "needed to learn a lot before I could get going").
 //
-// Keep each blurb to one plain sentence. Copy is drawn from section 1 ("The
-// tools you'll use") of each guide in public/scenarios/*.md so the two stay
-// consistent. Keyed by Scenario.id ("01", "06", "09", "11").
+// Keep each blurb to one plain sentence. Copy is drawn from sections 0–1 of each
+// guide (plus the §3 setup steps for Scenario 2) so the two stay consistent; if
+// you edit a guide, update the matching entry here too. Keyed by Scenario.id,
+// which does not match the guide's file number:
+//   "01" → public/scenarios/scenario_01_network_reconnaissance.md
+//   "06" → public/scenarios/scenario_02_web_application_attack_sql_injection.md
+//   "09" → public/scenarios/scenario_03_siem_alert_triage_and_log_analysis.md
+//   "11" → public/scenarios/scenario_04_vulnerability_hardening.md
 
 export interface PrereqItem {
   /** Tool name, command, or concept — rendered emphasised. */
@@ -35,21 +40,20 @@ const PREREQS: Record<string, ScenarioPrereqs> = {
     ],
     concepts: [
       { term: 'Port', blurb: 'A numbered endpoint a service listens on, such as SSH on 22 or Tomcat on 8180.' },
-      { term: 'Subnet / scope', blurb: 'The address range you are authorised to scan — shown in the lab header as $TARGET_SUBNET.' },
+      { term: 'Subnet / scope', blurb: 'The address range you are authorised to scan — shown under Connection details in the lab.' },
       { term: 'Kali vs meta', blurb: 'Kali is your attacker machine; meta is the intentionally vulnerable target.' },
       { term: 'Default credentials', blurb: 'A service left on its factory username/password — here tomcat / tomcat on the Manager.' },
     ],
   },
   '06': {
     intro:
-      'You work entirely in the browser: DVWA loads inside the lab page, already signed in to your session. No terminal or sqlmap is needed.',
+      'You work entirely in the browser: DVWA loads inside the lab page, already connected to your session. Log in as admin / password, then set DVWA Security to Low. No terminal or sqlmap is needed.',
     tools: [
-      { term: 'DVWA', blurb: 'A deliberately vulnerable practice website; log in as admin / password.' },
-      { term: 'DVWA Security = Low', blurb: 'Set this first — higher levels block the payloads and nothing will score.' },
-      { term: 'SQL injection', blurb: "Typing SQL into an input so the database runs it; you use the User ID field for Tasks 1–3." },
-      { term: 'Reflected XSS', blurb: 'Getting the page to run your <script> by reflecting your input back unescaped.' },
+      { term: 'DVWA', blurb: 'A deliberately vulnerable practice website; keep Security on Low or the payloads are blocked and nothing scores.' },
     ],
     concepts: [
+      { term: 'SQL injection', blurb: "Typing SQL into an input so the database runs it; you use the User ID field for Tasks 1–3." },
+      { term: 'Reflected XSS', blurb: 'Getting the page to run your <script> by reflecting your input back unescaped.' },
       { term: "Quote and OR '1'='1", blurb: "A single quote closes the input's string; OR '1'='1' makes the condition always true." },
       { term: 'UNION SELECT', blurb: 'Joins extra rows onto the original query; it must return the same number of columns (two here).' },
       { term: 'Password hash', blurb: "The admin password stored as a 32-character hex value — what you extract, not the plaintext." },

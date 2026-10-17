@@ -36,32 +36,35 @@ export function PrereqBox({ scenarioId, className = "", defaultOpen = true }: Pr
 
   return (
     <section className={`card-surface overflow-hidden ${className}`} aria-labelledby="prereq-heading">
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        aria-expanded={open}
-        className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-muted/40 transition focus-ring"
-      >
-        <span className="flex items-center gap-2.5 min-w-0">
-          <BookOpen size={18} className="shrink-0 text-brand" aria-hidden="true" />
-          <span className="min-w-0">
-            <span id="prereq-heading" className="block font-semibold text-text-main">
-              Before you start — what this lab assumes
-            </span>
-            <span className="block text-xs text-text-muted">
-              The tools and ideas used here, in one line each. New to them? The guide walks through every step.
+      <h2 id="prereq-heading">
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          aria-expanded={open}
+          aria-controls="prereq-panel"
+          className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-muted/40 transition focus-ring"
+        >
+          <span className="flex items-center gap-2.5 min-w-0">
+            <BookOpen size={18} className="shrink-0 text-brand" aria-hidden="true" />
+            <span className="min-w-0">
+              <span className="block font-semibold text-text-main">
+                Before you start — what this lab assumes
+              </span>
+              <span className="block text-xs font-normal text-text-muted">
+                The tools and ideas used here, in one line each. New to them? The guide walks through every step.
+              </span>
             </span>
           </span>
-        </span>
-        {open ? (
-          <ChevronUp size={18} className="shrink-0 text-text-muted" aria-hidden="true" />
-        ) : (
-          <ChevronDown size={18} className="shrink-0 text-text-muted" aria-hidden="true" />
-        )}
-      </button>
+          {open ? (
+            <ChevronUp size={18} className="shrink-0 text-text-muted" aria-hidden="true" />
+          ) : (
+            <ChevronDown size={18} className="shrink-0 text-text-muted" aria-hidden="true" />
+          )}
+        </button>
+      </h2>
 
       {open && (
-        <div className="px-5 pb-5 pt-1 border-t border-border space-y-5">
+        <div id="prereq-panel" className="px-5 pb-5 pt-1 border-t border-border space-y-5">
           <p className="text-sm text-text-secondary leading-relaxed">{prereqs.intro}</p>
 
           <div>

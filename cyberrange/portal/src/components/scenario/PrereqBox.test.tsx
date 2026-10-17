@@ -34,6 +34,20 @@ describe('PrereqBox', () => {
     expect(screen.getByText('UNION SELECT')).toBeInTheDocument()
   })
 
+  it('exposes the title as an h2 disclosure controlling the panel', () => {
+    render(<PrereqBox scenarioId="06" />)
+    expect(screen.getByRole('heading', { level: 2, name: /Before you start/ })).toBeInTheDocument()
+    const button = screen.getByRole('button', { expanded: true })
+    expect(button).toHaveAttribute('aria-controls', 'prereq-panel')
+    expect(document.getElementById('prereq-panel')).toBeInTheDocument()
+  })
+
+  it('tells Scenario 2 students to log in, matching the guide', () => {
+    const p = prereqsForScenario('06')!
+    expect(p.intro).not.toMatch(/signed in/i)
+    expect(p.intro).toMatch(/admin \/ password/)
+  })
+
   it('collapses and expands on click', () => {
     render(<PrereqBox scenarioId="01" defaultOpen={false} />)
     expect(screen.queryByText('Nmap')).not.toBeInTheDocument()
