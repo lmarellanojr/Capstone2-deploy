@@ -75,3 +75,52 @@ export function detectBrowserMilestone(input: {
 
   return null
 }
+
+export type ScoreNotice = { title: string; message: string }
+
+/** Student-facing reason a detected attack did not earn points.
+ *  `status` is the API status, or null when the request timed out or never got an answer.
+ *  A timeout can still mean the API saved the score, so that case says "may not".
+ */
+export function browserScoreFailureHint(status: number | null, detail = ''): ScoreNotice {
+  if (status === null) {
+    return {
+      title: 'Score may not have updated.',
+      message:
+        'Your attack worked, but the scoring service did not respond in time, so the score may not have updated. Check your score panel before repeating this step.',
+    }
+  }
+  if (status === 409 && /scenario/i.test(detail)) {
+    return {
+      title: 'Score not updated.',
+      message: 'Your attack worked, but your active lab is a different scenario. Start Scenario 2 to earn points for it.',
+    }
+  }
+  if (status === 409) {
+    return {
+      title: 'Score not updated.',
+      message:
+        'Your attack worked, but your lab is not active, so it was not scored. Start Scenario 2 again from the portal, then repeat this step.',
+    }
+  }
+  return {
+    title: 'Score not updated.',
+    message: `Your attack worked, but the scoring service rejected the request (HTTP ${status}). Repeating the step will not fix this, so tell your instructor.`,
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+/** Put a visible notice at the top of a DVWA page. Text is escaped; the page keeps its own markup. */
+export function injectScoreNotice(html: string, notice: ScoreNotice): string {
+  const banner =
+    '<div role="alert" data-cr-score-notice style="margin:8px;padding:10px 12px;border:1px solid #b45309;' +
+    'border-radius:6px;background:#fffbeb;color:#78350f;font:14px/1.4 system-ui,sans-serif">' +
+    `<strong>${escapeHtml(notice.title)}</strong> ${escapeHtml(notice.message)}</div>`
+  const body = /<body\b[^>]*>/i.exec(html)
+  if (!body) return banner + html
+  const at = body.index + body[0].length
+  return html.slice(0, at) + banner + html.slice(at)
+}

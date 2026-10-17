@@ -20,7 +20,13 @@ import {
   stalePhpSessionClearCookies,
   stripDisallowedDvwaMenu,
 } from '@/lib/dvwaProxy'
-import { browserScoreLabel, detectBrowserMilestone } from '@/lib/dvwaScoreSignals'
+import {
+  browserScoreFailureHint,
+  browserScoreLabel,
+  detectBrowserMilestone,
+  injectScoreNotice,
+  type ScoreNotice,
+} from '@/lib/dvwaScoreSignals'
 
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://10.115.77.1:5000'
 
@@ -207,25 +213,40 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
           'Set the same value in portal/.env.local and the provision API env/.env.'
       )
     }
+    let scoreNotice: ScoreNotice | null = null
     if (milestone && secret && studentName) {
       const label = browserScoreLabel(milestone)
-      // Long-running Node only. Do not move this route to the Edge runtime:
-      // the process can exit before this fetch finishes and the score is lost.
-      void fetch(`${API_URL}/internal/browser-score`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-browser-score-secret': secret,
-        },
-        body: JSON.stringify({
-          student_id: studentName,
-          pod_id: podId,
-          scenario_id: 6,
-          milestone_id: milestone,
-          label,
-        }),
-        cache: 'no-store',
-      }).catch((err) => console.error('dvwa proxy: browser score failed', err))
+      // Awaited so a rejected score is shown on this page instead of lost silently.
+      // Long-running Node only. Do not move this route to the Edge runtime.
+      try {
+        const res = await fetch(`${API_URL}/internal/browser-score`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-browser-score-secret': secret,
+          },
+          body: JSON.stringify({
+            student_id: studentName,
+            pod_id: podId,
+            scenario_id: 6,
+            milestone_id: milestone,
+            label,
+          }),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(5000),
+        })
+        if (!res.ok) {
+          const detail = await res.text().catch(() => '')
+          console.warn(
+            `dvwa proxy: browser score rejected (${res.status}) for pod ${podId} milestone ${milestone}: ${detail}`
+          )
+          scoreNotice = browserScoreFailureHint(res.status, detail)
+        }
+      } catch (err) {
+        // Timeout or network error. The API may still have saved the score.
+        console.error('dvwa proxy: browser score failed', err)
+        scoreNotice = browserScoreFailureHint(null)
+      }
     }
 
     out.set('content-type', up.headers.get('content-type') || 'text/html; charset=utf-8')
@@ -235,6 +256,9 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     }
     if ((upType || '').toLowerCase().includes('text/html')) {
       html = injectDvwaEmbeddedStyles(html)
+    }
+    if (scoreNotice) {
+      html = injectScoreNotice(html, scoreNotice)
     }
     return new NextResponse(html, {
       status: up.status,
