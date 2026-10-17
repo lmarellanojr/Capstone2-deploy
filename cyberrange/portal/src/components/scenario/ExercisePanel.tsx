@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, FileDown, Info, Keyboard, ShieldAlert } from 'l
 import { Pod } from '@/lib/api'
 import { Milestone, Scenario, getLabSurface } from '@/hooks/useScenarios'
 import { GuideView } from '@/components/scenario/GuideView'
+import { ProgressiveHints } from '@/components/scenario/ProgressiveHints'
 import { TaskScoreStatus } from '@/components/scenario/TaskScoreStatus'
 import { Button } from '@/components/ui/Button'
 
@@ -257,6 +258,14 @@ export function ExercisePanel({
             </span>
           </div>
         )}
+
+        {/* Progressive hints: nudge first, then the exact step, revealed one at a time. */}
+        <ProgressiveHints
+          scenarioId={scenario.id}
+          milestoneId={currentTask.id}
+          podId={pod.pod_id}
+          className="pt-1"
+        />
 
         {/* Collapsible Guide View */}
         <div className="border border-border rounded-xl overflow-hidden bg-secondary">
