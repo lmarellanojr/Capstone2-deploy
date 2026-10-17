@@ -22,7 +22,7 @@ jest.mock('./terminalSessionManager', () => ({
 
 jest.mock('@xterm/xterm/css/xterm.css', () => ({}));
 
-import { RECONNECT_BACKOFF_MS, XtermView } from './XtermView';
+import { READY_STABILITY_MS, RECONNECT_BACKOFF_MS, XtermView } from './XtermView';
 
 function makeSession(key: string) {
   const host = document.createElement('div');
@@ -214,17 +214,47 @@ describe('XtermView reconnect UX', () => {
     expect(screen.getByTestId('terminal-reconnect-button')).toBeInTheDocument();
   });
 
-  it('onReady resets the attempt counter so later disconnects can auto-reconnect again', () => {
+  it('Authenticated→immediate close(1000) does not reset backoff (two-tab eviction)', () => {
+    mockCreateSession.mockImplementation((key: string) => makeSession(key));
+
+    render(<XtermView podId={8} podType="kali" token="tok" />);
+    expect(mockCreateSession).toHaveBeenCalledTimes(1);
+
+    for (let i = 0; i < RECONNECT_BACKOFF_MS.length; i++) {
+      const lastSession = mockCreateSession.mock.results[mockCreateSession.mock.results.length - 1]
+        .value as ReturnType<typeof makeSession>;
+      act(() => {
+        lastSession.onReady?.();
+        lastSession.onClose?.(1000);
+      });
+      act(() => {
+        jest.advanceTimersByTime(RECONNECT_BACKOFF_MS[i]);
+      });
+    }
+
+    const createsAfterBackoff = mockCreateSession.mock.calls.length;
+    expect(createsAfterBackoff).toBe(1 + RECONNECT_BACKOFF_MS.length);
+
+    const lastSession = mockCreateSession.mock.results[mockCreateSession.mock.results.length - 1]
+      .value as ReturnType<typeof makeSession>;
+    act(() => {
+      lastSession.onReady?.();
+      lastSession.onClose?.(1000);
+    });
+    act(() => {
+      jest.advanceTimersByTime(10_000);
+    });
+
+    expect(mockCreateSession.mock.calls.length).toBe(createsAfterBackoff);
+  });
+
+  it('stable onReady (after READY_STABILITY_MS) resets backoff for a later disconnect', () => {
     mockCreateSession.mockImplementation((key: string) => makeSession(key));
 
     render(<XtermView podId={8} podType="kali" token="tok" />);
     const first = mockCreateSession.mock.results[0].value as ReturnType<typeof makeSession>;
 
-    act(() => {
-      first.onReady?.();
-    });
-
-    // Exhaust backoff once.
+    // Exhaust backoff once without stability.
     for (let i = 0; i < RECONNECT_BACKOFF_MS.length; i++) {
       const lastSession = mockCreateSession.mock.results[mockCreateSession.mock.results.length - 1]
         .value as ReturnType<typeof makeSession>;
@@ -240,9 +270,11 @@ describe('XtermView reconnect UX', () => {
     const exhausted = mockCreateSession.mock.results[mockCreateSession.mock.results.length - 1]
       .value as ReturnType<typeof makeSession>;
 
-    // Bridge auth succeeds — counter resets.
     act(() => {
       exhausted.onReady?.();
+    });
+    act(() => {
+      jest.advanceTimersByTime(READY_STABILITY_MS);
     });
     act(() => {
       exhausted.onClose?.(1000);
