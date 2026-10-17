@@ -85,7 +85,6 @@ describe('TerminalSideCue', () => {
     )
     const cue = screen.getByTestId('lab-side-cue')
     expect(cue).toHaveAttribute('data-placement', 'inline')
-    expect(cue.className).toMatch(/\brelative\b/)
     expect(cue.className).not.toMatch(/\babsolute\b/)
   })
 })

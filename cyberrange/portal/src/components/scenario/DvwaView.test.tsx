@@ -161,9 +161,8 @@ describe('DvwaView presentation component', () => {
     expect(cue).toHaveAttribute('data-placement', 'inline')
     expect(cue.className).not.toMatch(/\babsolute\b/)
 
-    const iframe = screen.getByTitle('DVWA - Damn Vulnerable Web Application')
-    // Cue must be a sibling ahead of the iframe region, not stacked over it
-    expect(cue.compareDocumentPosition(iframe) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Cue is the in-flow strip directly under the module nav (outside the iframe frame).
+    expect(screen.getByTestId('dvwa-module-nav').nextElementSibling).toBe(cue)
   })
 
   it('keeps the Security Low tip visible while navigating to the Login module', () => {

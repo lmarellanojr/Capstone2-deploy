@@ -7,11 +7,11 @@ interface TerminalSideCueProps {
   taskId: number
   cueText?: string
   variant?: 'info' | 'warning'
-  /** overlay floats over the lab pane; inline sits in document flow (DVWA header strip). */
+  /** overlay floats over the lab pane; inline sits in document flow under the DVWA module nav. */
   placement?: 'overlay' | 'inline'
 }
 
-// Labels say "Lab", not "Terminal": the cue also floats over the DVWA pane.
+// Labels say "Lab", not "Terminal": the cue also appears in the DVWA pane (inline).
 const VARIANT_STYLES = {
   info: {
     card: 'bg-secondary border-border text-text-main',
@@ -70,14 +70,15 @@ export function TerminalSideCue({
   const style = VARIANT_STYLES[resolvedVariant]
   const { Icon } = style
 
+  // Inline: single card frame with margin (no outer strip + inner card double box).
   const wrapperClass =
     placement === 'inline'
-      ? 'relative shrink-0 w-full px-3 py-2 border-b border-border bg-muted/40 transition-opacity duration-200 motion-reduce:transition-none'
+      ? 'shrink-0 w-full transition-opacity duration-200 motion-reduce:transition-none'
       : 'absolute bottom-4 right-3 left-3 sm:left-auto z-[5] sm:max-w-sm pointer-events-none transition-opacity duration-200 motion-reduce:transition-none'
 
   const cardClass =
     placement === 'inline'
-      ? `flex items-start gap-2.5 p-2.5 rounded-lg border text-xs ${style.card}`
+      ? `mx-3 my-2 flex items-start gap-2.5 p-2.5 rounded-lg border text-xs ${style.card}`
       : `pointer-events-auto flex items-start gap-2.5 p-3 rounded-xl border shadow-overlay text-xs ${style.card}`
 
   return (
