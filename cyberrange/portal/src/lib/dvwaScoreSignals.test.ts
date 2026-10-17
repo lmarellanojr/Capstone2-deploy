@@ -136,25 +136,36 @@ describe('dvwaScoreSignals', () => {
 
 describe('browserScoreFailureHint', () => {
   it('names Scenario 2 when the active lab is another scenario', () => {
-    expect(browserScoreFailureHint(409, 'Pod is not on scenario 06')).toMatch(/different scenario.*Start Scenario 2/)
+    expect(browserScoreFailureHint(409, 'Pod is not on scenario 06').message).toMatch(/different scenario.*Start Scenario 2/)
   })
   it('explains an inactive lab', () => {
-    expect(browserScoreFailureHint(409, 'Pod not active (status: EXPIRED)')).toMatch(/not active/)
+    expect(browserScoreFailureHint(409, 'Pod not active (status: EXPIRED)').message).toMatch(/not active/)
   })
-  it.each([401, 503, 500, null])('falls back to a service message for %p', (status) => {
-    expect(browserScoreFailureHint(status)).toMatch(/scoring service did not respond/)
+  it.each([400, 401, 403, 404, 500, 503])('reports HTTP %p as rejected and points to the instructor', (status) => {
+    const hint = browserScoreFailureHint(status, 'Pod owner mismatch')
+    expect(hint.title).toBe('Score not updated.')
+    expect(hint.message).toContain(`rejected the request (HTTP ${status})`)
+    expect(hint.message).toMatch(/tell your instructor/)
+    expect(hint.message).not.toMatch(/did not respond/)
+  })
+  it('says the score may have updated after a timeout or network error', () => {
+    const hint = browserScoreFailureHint(null)
+    expect(hint.title).toBe('Score may not have updated.')
+    expect(hint.message).toMatch(/did not respond in time.*may not have updated.*Check your score panel/)
   })
 })
 
 describe('injectScoreNotice', () => {
+  const notice = { title: 'Score not updated.', message: 'hi' }
   it('inserts the notice right after <body>', () => {
-    const out = injectScoreNotice('<html><body class="home"><h1>x</h1></body></html>', 'hi')
+    const out = injectScoreNotice('<html><body class="home"><h1>x</h1></body></html>', notice)
     expect(out).toMatch(/<body class="home"><div role="alert" data-cr-score-notice[^>]*><strong>Score not updated.<\/strong> hi<\/div><h1>/)
   })
   it('prepends when there is no <body>', () => {
-    expect(injectScoreNotice('<pre>x</pre>', 'hi')).toMatch(/^<div role="alert"[\s\S]*<\/div><pre>x<\/pre>$/)
+    expect(injectScoreNotice('<pre>x</pre>', notice)).toMatch(/^<div role="alert"[\s\S]*<\/div><pre>x<\/pre>$/)
   })
-  it('escapes the message', () => {
-    expect(injectScoreNotice('<body>', '<b>"x"</b>')).toContain('&lt;b&gt;&quot;x&quot;&lt;/b&gt;')
+  it('escapes the title and message', () => {
+    const out = injectScoreNotice('<body>', { title: '<i>', message: '<b>"x"</b>' })
+    expect(out).toContain('<strong>&lt;i&gt;</strong> &lt;b&gt;&quot;x&quot;&lt;/b&gt;')
   })
 })

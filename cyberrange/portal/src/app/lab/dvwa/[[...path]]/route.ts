@@ -24,6 +24,7 @@ import {
   browserScoreLabel,
   detectBrowserMilestone,
   injectScoreNotice,
+  type ScoreNotice,
 } from '@/lib/dvwaScoreSignals'
 
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://10.115.77.1:5000'
@@ -211,7 +212,7 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
           'Set the same value in portal/.env.local and the provision API env/.env.'
       )
     }
-    let scoreNotice: string | null = null
+    let scoreNotice: ScoreNotice | null = null
     if (milestone && secret && studentName) {
       const label = browserScoreLabel(milestone)
       // Awaited so a rejected score is shown on this page instead of lost silently.
@@ -241,6 +242,7 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
           scoreNotice = browserScoreFailureHint(res.status, detail)
         }
       } catch (err) {
+        // Timeout or network error. The API may still have saved the score.
         console.error('dvwa proxy: browser score failed', err)
         scoreNotice = browserScoreFailureHint(null)
       }

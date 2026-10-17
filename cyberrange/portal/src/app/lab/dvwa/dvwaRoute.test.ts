@@ -177,6 +177,79 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     expect(body).not.toContain('/lab/dvwa/dvwa/css/main.css')
   })
 
+  describe('browser score notice', () => {
+    const sqliHit =
+      '<html><body><pre>ID: 1\' OR \'1\'=\'1<br />First name: admin<br />Surname: admin</pre>' +
+      '<pre>ID: 1\' OR \'1\'=\'1<br />First name: Gordon<br />Surname: Brown</pre></body></html>'
+    const search = '?id=1%27+OR+%271%27%3D%271&Submit=Submit'
+    const prevSecret = process.env.BROWSER_SCORE_SECRET
+
+    beforeEach(() => {
+      process.env.BROWSER_SCORE_SECRET = 'test-secret'
+    })
+    afterAll(() => {
+      process.env.BROWSER_SCORE_SECRET = prevSecret
+    })
+
+    async function attack(score: () => void) {
+      mockActivePodAndUpstream(sqliHit)
+      mockedSession.mockResolvedValue({ accessToken: 'test-token', user: { name: 'student1' } } as never)
+      score()
+      const req = makeRequest('/lab/dvwa/vulnerabilities/sqli/', search)
+      const res = await GET(req, { params: Promise.resolve({ path: ['vulnerabilities', 'sqli'] }) })
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      expect(fetchMock.mock.calls[2][0]).toMatch(/\/internal\/browser-score$/)
+      return res
+    }
+
+    it('shows no notice when the score is saved', async () => {
+      const res = await attack(() =>
+        fetchMock.mockResolvedValueOnce({ ok: true, status: 200, text: async () => '{}' } as Response)
+      )
+      expect(res.status).toBe(200)
+      expect(await res.text()).not.toContain('data-cr-score-notice')
+    })
+
+    it('tells the student to start Scenario 2 on a 409 scenario mismatch', async () => {
+      const res = await attack(() =>
+        fetchMock.mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          text: async () => '{"detail":"Pod is not on scenario 06"}',
+        } as Response)
+      )
+      expect(res.status).toBe(200)
+      const body = await res.text()
+      expect(body).toContain('data-cr-score-notice')
+      expect(body).toContain('Start Scenario 2')
+    })
+
+    it('shows the status code and points to the instructor on a 403', async () => {
+      const res = await attack(() =>
+        fetchMock.mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          text: async () => '{"detail":"Pod owner mismatch"}',
+        } as Response)
+      )
+      expect(res.status).toBe(200)
+      const body = await res.text()
+      expect(body).toContain('rejected the request (HTTP 403)')
+      expect(body).toContain('tell your instructor')
+    })
+
+    it('says the score may not have updated when the scoring call fails', async () => {
+      const res = await attack(() =>
+        fetchMock.mockRejectedValueOnce(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))
+      )
+      expect(res.status).toBe(200)
+      const body = await res.text()
+      expect(body).toContain('data-cr-score-notice')
+      expect(body).toContain('Score may not have updated.')
+      expect(body).toContain('Check your score panel')
+    })
+  })
+
   it('does not mirror DigiNinja relative theme URLs on safe security.php', async () => {
     const upstreamHtml = [
       '<html><head>',
