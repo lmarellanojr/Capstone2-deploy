@@ -28,13 +28,15 @@ function makeSession(key: string) {
   const host = document.createElement('div');
   return {
     key,
-    term: { focus: jest.fn() },
+    term: { focus: jest.fn(), dispose: jest.fn() },
     fit: { fit: jest.fn() },
     ws: { readyState: 1 },
     host,
+    lastServerError: undefined as string | undefined,
     onError: undefined as ((msg: string | null) => void) | undefined,
-    onClose: undefined as (() => void) | undefined,
+    onClose: undefined as ((code?: number) => void) | undefined,
     onOpen: undefined as (() => void) | undefined,
+    onReady: undefined as (() => void) | undefined,
   };
 }
 
@@ -44,7 +46,6 @@ describe('XtermView reconnect UX', () => {
     jest.useFakeTimers();
     mockIsSessionLive.mockReturnValue(false);
     mockGetSession.mockReturnValue(undefined);
-    // jsdom ResizeObserver
     (global as any).ResizeObserver = class {
       observe() {}
       disconnect() {}
@@ -77,16 +78,31 @@ describe('XtermView reconnect UX', () => {
     render(<XtermView podId={3} podType="meta" token="tok-meta" />);
 
     act(() => {
-      session.onClose?.();
+      session.onClose?.(1000);
     });
 
     const banner = screen.getByTestId('terminal-reconnect-banner');
     expect(banner).toHaveTextContent(/Reconnect or refresh the page first/i);
     expect(banner).toHaveTextContent(/If reconnect fails and the lab pod was destroyed/i);
     expect(banner).toHaveTextContent(/Start new session/i);
-    // Must not claim users never need Start Lab / Start new session when pod is gone.
     expect(banner).not.toHaveTextContent(/never need/i);
     expect(screen.getByTestId('terminal-reconnect-button')).toHaveTextContent('Reconnect');
+  });
+
+  it('shows bridge Error line in the banner when present', () => {
+    const session = makeSession('3:meta');
+    session.lastServerError = 'Error: Invalid or expired token';
+    mockCreateSession.mockReturnValue(session);
+
+    render(<XtermView podId={3} podType="meta" token="tok-meta" />);
+
+    act(() => {
+      session.onClose?.(1008);
+    });
+
+    expect(screen.getByTestId('terminal-reconnect-banner')).toHaveTextContent(
+      /Error: Invalid or expired token/i
+    );
   });
 
   it('manual Reconnect destroys the dead session and creates a fresh meta session', () => {
@@ -97,7 +113,7 @@ describe('XtermView reconnect UX', () => {
     render(<XtermView podId={11} podType="meta" token="tok" />);
 
     act(() => {
-      first.onClose?.();
+      first.onClose?.(1000);
     });
 
     fireEvent.click(screen.getByTestId('terminal-reconnect-button'));
@@ -109,7 +125,7 @@ describe('XtermView reconnect UX', () => {
     expect(reconnectUrl).toContain('token=tok');
   });
 
-  it('auto-reconnects with backoff after disconnect', () => {
+  it('auto-reconnects with backoff after a transient disconnect', () => {
     const first = makeSession('1:kali');
     const second = makeSession('1:kali');
     mockCreateSession.mockReturnValueOnce(first).mockReturnValueOnce(second);
@@ -117,7 +133,7 @@ describe('XtermView reconnect UX', () => {
     render(<XtermView podId={1} podType="kali" token="tok" />);
 
     act(() => {
-      first.onClose?.();
+      first.onClose?.(1000);
     });
 
     expect(mockCreateSession).toHaveBeenCalledTimes(1);
@@ -129,20 +145,52 @@ describe('XtermView reconnect UX', () => {
     expect(mockCreateSession).toHaveBeenCalledTimes(2);
   });
 
-  it('stops auto-reconnect after exhausting backoff attempts', () => {
+  it('does not auto-reconnect on close code 1008 (auth failure)', () => {
     mockCreateSession.mockImplementation((key: string) => makeSession(key));
 
     render(<XtermView podId={2} podType="kali" token="tok" />);
-
-    // Initial create
     expect(mockCreateSession).toHaveBeenCalledTimes(1);
 
-    // Simulate repeated disconnects after each auto attempt.
+    const first = mockCreateSession.mock.results[0].value as ReturnType<typeof makeSession>;
+    act(() => {
+      first.onClose?.(1008);
+    });
+    act(() => {
+      jest.advanceTimersByTime(10_000);
+    });
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('terminal-reconnect-button')).toBeInTheDocument();
+  });
+
+  it('does not auto-reconnect on close code 1011 (missing container)', () => {
+    mockCreateSession.mockImplementation((key: string) => makeSession(key));
+
+    render(<XtermView podId={2} podType="meta" token="tok" />);
+    const first = mockCreateSession.mock.results[0].value as ReturnType<typeof makeSession>;
+    act(() => {
+      first.onClose?.(1011);
+    });
+    act(() => {
+      jest.advanceTimersByTime(10_000);
+    });
+
+    expect(mockCreateSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops auto-reconnect after open→close loops without onReady (backoff cap)', () => {
+    mockCreateSession.mockImplementation((key: string) => makeSession(key));
+
+    render(<XtermView podId={2} podType="kali" token="tok" />);
+    expect(mockCreateSession).toHaveBeenCalledTimes(1);
+
+    // Simulate bridge accept-then-reject: open handshake then close, without Authenticated.
     for (let i = 0; i < RECONNECT_BACKOFF_MS.length; i++) {
       const lastSession = mockCreateSession.mock.results[mockCreateSession.mock.results.length - 1]
         .value as ReturnType<typeof makeSession>;
       act(() => {
-        lastSession.onClose?.();
+        lastSession.onOpen?.();
+        lastSession.onClose?.(1000);
       });
       act(() => {
         jest.advanceTimersByTime(RECONNECT_BACKOFF_MS[i]);
@@ -150,12 +198,13 @@ describe('XtermView reconnect UX', () => {
     }
 
     const createsAfterBackoff = mockCreateSession.mock.calls.length;
+    expect(createsAfterBackoff).toBe(1 + RECONNECT_BACKOFF_MS.length);
 
-    // One more disconnect should not schedule another auto create past the cap.
     const lastSession = mockCreateSession.mock.results[mockCreateSession.mock.results.length - 1]
       .value as ReturnType<typeof makeSession>;
     act(() => {
-      lastSession.onClose?.();
+      lastSession.onOpen?.();
+      lastSession.onClose?.(1000);
     });
     act(() => {
       jest.advanceTimersByTime(10_000);
@@ -163,5 +212,57 @@ describe('XtermView reconnect UX', () => {
 
     expect(mockCreateSession.mock.calls.length).toBe(createsAfterBackoff);
     expect(screen.getByTestId('terminal-reconnect-button')).toBeInTheDocument();
+  });
+
+  it('onReady resets the attempt counter so later disconnects can auto-reconnect again', () => {
+    mockCreateSession.mockImplementation((key: string) => makeSession(key));
+
+    render(<XtermView podId={8} podType="kali" token="tok" />);
+    const first = mockCreateSession.mock.results[0].value as ReturnType<typeof makeSession>;
+
+    act(() => {
+      first.onReady?.();
+    });
+
+    // Exhaust backoff once.
+    for (let i = 0; i < RECONNECT_BACKOFF_MS.length; i++) {
+      const lastSession = mockCreateSession.mock.results[mockCreateSession.mock.results.length - 1]
+        .value as ReturnType<typeof makeSession>;
+      act(() => {
+        lastSession.onClose?.(1000);
+      });
+      act(() => {
+        jest.advanceTimersByTime(RECONNECT_BACKOFF_MS[i]);
+      });
+    }
+
+    const afterExhaust = mockCreateSession.mock.calls.length;
+    const exhausted = mockCreateSession.mock.results[mockCreateSession.mock.results.length - 1]
+      .value as ReturnType<typeof makeSession>;
+
+    // Bridge auth succeeds — counter resets.
+    act(() => {
+      exhausted.onReady?.();
+    });
+    act(() => {
+      exhausted.onClose?.(1000);
+    });
+    act(() => {
+      jest.advanceTimersByTime(RECONNECT_BACKOFF_MS[0]);
+    });
+
+    expect(mockCreateSession.mock.calls.length).toBe(afterExhaust + 1);
+  });
+
+  it('clears the refit timer on unmount', () => {
+    const session = makeSession('5:kali');
+    mockCreateSession.mockReturnValue(session);
+    const clearSpy = jest.spyOn(global, 'clearTimeout');
+
+    const { unmount } = render(<XtermView podId={5} podType="kali" token="tok" />);
+    unmount();
+
+    expect(clearSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
   });
 });

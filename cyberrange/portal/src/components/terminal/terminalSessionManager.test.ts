@@ -37,7 +37,7 @@ jest.mock('@xterm/addon-canvas', () => ({
   CanvasAddon: jest.fn().mockImplementation(() => ({})),
 }));
 
-type WsHandler = (() => void) | ((ev: { data: unknown }) => void) | null;
+type WsHandler = ((ev?: unknown) => void) | null;
 
 class MockWebSocket {
   static CONNECTING = 0;
@@ -54,7 +54,7 @@ class MockWebSocket {
   send = jest.fn();
   close = jest.fn(() => {
     this.readyState = MockWebSocket.CLOSED;
-    if (typeof this.onclose === 'function') this.onclose();
+    if (typeof this.onclose === 'function') this.onclose({ code: 1000 });
   });
 
   constructor(url: string) {
@@ -68,16 +68,18 @@ class MockWebSocket {
     MockWebSocket.instances = [];
   }
 
-  /** Simulate server/open handshake. */
   open() {
     this.readyState = MockWebSocket.OPEN;
     if (typeof this.onopen === 'function') this.onopen();
   }
 
-  /** Simulate remote close without going through close(). */
-  remoteClose() {
+  remoteClose(code = 1000) {
     this.readyState = MockWebSocket.CLOSED;
-    if (typeof this.onclose === 'function') this.onclose();
+    if (typeof this.onclose === 'function') this.onclose({ code });
+  }
+
+  remoteMessage(data: string) {
+    if (typeof this.onmessage === 'function') this.onmessage({ data });
   }
 }
 
@@ -118,18 +120,19 @@ describe('terminalSessionManager', () => {
     expect(MockWebSocket.instances[0].url).toContain('pod_type=kali');
   });
 
-  it('WebSocket close removes the dead session so createSession can run again', () => {
+  it('WebSocket close removes the Map entry but keeps the terminal (scrollback)', () => {
     const key = sessionKey(2, 'meta');
     const onClose = jest.fn();
     const first = createSession(key, 'ws://test/meta-1');
     first.onClose = onClose;
     const ws = MockWebSocket.instances[0];
 
-    ws.remoteClose();
+    ws.remoteClose(1008);
 
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledWith(1008);
     expect(getSession(key)).toBeUndefined();
     expect(isSessionLive(key)).toBe(false);
+    expect(mockDispose).not.toHaveBeenCalled();
     expect(mockWriteln).toHaveBeenCalledWith(
       expect.stringContaining('[Client] Connection closed.')
     );
@@ -181,5 +184,20 @@ describe('terminalSessionManager', () => {
     session.onOpen = onOpen;
     MockWebSocket.instances[0].open();
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('onReady fires on bridge Authenticated message and records Error lines', () => {
+    const key = sessionKey(7, 'meta');
+    const onReady = jest.fn();
+    const session = createSession(key, 'ws://test/meta');
+    session.onReady = onReady;
+    const ws = MockWebSocket.instances[0];
+    ws.open();
+
+    ws.remoteMessage('\r\n[term] Authenticated. Opening meta on pod 7...\r\n');
+    expect(onReady).toHaveBeenCalledTimes(1);
+
+    ws.remoteMessage('\r\nError: Invalid or expired token\r\n');
+    expect(session.lastServerError).toMatch(/Error: Invalid or expired token/i);
   });
 });

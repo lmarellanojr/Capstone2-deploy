@@ -21,6 +21,9 @@ interface XtermViewProps {
 /** Backoff delays (ms) for optional auto-reconnect attempts. */
 export const RECONNECT_BACKOFF_MS = [1000, 2000, 4000] as const;
 
+/** Bridge closes with these codes after upgrade when auth/pod fails — do not auto-retry. */
+export const NO_AUTO_RECONNECT_CODES = new Set([1008, 1011]);
+
 const DISCONNECT_BANNER =
   'Terminal connection lost. Click Reconnect or refresh the page first. ' +
   'If reconnect fails and the lab pod was destroyed, use Start new session from the lab controls.';
@@ -32,16 +35,26 @@ function buildWsUrl(token: string, podId: number, podType: string): string {
   )}&pod_id=${podId}&pod_type=${podType}`;
 }
 
+function disposeRetiredSession(session: TermSession | undefined): void {
+  if (!session) return;
+  try { session.term.dispose(); } catch { /* noop */ }
+  try { session.host.remove(); } catch { /* noop */ }
+}
+
 export function XtermView({ podId, podType, token }: XtermViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<TermSession | undefined>(undefined);
   const attemptRef = useRef(0);
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unmountedRef = useRef(false);
+  /** Close codes that should not trigger auto-reconnect (manual Reconnect still allowed). */
+  const skipAutoRef = useRef(false);
 
   const [error, setError] = useState<string | null>(null);
   const [disconnected, setDisconnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
 
   const clearAutoTimer = useCallback(() => {
     if (autoTimerRef.current != null) {
@@ -50,42 +63,68 @@ export function XtermView({ podId, podType, token }: XtermViewProps) {
     }
   }, []);
 
+  const clearFitTimer = useCallback(() => {
+    if (fitTimerRef.current != null) {
+      clearTimeout(fitTimerRef.current);
+      fitTimerRef.current = null;
+    }
+  }, []);
+
   const attachSession = useCallback((session: TermSession) => {
     const container = containerRef.current;
     if (!container) return;
+
+    const previous = sessionRef.current;
+    if (previous && previous !== session) {
+      previous.onError = undefined;
+      previous.onClose = undefined;
+      previous.onOpen = undefined;
+      previous.onReady = undefined;
+      disposeRetiredSession(previous);
+    }
+
     sessionRef.current = session;
     session.onError = setError;
-    session.onOpen = () => {
+    // Handshake open is not bridge acceptance — do not reset backoff here.
+    session.onOpen = undefined;
+    session.onReady = () => {
       if (unmountedRef.current) return;
       attemptRef.current = 0;
+      skipAutoRef.current = false;
       setDisconnected(false);
       setReconnecting(false);
       setError(null);
+      setServerError(null);
     };
-    session.onClose = () => {
+    session.onClose = (code?: number) => {
       if (unmountedRef.current) return;
-      sessionRef.current = undefined;
+      const bridgeErr = session.lastServerError ?? null;
+      setServerError(bridgeErr);
+      skipAutoRef.current = typeof code === 'number' && NO_AUTO_RECONNECT_CODES.has(code);
+      // Keep sessionRef pointing at the retired session so scrollback stays visible
+      // until a replacement attach disposes it.
       setDisconnected(true);
       setReconnecting(false);
     };
     if (session.host.parentNode !== container) {
       container.appendChild(session.host);
     }
-    setTimeout(() => {
+    clearFitTimer();
+    fitTimerRef.current = setTimeout(() => {
+      fitTimerRef.current = null;
+      if (unmountedRef.current) return;
+      if (sessionRef.current !== session) return;
       refit(session);
       try { session.term.focus(); } catch { /* not ready */ }
     }, 50);
-  }, []);
+  }, [clearFitTimer]);
 
   const connect = useCallback(() => {
     const key = sessionKey(podId, podType);
     const wsUrl = buildWsUrl(token, podId, podType);
-    // Drop any dead or lingering entry so createSession can open a fresh socket.
-    if (!isSessionLive(key)) {
-      destroySession(key);
-    }
     let session = getSession(key);
     if (!session || !isSessionLive(key)) {
+      if (session) destroySession(key);
       session = createSession(key, wsUrl);
     }
     attachSession(session);
@@ -96,11 +135,13 @@ export function XtermView({ podId, podType, token }: XtermViewProps) {
 
   const scheduleAutoReconnect = useCallback(() => {
     clearAutoTimer();
+    if (skipAutoRef.current) return;
     const attempt = attemptRef.current;
     if (attempt >= RECONNECT_BACKOFF_MS.length) return;
     const delay = RECONNECT_BACKOFF_MS[attempt];
     autoTimerRef.current = setTimeout(() => {
       if (unmountedRef.current) return;
+      if (skipAutoRef.current) return;
       attemptRef.current = attempt + 1;
       setReconnecting(true);
       try {
@@ -116,8 +157,13 @@ export function XtermView({ podId, podType, token }: XtermViewProps) {
   const handleReconnect = useCallback(() => {
     clearAutoTimer();
     attemptRef.current = 0;
+    skipAutoRef.current = false;
+    setServerError(null);
     setReconnecting(true);
     destroySession(sessionKey(podId, podType));
+    // Also dispose any retired host still shown from the last disconnect.
+    disposeRetiredSession(sessionRef.current);
+    sessionRef.current = undefined;
     try {
       connect();
     } catch {
@@ -141,6 +187,7 @@ export function XtermView({ podId, podType, token }: XtermViewProps) {
     }
     attachSession(session);
     attemptRef.current = 0;
+    skipAutoRef.current = false;
     setDisconnected(false);
 
     const onWindowResize = () => {
@@ -153,6 +200,7 @@ export function XtermView({ podId, podType, token }: XtermViewProps) {
     return () => {
       unmountedRef.current = true;
       clearAutoTimer();
+      clearFitTimer();
       window.removeEventListener('resize', onWindowResize);
       ro.disconnect();
       const s = sessionRef.current;
@@ -160,17 +208,19 @@ export function XtermView({ podId, podType, token }: XtermViewProps) {
         s.onError = undefined;
         s.onClose = undefined;
         s.onOpen = undefined;
+        s.onReady = undefined;
         if (s.host.parentNode === container) {
           container.removeChild(s.host);
         }
       }
       // Detach only — session may stay alive across tab switches while WS is live.
     };
-  }, [attachSession, clearAutoTimer, podId, podType, token]);
+  }, [attachSession, clearAutoTimer, clearFitTimer, podId, podType, token]);
 
-  // When disconnected, kick optional auto-reconnect with backoff.
+  // When disconnected, kick optional auto-reconnect with backoff (unless auth/pod close codes).
   useEffect(() => {
     if (!disconnected || reconnecting) return;
+    if (skipAutoRef.current) return;
     scheduleAutoReconnect();
     return clearAutoTimer;
   }, [disconnected, reconnecting, scheduleAutoReconnect, clearAutoTimer]);
@@ -193,7 +243,10 @@ export function XtermView({ podId, podType, token }: XtermViewProps) {
           data-testid="terminal-reconnect-banner"
           className="absolute top-0 left-0 right-0 z-50 bg-amber-600/95 text-white p-2 text-sm border-b border-amber-700 flex flex-wrap items-center gap-2 justify-between"
         >
-          <span className="min-w-0 flex-1">{DISCONNECT_BANNER}</span>
+          <span className="min-w-0 flex-1">
+            {DISCONNECT_BANNER}
+            {serverError ? ` (${serverError})` : ''}
+          </span>
           <button
             type="button"
             data-testid="terminal-reconnect-button"

@@ -10,11 +10,20 @@ export interface TermSession {
   ws: WebSocket;
   host: HTMLDivElement; // persistent; term.open(host) called once
   onError?: (msg: string | null) => void;
-  onClose?: () => void;
+  /** Fired on remote/local socket close with the WebSocket close code when available. */
+  onClose?: (code?: number) => void;
+  /** Fired when the socket upgrades (handshake). Does not mean the bridge accepted the session. */
   onOpen?: () => void;
+  /** Fired when the bridge confirms auth (`[term] Authenticated…`). Safe to reset reconnect backoff. */
+  onReady?: () => void;
+  /** Last bridge/server `Error: …` line seen on this socket (if any). */
+  lastServerError?: string;
 }
 
 const sessions = new Map<string, TermSession>();
+
+const BRIDGE_ERROR_RE = /Error:\s*.+/i;
+const BRIDGE_AUTH_RE = /\[term\]\s*Authenticated/i;
 
 export function sessionKey(podId: number, podType: string): string {
   return `${podId}:${podType}`;
@@ -36,10 +45,18 @@ function disposeSessionResources(session: TermSession): void {
   try { session.host.remove(); } catch { /* noop */ }
 }
 
-function removeDeadSession(session: TermSession): void {
+/**
+ * Drop the Map entry so a new createSession can run, but keep the xterm host
+ * attached until the UI replaces it — preserves scrollback and bridge Error lines.
+ */
+function retireSessionKeepTerminal(session: TermSession): void {
   if (sessions.get(session.key) !== session) return;
   sessions.delete(session.key);
-  disposeSessionResources(session);
+}
+
+function noteServerError(session: TermSession, text: string): void {
+  const match = text.match(BRIDGE_ERROR_RE);
+  if (match) session.lastServerError = match[0].trim();
 }
 
 export function createSession(key: string, wsUrl: string): TermSession {
@@ -116,21 +133,34 @@ export function createSession(key: string, wsUrl: string): TermSession {
 
   ws.onmessage = (event) => {
     if (typeof event.data === 'string') {
+      noteServerError(session, event.data);
+      if (BRIDGE_AUTH_RE.test(event.data)) {
+        session.onReady?.();
+      }
       term.write(event.data);
     } else {
       const reader = new FileReader();
-      reader.onload = () => term.write(reader.result as string);
+      reader.onload = () => {
+        const text = reader.result as string;
+        noteServerError(session, text);
+        if (BRIDGE_AUTH_RE.test(text)) {
+          session.onReady?.();
+        }
+        term.write(text);
+      };
       reader.readAsText(event.data);
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev?: CloseEvent) => {
     // Intentional destroySession already removed this entry and cleared callbacks.
     if (sessions.get(key) !== session) return;
     term.writeln('\r\n\x1b[31m[Client] Connection closed.\x1b[0m');
+    const code = typeof ev?.code === 'number' ? ev.code : undefined;
     const onClose = session.onClose;
-    removeDeadSession(session);
-    onClose?.();
+    // Keep xterm/scrollback (and any Error: line already written) until replaced.
+    retireSessionKeepTerminal(session);
+    onClose?.(code);
   };
 
   ws.onerror = () => {
@@ -176,6 +206,7 @@ export function destroySession(key: string): void {
   s.onClose = undefined;
   s.onError = undefined;
   s.onOpen = undefined;
+  s.onReady = undefined;
   sessions.delete(key);
   try { s.ws.close(); } catch { /* noop */ }
   disposeSessionResources(s);
