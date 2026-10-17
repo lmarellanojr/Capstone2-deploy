@@ -44,9 +44,9 @@ const ITEMS: TroubleshootingItem[] = [
     problem: "My score did not update after a step that worked",
     fix: (
       <>
-        Check that your <strong>active lab is the right scenario</strong>. If a banner appears on the
-        page saying the score was not updated, follow it — usually it means starting this scenario
-        again, then repeating the step.
+        Check that your <strong>active lab is the right scenario</strong>, then compare your work
+        with the current task&apos;s walkthrough. Wait a few seconds for automatic scoring; if the
+        score still does not update, contact your instructor.
       </>
     ),
   },
@@ -55,11 +55,34 @@ const ITEMS: TroubleshootingItem[] = [
     fix: (
       <>
         Press <strong>Enter</strong> once in the shell and wait a few seconds. Still pending? Use{" "}
-        <strong>Manual Check</strong> (one per task); if it cannot confirm your work, the task goes to
-        your instructor for review.
+        <strong>Manual Check</strong> under <strong>Not detected yet?</strong> when available
+        (one per task). If it cannot confirm your work, ask your instructor to review it.
+        Flag tasks use flag submission instead.
       </>
     ),
-    surfaces: ["terminal", "siem"],
+    surfaces: ["terminal"],
+  },
+  {
+    problem: 'A DVWA task stays "Pending" after the browser step',
+    fix: (
+      <>
+        Complete the step in DVWA and wait a few seconds. For an incomplete non-flag task, use
+        <strong> Manual Check</strong> under <strong>Not detected yet?</strong> when available
+        (one per task). If it cannot confirm your work, ask your instructor to review it.
+      </>
+    ),
+    surfaces: ["dvwa"],
+  },
+  {
+    problem: 'A SIEM task stays "Pending" after saving my work',
+    fix: (
+      <>
+        The checker reads your saved files on <strong>meta</strong>. Check the filename, location,
+        and contents against the current task&apos;s walkthrough, then wait a few seconds for
+        automatic scoring. If it is still pending, contact your instructor.
+      </>
+    ),
+    surfaces: ["siem"],
   },
   {
     problem: '"Reset score" — what it does',
@@ -189,8 +212,7 @@ export function TroubleshootingDrawer({ isOpen, onClose, surface }: Troubleshoot
             ))}
           </ul>
           <p className="text-xs text-text-muted">
-            Still stuck? Use <strong>Ask an instructor to check this task</strong> on the task, or contact
-            your instructor.
+            Still stuck? Contact your instructor and tell them which scenario and task you are on.
           </p>
         </div>
       </div>
