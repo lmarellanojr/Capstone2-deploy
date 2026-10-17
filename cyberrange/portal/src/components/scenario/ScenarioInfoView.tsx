@@ -5,6 +5,7 @@ import { Badge, Button, Modal, ModalHeader, ModalBody, ModalFooter } from "@/com
 import { DifficultyBadge, scenarioDuration } from "@/components/scenarios/DifficultyBadge";
 import { MilestoneItem } from "@/components/progress/MilestoneItem";
 import { ScenarioTips } from "@/components/scenario/ScenarioTips";
+import { PrereqBox } from "@/components/scenario/PrereqBox";
 import { provisioning } from "@/lib/api";
 
 interface ScenarioInfoViewProps {
@@ -91,6 +92,8 @@ export function ScenarioInfoView({ scenario, onStart, loading, error, onShowBigP
       </div>
 
       <ScenarioTips scenarioId={scenario.id} className="mb-6" />
+
+      <PrereqBox scenarioId={scenario.id} className="mb-6" />
 
       <section className="mb-6 card-surface p-5 sm:p-6" aria-labelledby="objectives-heading">
         <div className="flex items-center justify-between gap-3 mb-4">
