@@ -297,4 +297,19 @@ describe('XtermView reconnect UX', () => {
     expect(clearSpy).toHaveBeenCalled();
     clearSpy.mockRestore();
   });
+
+  it('disposes a retired session on unmount when it is no longer in the Map', () => {
+    const session = makeSession('6:kali');
+    mockCreateSession.mockReturnValue(session);
+    // After close the manager retires the entry — getSession returns undefined.
+    mockGetSession.mockReturnValue(undefined);
+
+    const { unmount } = render(<XtermView podId={6} podType="kali" token="tok" />);
+    act(() => {
+      session.onClose?.(1000);
+    });
+    unmount();
+
+    expect(session.term.dispose).toHaveBeenCalled();
+  });
 });

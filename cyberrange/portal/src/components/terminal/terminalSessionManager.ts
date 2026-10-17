@@ -18,11 +18,16 @@ export interface TermSession {
   onReady?: () => void;
   /** Last bridge/server `Error: …` line seen on this socket (if any). */
   lastServerError?: string;
+  /** True after the bridge sent `[term] Authenticated…` on this socket. */
+  bridgeReady?: boolean;
 }
 
 const sessions = new Map<string, TermSession>();
 
-const BRIDGE_ERROR_RE = /Error:\s*.+/i;
+/** Bridge errors are their own ws.send line; do not match mid-chunk shell noise. */
+const BRIDGE_ERROR_RE = /^\s*Error: [^\r\n]*/i;
+/** After auth, only this bridge catch-all is still recorded (shell `Error:` lines are ignored). */
+const BRIDGE_POST_AUTH_ERROR_RE = /^\s*Error: Internal server error\b/i;
 const BRIDGE_AUTH_RE = /\[term\]\s*Authenticated/i;
 
 export function sessionKey(podId: number, podType: string): string {
@@ -55,6 +60,11 @@ function retireSessionKeepTerminal(session: TermSession): void {
 }
 
 function noteServerError(session: TermSession, text: string): void {
+  if (session.bridgeReady) {
+    const post = text.match(BRIDGE_POST_AUTH_ERROR_RE);
+    if (post) session.lastServerError = post[0].trim();
+    return;
+  }
   const match = text.match(BRIDGE_ERROR_RE);
   if (match) session.lastServerError = match[0].trim();
 }
@@ -135,6 +145,7 @@ export function createSession(key: string, wsUrl: string): TermSession {
     if (typeof event.data === 'string') {
       noteServerError(session, event.data);
       if (BRIDGE_AUTH_RE.test(event.data)) {
+        session.bridgeReady = true;
         session.onReady?.();
       }
       term.write(event.data);
@@ -144,6 +155,7 @@ export function createSession(key: string, wsUrl: string): TermSession {
         const text = reader.result as string;
         noteServerError(session, text);
         if (BRIDGE_AUTH_RE.test(text)) {
+          session.bridgeReady = true;
           session.onReady?.();
         }
         term.write(text);
@@ -158,9 +170,14 @@ export function createSession(key: string, wsUrl: string): TermSession {
     term.writeln('\r\n\x1b[31m[Client] Connection closed.\x1b[0m');
     const code = typeof ev?.code === 'number' ? ev.code : undefined;
     const onClose = session.onClose;
-    // Keep xterm/scrollback (and any Error: line already written) until replaced.
     retireSessionKeepTerminal(session);
-    onClose?.(code);
+    if (onClose) {
+      // UI is attached — keep terminal/scrollback until replacement or unmount dispose.
+      onClose(code);
+    } else {
+      // No UI listener (tab hidden / callbacks cleared) — dispose immediately.
+      disposeSessionResources(session);
+    }
   };
 
   ws.onerror = () => {

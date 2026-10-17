@@ -186,7 +186,7 @@ describe('terminalSessionManager', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('onReady fires on bridge Authenticated message and records Error lines', () => {
+  it('onReady fires on bridge Authenticated message and records pre-auth Error lines', () => {
     const key = sessionKey(7, 'meta');
     const onReady = jest.fn();
     const session = createSession(key, 'ws://test/meta');
@@ -194,10 +194,35 @@ describe('terminalSessionManager', () => {
     const ws = MockWebSocket.instances[0];
     ws.open();
 
+    ws.remoteMessage('Error: Invalid or expired token\r\n');
+    expect(session.lastServerError).toMatch(/^Error: Invalid or expired token$/i);
+
     ws.remoteMessage('\r\n[term] Authenticated. Opening meta on pod 7...\r\n');
     expect(onReady).toHaveBeenCalledTimes(1);
+    expect(session.bridgeReady).toBe(true);
+  });
 
-    ws.remoteMessage('\r\nError: Invalid or expired token\r\n');
-    expect(session.lastServerError).toMatch(/Error: Invalid or expired token/i);
+  it('does not treat post-auth shell Error lines as bridge errors', () => {
+    const key = sessionKey(8, 'kali');
+    const session = createSession(key, 'ws://test/kali');
+    const ws = MockWebSocket.instances[0];
+    ws.open();
+    ws.remoteMessage('[term] Authenticated. Opening kali on pod 8...\r\n');
+    expect(session.bridgeReady).toBe(true);
+
+    ws.remoteMessage('NameError: x is not defined\r\n');
+    ws.remoteMessage('[-] Error: payload failed\r\n');
+    expect(session.lastServerError).toBeUndefined();
+
+    ws.remoteMessage('Error: Internal server error\r\n');
+    expect(session.lastServerError).toMatch(/Error: Internal server error/i);
+  });
+
+  it('disposes the terminal on remote close when no UI onClose is attached', () => {
+    const key = sessionKey(9, 'meta');
+    createSession(key, 'ws://test/meta');
+    MockWebSocket.instances[0].remoteClose(1000);
+    expect(getSession(key)).toBeUndefined();
+    expect(mockDispose).toHaveBeenCalled();
   });
 });

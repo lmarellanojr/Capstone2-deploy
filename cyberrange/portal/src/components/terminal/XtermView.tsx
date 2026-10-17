@@ -234,11 +234,15 @@ export function XtermView({ podId, podType, token }: XtermViewProps) {
         s.onClose = undefined;
         s.onOpen = undefined;
         s.onReady = undefined;
-        if (s.host.parentNode === container) {
+        // Live Map entry: detach host only (session may survive tab switches).
+        // Already-retired entry: dispose xterm/canvas so it cannot leak.
+        if (getSession(key) !== s) {
+          disposeRetiredSession(s);
+        } else if (s.host.parentNode === container) {
           container.removeChild(s.host);
         }
       }
-      // Detach only — session may stay alive across tab switches while WS is live.
+      sessionRef.current = undefined;
     };
   }, [attachSession, clearAutoTimer, clearFitTimer, clearReadyStableTimer, podId, podType, token]);
 
