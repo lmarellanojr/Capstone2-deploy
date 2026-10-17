@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronRight, Clock, Lightbulb, XCircle } from 'lucide-react'
+import { ChevronRight, Clock, Lightbulb, LifeBuoy, XCircle } from 'lucide-react'
 import { LayoutWrapper } from '@/components/layout/LayoutWrapper'
 import { Badge, Button, LoadingSpinner, Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui'
 import {
@@ -14,6 +14,7 @@ import {
   SessionExpiredOverlay,
   BigPictureModal,
   LabCountdown,
+  TroubleshootingDrawer,
 } from '@/components/scenario'
 import { LabSurface } from '@/components/scenario/LabSurface'
 import { ExercisePanel } from '@/components/scenario/ExercisePanel'
@@ -86,6 +87,8 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [ending, setEnding] = useState(false)
   const [showCompletion, setShowCompletion] = useState(false)
+
+  const [troubleshootingOpen, setTroubleshootingOpen] = useState(false)
 
   // "Before you start — the big picture" welcome
   const [bigPictureOpen, setBigPictureOpen] = useState(false)
@@ -390,6 +393,14 @@ export default function ScenarioDetailPage({ params }: PageProps) {
 
                 <div className="flex items-center gap-2">
                   <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setTroubleshootingOpen(true)}
+                  >
+                    <LifeBuoy size={14} aria-hidden="true" />
+                    Troubleshooting
+                  </Button>
+                  <Button
                     variant="danger-outline"
                     size="sm"
                     onClick={() => setShowEndConfirm(true)}
@@ -466,6 +477,12 @@ export default function ScenarioDetailPage({ params }: PageProps) {
           )}
         </div>
       </div>
+
+      <TroubleshootingDrawer
+        isOpen={troubleshootingOpen}
+        onClose={() => setTroubleshootingOpen(false)}
+        surface={getLabSurface(scenario)}
+      />
 
       <BigPictureModal
         scenario={scenario}
