@@ -244,6 +244,28 @@ export function dvwaContentSecurityPolicy(path: string): string | null {
 /** Public, unauthenticated Next.js static prefix for DVWA theme assets. */
 export const DVWA_THEME_PUBLIC_PREFIX = '/dvwa-theme'
 
+/** Fluid layout override for narrow Scenario 2 iframe (Finding A). */
+export const DVWA_EMBEDDED_CSS_HREF = `${DVWA_THEME_PUBLIC_PREFIX}/css/embedded.css`
+
+const DVWA_EMBEDDED_CSS_LINK = `<link rel="stylesheet" type="text/css" href="${DVWA_EMBEDDED_CSS_HREF}">`
+
+/**
+ * Inject the fluid embedded stylesheet into lab HTML.
+ * Safe + sandboxed pages both need it: safe pages keep proxied stock main.css;
+ * sandboxed pages use the public theme mirror. Idempotent on href.
+ * Insert before the first </head> so reflected body content (e.g. xss_r Low)
+ * cannot capture the inject point. If there is no </head>, leave html unchanged.
+ */
+export function injectDvwaEmbeddedStyles(html: string): string {
+  if (html.includes(DVWA_EMBEDDED_CSS_HREF)) return html
+
+  const headClose = /<\/head>/i.exec(html)
+  if (!headClose) return html
+
+  const at = headClose.index
+  return `${html.slice(0, at)}${DVWA_EMBEDDED_CSS_LINK}${html.slice(at)}`
+}
+
 /**
  * Retarget proxied theme URLs to the public mirror.
  * Call only on HTML for vulnerable modules (after rewriteHtml).
