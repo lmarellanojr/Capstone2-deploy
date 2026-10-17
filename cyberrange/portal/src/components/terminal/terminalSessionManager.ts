@@ -231,7 +231,7 @@ export function destroySession(key: string): void {
 
 /** Test-only: clear the in-memory session map. */
 export function __resetSessionsForTests(): void {
-  for (const key of [...sessions.keys()]) {
+  for (const key of Array.from(sessions.keys())) {
     destroySession(key);
   }
 }
