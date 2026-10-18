@@ -19,7 +19,9 @@ import asyncio
 import logging
 import os
 import subprocess
-from typing import Tuple, Literal
+from typing import Literal, Optional, Tuple
+
+import scoring_diagnostics
 
 logger = logging.getLogger("ssh_verifier")
 
@@ -65,7 +67,19 @@ class SSHVerifier:
     async def verify_milestone(
         self, student_id: str, scenario_id: int, milestone_id: int
     ) -> Tuple[Literal["PASS", "FAIL", "UNKNOWN", "ERROR"], str]:
-        """Run scoring_checks.sh for (scenario, milestone) inside the target container.
+        status, message, _diag = await self.verify_milestone_detailed(
+            student_id, scenario_id, milestone_id
+        )
+        return status, message
+
+    async def verify_milestone_detailed(
+        self, student_id: str, scenario_id: int, milestone_id: int
+    ) -> Tuple[Literal["PASS", "FAIL", "UNKNOWN", "ERROR"], str, Optional[dict]]:
+        """verify_milestone plus the script's parsed DIAG line (Scenario 9 only
+        prints one; None otherwise). The message never carries the reason, so
+        student-facing responses stay generic.
+
+        Run scoring_checks.sh for (scenario, milestone) inside the target container.
 
         Args:
             student_id: owner id; container name is pod-{student_id}-{role}
@@ -81,12 +95,13 @@ class SSHVerifier:
 
         role = SCENARIO_TARGETS.get(scenario_id)
         if not role:
-            return "ERROR", f"Scenario {scenario_id} not configured"
+            return "ERROR", f"Scenario {scenario_id} not configured", None
 
         container = f"pod-{student_id}-{role}"
 
         # Control-plane exec (runs as root in-container, minimal env). The script sets
-        # its own behavior; stdout carries only the result token (log() goes to a file).
+        # its own behavior; stdout's last line is the result token (log() goes to a file).
+        # Scenario 9 also prints one allowlisted DIAG line before it.
         cmd = ["lxc", "exec", container, "--", "bash", "-s", str(scenario_id), str(milestone_id)]
 
         try:
@@ -107,21 +122,21 @@ class SSHVerifier:
 
             if result.returncode != 0:
                 # lxc exec failure (no such container, daemon error, etc.) = infra ERROR.
-                return "ERROR", f"lxc exec {container} failed (rc={result.returncode}): {result.stderr.strip()[:200]}"
+                return "ERROR", f"lxc exec {container} failed (rc={result.returncode}): {result.stderr.strip()[:200]}", None
 
             # Parse the last non-empty stdout line as the result token.
             lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
             token = lines[-1] if lines else ""
             if token in ("PASS", "FAIL", "UNKNOWN"):
-                return token, f"Check completed: {token}"
-            return "ERROR", f"Unexpected verifier output: {token or '(empty)'} | stderr: {result.stderr.strip()[:200]}"
+                return token, f"Check completed: {token}", scoring_diagnostics.parse_diag(result.stdout)
+            return "ERROR", f"Unexpected verifier output: {token or '(empty)'} | stderr: {result.stderr.strip()[:200]}", None
 
         except asyncio.TimeoutError:
-            return "ERROR", f"Verifier timed out after {timeout}s on {container}"
+            return "ERROR", f"Verifier timed out after {timeout}s on {container}", None
         except FileNotFoundError:
-            return "ERROR", f"Scoring script not found: {SCORING_SCRIPT_PATH}"
+            return "ERROR", f"Scoring script not found: {SCORING_SCRIPT_PATH}", None
         except Exception as e:
-            return "ERROR", f"Verification failed: {str(e)}"
+            return "ERROR", f"Verification failed: {str(e)}", None
 
     async def verify_multiple(
         self, student_id: str, scenario_id: int, milestone_ids: list

@@ -12,9 +12,11 @@ clicked anything still sees their score update within one poll interval.
 """
 import asyncio
 import logging
+import time
 
 from config import SCORE_POLL_INTERVAL_SECONDS
 from db import get_db_connection
+import scoring_diagnostics
 import scoring_state
 from scoring import verify_milestone
 
@@ -60,7 +62,33 @@ def _passed_milestone_ids(student_id: str, scenario_id: int) -> set:
     return {r["milestone_id"] for r in rows}
 
 
+# Scenario 3 diagnostics retention: purge at most hourly, and even with the
+# feature flag off, so disabling it still ages out what was recorded.
+DIAGNOSTICS_PURGE_INTERVAL_SECONDS = 3600
+_last_diagnostics_purge = 0.0
+
+
+def _maybe_purge_diagnostics() -> None:
+    global _last_diagnostics_purge
+    now = time.monotonic()
+    if _last_diagnostics_purge and now - _last_diagnostics_purge < DIAGNOSTICS_PURGE_INTERVAL_SECONDS:
+        return
+    _last_diagnostics_purge = now
+    try:
+        conn = get_db_connection()
+        try:
+            with conn:
+                removed = scoring_diagnostics.purge_expired(conn)
+        finally:
+            conn.close()
+        if removed:
+            logger.info(f"[score_poller] purged {removed} expired scoring diagnostic(s)")
+    except Exception as e:
+        logger.warning(f"[score_poller] diagnostics purge failed: {type(e).__name__}")
+
+
 async def score_poll_once() -> None:
+    _maybe_purge_diagnostics()
     if not scoring_state.SCORING_ENABLED:
         return
 

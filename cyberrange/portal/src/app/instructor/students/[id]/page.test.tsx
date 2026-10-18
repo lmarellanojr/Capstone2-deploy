@@ -8,6 +8,7 @@ jest.mock("@/components/layout/LayoutWrapper", () => ({
   LayoutWrapper: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 jest.mock("@/components/instructor/StudentAlertsPanel", () => ({ StudentAlertsPanel: () => null }))
+jest.mock("@/components/instructor/ScoringDiagnostics", () => ({ ScoringDiagnostics: () => null }))
 jest.mock("@/hooks/useStudentProgress", () => ({
   useStudentProgress: () => ({
     loading: false, error: null, forbidden: false, notFound: false,

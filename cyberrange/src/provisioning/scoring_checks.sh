@@ -893,59 +893,168 @@ _s9_timeline_time_is_real() {
 
 # Scenario 9: SIEM Alert Triage (Wazuh)
 # Scenario 9: SIEM Alert Triage — student writes artifacts on meta (portal meta tab).
-# SCENARIO_TARGETS[9]=meta. Accept /tmp or /home/msfadmin paths.
-check_scenario_9() {
-    local milestone=$1
-    local triage="" timeline="" report="" d
-    for d in /tmp /home/msfadmin /home/student; do
-        if [[ -z "$triage" && -f "$d/alert_triage.json" ]]; then triage="$d/alert_triage.json"; fi
-        if [[ -z "$timeline" && -f "$d/incident_timeline.md" ]]; then timeline="$d/incident_timeline.md"; fi
-        if [[ -z "$report" && -f "$d/incident_report.txt" ]]; then report="$d/incident_report.txt"; fi
+# SCENARIO_TARGETS[9]=meta.
+#
+# Diagnostics (instructor-only): before the PASS/FAIL token each milestone prints
+#   DIAG reason=<CODE> location=<LOC> copies=<N>
+# Callers read only the last stdout line, so the token contract is unchanged.
+# CODE is from the fixed set below and LOC is a fixed location name -- never a
+# file's contents, a student-chosen path, or command output. NONE = passed.
+#   ARTIFACT_MISSING ARTIFACT_UNREADABLE ARTIFACT_INVALID PLACEHOLDER_OR_EXAMPLE
+#   AGENT_MISSING AGENT_MISMATCH RULE_MISSING RULE_MISMATCH
+#   TIMESTAMP_MISSING TIMESTAMP_NOT_MATCHED REPORT_TOO_SHORT REPORT_BODY_TOO_SHORT
+#   CHECK_ERROR
+# Each _s9_mN_reason runs the same predicates in the same order as the old
+# single && chain and names the first one that fails, so PASS/FAIL is unchanged.
+
+_S9_TIMESTAMP_RE='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?Z'
+
+# Pick one artifact. The guide's /home/msfadmin wins, so a stale /tmp copy can't
+# override the file the student just edited; /home/student and /tmp still count
+# when the guide path has none. Sets S9_SEL_PATH / S9_SEL_LOC / S9_SEL_COPIES
+# (how many supported locations hold the name). S9_ARTIFACT_ROOT is a test seam
+# only (prefix for all three locations, like S9_AUTHLOG / S9_NOW).
+_s9_select_artifact() {
+    local name="$1" root="${S9_ARTIFACT_ROOT:-}" entry dir loc
+    S9_SEL_PATH=""
+    S9_SEL_LOC="NONE"
+    S9_SEL_COPIES=0
+    for entry in "home/msfadmin:HOME_MSFADMIN" "home/student:HOME_STUDENT" "tmp:TMP"; do
+        dir="${root}/${entry%%:*}"
+        loc="${entry##*:}"
+        [[ -f "$dir/$name" ]] || continue
+        S9_SEL_COPIES=$((S9_SEL_COPIES + 1))
+        if [[ -z "$S9_SEL_PATH" ]]; then
+            S9_SEL_PATH="$dir/$name"
+            S9_SEL_LOC="$loc"
+        fi
     done
+}
+
+# Same auth.log lookup the timestamp checks use; empty when there is none.
+_s9_authlog_path() {
+    local f
+    if [[ -n "${S9_AUTHLOG:-}" ]]; then
+        [[ -f "$S9_AUTHLOG" ]] && printf '%s\n' "$S9_AUTHLOG"
+        return 0
+    fi
+    for f in /var/log/auth.log /var/log/secure; do
+        if [[ -f "$f" ]]; then printf '%s\n' "$f"; return 0; fi
+    done
+    return 0
+}
+
+# Diagnostic only: names some pod-…-meta agent (M1 field form), even a wrong one.
+_s9_names_any_meta_agent_field() {
+    grep -qE '[Aa]gent[^[:alnum:]]+"?pod-[A-Za-z0-9][A-Za-z0-9-]*-meta' "$1" 2>/dev/null
+}
+
+# Diagnostic only: names some pod-…-meta host anywhere (M3 prose form).
+_s9_names_any_meta_agent() {
+    grep -qiE 'pod-[a-z0-9][a-z0-9-]*-meta' "$1" 2>/dev/null
+}
+
+# Diagnostic only: gives some rule number, just not 5710.
+_s9_names_other_rule() {
+    grep -qiE 'rule[^0-9]{0,15}[0-9]{3,6}' "$1" 2>/dev/null
+}
+
+_s9_has_any_timestamp() {
+    grep -qE "$_S9_TIMESTAMP_RE" "$1" 2>/dev/null
+}
+
+# Diagnostic only: some rule-5710 line in the timeline carries an ISO …Z stamp.
+_s9_rule_line_has_timestamp() {
+    grep -iE 'rule[^0-9]{0,15}5710([^0-9]|$)' "$1" 2>/dev/null | grep -qE "$_S9_TIMESTAMP_RE"
+}
+
+_s9_m1_reason() {
+    local f="$1"
+    [[ -n "$f" ]] || { echo ARTIFACT_MISSING; return 0; }
+    [[ -r "$f" ]] || { echo ARTIFACT_UNREADABLE; return 0; }
+    grep -qiE "alert_id|severity|rule" "$f" 2>/dev/null || { echo ARTIFACT_INVALID; return 0; }
+    if _s9_contains_unfilled_tokens "$f" || _s9_contains_guide_fiction "$f"; then
+        echo PLACEHOLDER_OR_EXAMPLE; return 0
+    fi
+    if ! _s9_has_lab_meta_agent "$f"; then
+        if ! _s9_expected_agent >/dev/null; then echo CHECK_ERROR
+        elif _s9_names_any_meta_agent_field "$f"; then echo AGENT_MISMATCH
+        else echo AGENT_MISSING
+        fi
+        return 0
+    fi
+    if ! _s9_mentions_rule_5710 "$f"; then
+        if _s9_names_other_rule "$f"; then echo RULE_MISMATCH; else echo RULE_MISSING; fi
+        return 0
+    fi
+    if ! _s9_has_real_event_timestamp "$f" 5; then
+        if [[ -z "$(_s9_authlog_path)" ]]; then echo CHECK_ERROR
+        elif _s9_has_any_timestamp "$f"; then echo TIMESTAMP_NOT_MATCHED
+        else echo TIMESTAMP_MISSING
+        fi
+        return 0
+    fi
+    echo NONE
+}
+
+_s9_m2_reason() {
+    local f="$1"
+    [[ -n "$f" ]] || { echo ARTIFACT_MISSING; return 0; }
+    [[ -r "$f" ]] || { echo ARTIFACT_UNREADABLE; return 0; }
+    if _s9_contains_unfilled_tokens "$f" || _s9_contains_guide_fiction "$f"; then
+        echo PLACEHOLDER_OR_EXAMPLE; return 0
+    fi
+    if ! _s9_timeline_time_is_real "$f" 5; then
+        # The timeline check only reads timestamps on a "rule … 5710" line.
+        if [[ -z "$(_s9_authlog_path)" ]]; then echo CHECK_ERROR
+        elif ! grep -qiE 'rule[^0-9]{0,15}5710([^0-9]|$)' "$f" 2>/dev/null; then
+            if _s9_names_other_rule "$f"; then echo RULE_MISMATCH; else echo RULE_MISSING; fi
+        elif _s9_rule_line_has_timestamp "$f"; then echo TIMESTAMP_NOT_MATCHED
+        else echo TIMESTAMP_MISSING
+        fi
+        return 0
+    fi
+    echo NONE
+}
+
+_s9_m3_reason() {
+    local f="$1"
+    [[ -n "$f" ]] || { echo ARTIFACT_MISSING; return 0; }
+    [[ -r "$f" ]] || { echo ARTIFACT_UNREADABLE; return 0; }
+    [[ $(wc -c < "$f") -gt 200 ]] || { echo REPORT_TOO_SHORT; return 0; }
+    grep -qiE "system|attack|alert|recommend" "$f" 2>/dev/null || { echo ARTIFACT_INVALID; return 0; }
+    if _s9_contains_guide_fiction "$f" || _s9_looks_like_example_report "$f"; then
+        echo PLACEHOLDER_OR_EXAMPLE; return 0
+    fi
+    [[ $(_s9_report_body_bytes "$f") -ge 120 ]] || { echo REPORT_BODY_TOO_SHORT; return 0; }
+    if ! _s9_mentions_rule_5710 "$f"; then
+        if _s9_names_other_rule "$f"; then echo RULE_MISMATCH; else echo RULE_MISSING; fi
+        return 0
+    fi
+    if ! _s9_report_names_expected_agent "$f"; then
+        if ! _s9_expected_agent >/dev/null; then echo CHECK_ERROR
+        elif _s9_names_any_meta_agent "$f"; then echo AGENT_MISMATCH
+        else echo AGENT_MISSING
+        fi
+        return 0
+    fi
+    echo NONE
+}
+
+check_scenario_9() {
+    local milestone=$1 name reason
     case $milestone in
-        1)
-            # M1: field names + this pod's agent + rule 5710 + real …Z vs auth.log.
-            # Reject PASTE/fiction. Description wording stays flexible.
-            if [[ -n "$triage" ]] \
-                && grep -qiE "alert_id|severity|rule" "$triage" 2>/dev/null \
-                && ! _s9_contains_unfilled_tokens "$triage" \
-                && ! _s9_contains_guide_fiction "$triage" \
-                && _s9_has_lab_meta_agent "$triage" \
-                && _s9_mentions_rule_5710 "$triage" \
-                && _s9_has_real_event_timestamp "$triage" 5; then
-                echo "PASS"
-            else
-                echo "FAIL"
-            fi
-            ;;
-        2)
-            # M2: reject unfilled/fiction tokens first; then real …Z vs auth.log.
-            # No triage-file shortcut (prior branch scored true_positive alone).
-            if [[ -n "$timeline" ]] \
-                && ! _s9_contains_unfilled_tokens "$timeline" \
-                && ! _s9_contains_guide_fiction "$timeline" \
-                && _s9_timeline_time_is_real "$timeline" 5; then
-                echo "PASS"
-                return
-            fi
-            echo "FAIL"
-            ;;
-        3)
-            # M3: size + keywords + body + this pod + rule 5710; reject §5 fiction.
-            if [[ -n "$report" ]] \
-                && [[ $(wc -c < "$report") -gt 200 ]] \
-                && grep -qiE "system|attack|alert|recommend" "$report" \
-                && ! _s9_contains_guide_fiction "$report" \
-                && ! _s9_looks_like_example_report "$report" \
-                && [[ $(_s9_report_body_bytes "$report") -ge 120 ]] \
-                && _s9_mentions_rule_5710 "$report" \
-                && _s9_report_names_expected_agent "$report"; then
-                echo "PASS"
-            else
-                echo "FAIL"
-            fi
-            ;;
+        1) name=alert_triage.json ;;
+        2) name=incident_timeline.md ;;
+        3) name=incident_report.txt ;;
+        *) return ;;
     esac
+    _s9_select_artifact "$name"
+    reason=$("_s9_m${milestone}_reason" "$S9_SEL_PATH") || reason=CHECK_ERROR
+    [[ -n "$reason" ]] || reason=CHECK_ERROR
+    log "Scenario 9 M${milestone}: reason=${reason} location=${S9_SEL_LOC} copies=${S9_SEL_COPIES}"
+    printf 'DIAG reason=%s location=%s copies=%s\n' "$reason" "$S9_SEL_LOC" "$S9_SEL_COPIES"
+    if [[ "$reason" == NONE ]]; then echo "PASS"; else echo "FAIL"; fi
 }
 
 # Scenario 10: Full Attack Chain (Red vs Blue)

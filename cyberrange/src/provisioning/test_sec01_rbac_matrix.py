@@ -115,6 +115,12 @@ ROUTE_POLICY = {
     ("GET", "/instructor/reviews/{review_id}/alert-snapshot"): (INSTRUCTOR, "/instructor/reviews/1/alert-snapshot", None),
     ("GET", "/instructor/students"): (INSTRUCTOR, "/instructor/students", None),
     ("GET", "/instructor/students/{student_id}"): (INSTRUCTOR, "/instructor/students/student_demo", None),
+    # Scenario 3 failure reason codes: staff only; Students get generic status.
+    ("GET", "/instructor/students/{student_id}/diagnostics"): (
+        INSTRUCTOR,
+        "/instructor/students/student_demo/diagnostics",
+        None,
+    ),
     ("GET", "/instructor/reviews"): (INSTRUCTOR, "/instructor/reviews", None),
     ("GET", "/instructor/reviews/{review_id}"): (INSTRUCTOR, "/instructor/reviews/1", None),
     ("POST", "/instructor/reviews/{review_id}/resolve"): (INSTRUCTOR, "/instructor/reviews/1/resolve", {"status": "APPROVED"}),

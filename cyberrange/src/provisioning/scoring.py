@@ -7,6 +7,7 @@ from typing import Any, Callable, Optional, Tuple, Type
 
 from fastapi import HTTPException
 
+import scoring_diagnostics
 from db import get_db_connection, log_event
 from models import VerificationResponse
 from ttl import minutes_since_created, siem_window_minutes
@@ -99,9 +100,16 @@ async def verify_milestone(
                 conn.close()
 
         verifier = ssh_verifier_cls()
-        status_result, message = await verifier.verify_milestone(
-            pod["student_id"], scenario_id, milestone_id
-        )
+        diagnose = scoring_diagnostics.applies_to(scenario_id)
+        diag = None
+        if diagnose and hasattr(type(verifier), "verify_milestone_detailed"):
+            status_result, message, diag = await verifier.verify_milestone_detailed(
+                pod["student_id"], scenario_id, milestone_id
+            )
+        else:
+            status_result, message = await verifier.verify_milestone(
+                pod["student_id"], scenario_id, milestone_id
+            )
 
         detection_score, detection_data = 0, None
         det = detection_for(scenario_id, milestone_id) if detection_enabled and detection_for else None
@@ -154,6 +162,10 @@ async def verify_milestone(
                     ),
                 )
         conn.close()
+
+        # Instructor-only reason code; after the score commit so it can't block it.
+        if diagnose:
+            scoring_diagnostics.record_safely(pod, scenario_id, milestone_id, status_result, diag)
 
         log_event(
             "MILESTONE_VERIFIED",
