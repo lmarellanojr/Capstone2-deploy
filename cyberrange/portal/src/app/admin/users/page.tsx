@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { KeyRound, RefreshCw, Search, ShieldOff, UserPlus, Users } from "lucide-react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
@@ -15,6 +15,7 @@ import { useToastContext } from "@/context/ToastContext";
 import { formatSqliteDate } from "@/lib/sqliteTime";
 import { APP_ROLES } from "@/lib/adminUserValidation";
 import { createCredentialFeedback, resetCredentialFeedback } from "@/lib/adminCredentialFeedback";
+import { filterAdminUsers, type RoleFilter, type StatusFilter } from "@/lib/adminUserFilter";
 import type { AdminUser, AppRole } from "@/lib/api";
 
 const ROLE_BADGE: Record<AppRole, "brand" | "info" | "default"> = {
@@ -23,6 +24,8 @@ const ROLE_BADGE: Record<AppRole, "brand" | "info" | "default"> = {
   student: "default",
 };
 const ROLE_LABEL: Record<AppRole, string> = { student: "Student", instructor: "Instructor", admin: "Admin" };
+const FILTER_SELECT =
+  "rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40";
 
 type PendingChange =
   | { kind: "disable"; user: AdminUser }
@@ -44,12 +47,16 @@ export default function AdminUsersPage() {
   const { users, loading, error, forbidden, pending, search, refresh, setEnabled, setRole, resetPassword, resetMfa, createUser } =
     useAdminUsers();
   const [query, setQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [creating, setCreating] = useState(false);
   const [resetting, setResetting] = useState<AdminUser | null>(null);
   const [confirm, setConfirm] = useState<PendingChange | null>(null);
   const [credentialHandoff, setCredentialHandoff] = useState<CredentialHandoff | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const firstRun = useRef(true);
+  const visibleUsers = useMemo(() => filterAdminUsers(users, roleFilter, statusFilter), [users, roleFilter, statusFilter]);
+  const filtered = roleFilter !== "all" || statusFilter !== "all";
 
   // Debounced server-side search (Keycloak matches username/name/email).
   useEffect(() => {
@@ -124,13 +131,49 @@ export default function AdminUsersPage() {
             className="w-full bg-secondary border border-border rounded-lg pl-9 pr-4 py-2 text-sm text-text-main placeholder:text-text-faint focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40"
           />
         </div>
+        <select
+          aria-label="Filter by role"
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value as RoleFilter)}
+          className={FILTER_SELECT}
+        >
+          <option value="all">All roles</option>
+          {APP_ROLES.map((r) => (
+            <option key={r} value={r}>
+              {ROLE_LABEL[r]}
+            </option>
+          ))}
+          <option value="none">No role</option>
+        </select>
+        <select
+          aria-label="Filter by status"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+          className={FILTER_SELECT}
+        >
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        {filtered && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setRoleFilter("all");
+              setStatusFilter("all");
+            }}
+          >
+            Clear filters
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading}>
           <RefreshCw size={14} aria-hidden="true" className={loading ? "animate-spin" : ""} />
           Refresh
         </Button>
         {!loading && !error && (
           <span className="text-sm text-text-muted" aria-live="polite">
-            {users.length} {users.length === 1 ? "user" : "users"}
+            {filtered ? `${visibleUsers.length} of ${users.length}` : users.length} {users.length === 1 ? "user" : "users"}
           </span>
         )}
       </div>
@@ -151,6 +194,12 @@ export default function AdminUsersPage() {
         {loading && users.length === 0 ? (
           <div className="flex justify-center py-12">
             <LoadingSpinner message="Loading users…" />
+          </div>
+        ) : users.length > 0 && visibleUsers.length === 0 ? (
+          <div className="py-12 px-6 text-center">
+            <Users size={28} className="mx-auto mb-3 text-text-faint" aria-hidden="true" />
+            <p className="font-semibold text-text-main">No users match these filters</p>
+            <p className="text-sm text-text-muted mt-1">Try another role or status, or clear the filters.</p>
           </div>
         ) : users.length === 0 && !error ? (
           <div className="py-12 px-6 text-center">
@@ -176,7 +225,7 @@ export default function AdminUsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => {
+                {visibleUsers.map((u) => {
                   const isSelf = !!actor && u.username === actor;
                   const busy = pending[u.id];
                   return (
