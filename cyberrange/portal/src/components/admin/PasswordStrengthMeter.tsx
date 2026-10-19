@@ -3,6 +3,7 @@
 import {
   estimatePasswordStrength,
   evaluatePasswordRequirements,
+  PASSWORD_SAVE_TIME_HINT,
   passwordStrengthColor,
   passwordStrengthLabel,
   passwordStrengthTextColor,
@@ -27,6 +28,7 @@ export function PasswordStrengthMeter({
   const score = estimatePasswordStrength(password)
   const requirements = evaluatePasswordRequirements(password, context)
   const listId = `${labelId}-must`
+  const hintId = `${labelId}-save-hint`
   return (
     <div className="mt-2" data-score={score} data-testid="password-strength-meter">
       <div className="h-2 overflow-hidden rounded-full bg-gray-200" aria-hidden="true">
@@ -47,30 +49,25 @@ export function PasswordStrengthMeter({
       </p>
       <ul id={listId} className="mt-2 space-y-1" aria-label="Password requirements">
         {requirements.map((item) => {
-          const tone =
-            item.met === true
-              ? "text-green-700"
-              : item.met === false
-                ? password
-                  ? "text-red-600"
-                  : "text-text-muted"
-                : "text-text-muted"
-          const mark = item.met === true ? "✓" : item.met === false ? "○" : "•"
+          const tone = item.met ? "text-green-700" : password ? "text-red-600" : "text-text-muted"
+          const mark = item.met ? "✓" : "○"
           return (
-            <li key={item.id} className={`flex gap-2 text-xs ${tone}`} data-met={item.met === null ? "pending" : String(item.met)}>
+            <li key={item.id} className={`flex gap-2 text-xs ${tone}`} data-met={String(item.met)}>
               <span aria-hidden="true" className="w-3 shrink-0 font-semibold">
                 {mark}
               </span>
               <span>
                 {item.label}
-                {item.met === true ? <span className="sr-only"> (met)</span> : null}
-                {item.met === false && password ? <span className="sr-only"> (not met)</span> : null}
-                {item.met === null ? <span className="sr-only"> (checked when you save)</span> : null}
+                {item.met ? <span className="sr-only"> (met)</span> : null}
+                {!item.met && password ? <span className="sr-only"> (not met)</span> : null}
               </span>
             </li>
           )
         })}
       </ul>
+      <p id={hintId} className="mt-1.5 text-xs text-text-muted">
+        {PASSWORD_SAVE_TIME_HINT}
+      </p>
     </div>
   )
 }

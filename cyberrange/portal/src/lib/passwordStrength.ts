@@ -5,15 +5,19 @@ const LABELS = ["", "Weak", "Medium", "Good", "Strong"] as const
 const COMMON_PATTERN =
   /password|passw|qwerty|letmein|welcome|cyberrange|capstone|123456|abcdef|abcdefghijkl/i
 
-export type PasswordRequirementId = "length" | "notUsername" | "notEmail" | "notCommon" | "history"
+export type PasswordRequirementId = "length" | "notUsername" | "notEmail" | "notCommon"
 
 export interface PasswordRequirement {
   id: PasswordRequirementId
   /** Short “must …” line shown under the meter. */
   label: string
-  /** true = met, false = not met, null = only checked on save. */
-  met: boolean | null
+  /** true = met, false = not met. Live checklist only includes client-checkable rules. */
+  met: boolean
 }
+
+/** Quiet note for rules Keycloak can only verify on save (password history). */
+export const PASSWORD_SAVE_TIME_HINT =
+  "Your last 3 passwords are also checked when you save."
 
 export interface PasswordRequirementContext {
   username?: string | null
@@ -80,11 +84,6 @@ export function evaluatePasswordRequirements(
     id: "notCommon",
     label: "Must not be a common password",
     met: value.length > 0 && !looksCommon(value),
-  })
-  items.push({
-    id: "history",
-    label: "Must not reuse your last 3 passwords (checked when you save)",
-    met: null,
   })
   return items
 }

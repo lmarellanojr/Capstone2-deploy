@@ -37,7 +37,7 @@ describe("evaluatePasswordRequirements", () => {
     expect(empty.find((item) => item.id === "notUsername")?.met).toBe(false)
     expect(empty.find((item) => item.id === "notEmail")?.met).toBe(false)
     expect(empty.find((item) => item.id === "notCommon")?.met).toBe(false)
-    expect(empty.find((item) => item.id === "history")?.met).toBeNull()
+    expect(empty.some((item) => item.id === "history")).toBe(false)
 
     const weak = evaluatePasswordRequirements("short", { username: "student_demo" })
     expect(weak.find((item) => item.id === "length")?.met).toBe(false)
@@ -57,6 +57,5 @@ describe("evaluatePasswordRequirements", () => {
     expect(strong.find((item) => item.id === "notUsername")?.met).toBe(true)
     expect(strong.find((item) => item.id === "notEmail")?.met).toBe(true)
     expect(strong.find((item) => item.id === "notCommon")?.met).toBe(true)
-    expect(strong.find((item) => item.id === "history")?.met).toBeNull()
   })
 })

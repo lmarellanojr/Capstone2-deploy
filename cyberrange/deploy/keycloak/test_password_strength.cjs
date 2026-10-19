@@ -23,7 +23,15 @@ test('must-include checklist mirrors realm rules', () => {
     assert.equal(withUser.find((item) => item.id === 'length').met, true);
     const strong = evaluateRequirements('#!@#%^23456789!@#%^2', { username: 'student_demo' });
     assert.equal(strong.find((item) => item.id === 'notCommon').met, true);
-    assert.equal(strong.find((item) => item.id === 'history').met, null);
+    assert.equal(strong.some((item) => item.id === 'history'), false);
+});
+test('save-time history sits outside the live must-include list', () => {
+    const dom = new JSDOM('<form><input id="password-new"><input id="password-confirm"></form>');
+    const doc = dom.window.document;
+    mount(doc);
+    assert.match(doc.getElementById('cr-password-strength-save-hint').textContent, /last 3 passwords/i);
+    assert.equal([...doc.querySelectorAll('.cr-strength__must-item')].some((el) => /last 3 passwords/i.test(el.textContent)), false);
+    dom.window.close();
 });
 test('checklist uses attempted username on the change-password page', () => {
     const dom = new JSDOM('<div id="kc-attempted-username">avmagallanes</div><form><input id="password-new"><input id="password-confirm"></form>');
@@ -118,7 +126,8 @@ test('generation fills both fields securely after a click and never submits', ()
     assert.equal(generatedInput.type, 'text', 'Generated password is visible to the user');
     assert.deepEqual(events.slice(0, 4), ['password-new:input', 'password-new:change', 'password-confirm:input', 'password-confirm:change']);
     assert.equal(submitted, false);
-    assert.match(doc.querySelector('.cr-strength__hint').textContent, /Choose your own.*Generate password is optional/);
+    assert.match(doc.getElementById('cr-password-strength-hint').textContent, /Choose your own.*Generate password is optional/);
+    assert.match(doc.getElementById('cr-password-strength-save-hint').textContent, /last 3 passwords/i);
     const saveHint = doc.querySelector('.cr-strength__save-hint');
     assert.equal(saveHint.hidden, false);
     assert.match(saveHint.textContent, /password manager/);
