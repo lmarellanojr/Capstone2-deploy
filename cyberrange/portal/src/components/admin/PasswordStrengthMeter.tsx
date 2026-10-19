@@ -3,11 +3,12 @@
 import {
   estimatePasswordStrength,
   evaluatePasswordRequirements,
-  PASSWORD_SAVE_TIME_HINT,
+  PASSWORD_COMMON_SAVE_HINT,
   passwordStrengthColor,
   passwordStrengthLabel,
   passwordStrengthTextColor,
   passwordStrengthWidth,
+  type PasswordMeterAudience,
   type PasswordRequirementContext,
 } from "@/lib/passwordStrength"
 
@@ -16,7 +17,10 @@ interface PasswordStrengthMeterProps {
   /** Optional id for aria-describedby on the password input. */
   labelId?: string
   /** Identity fields used for live “must not match” checks. */
-  context?: PasswordRequirementContext
+  context?: Omit<PasswordRequirementContext, "audience">
+  audience?: PasswordMeterAudience
+  /** When null, omit the history hint node (Create User). */
+  historyHint?: string | null
 }
 
 /** Live continuous bar + must-meet checklist. Advisory; server enforces policy. */
@@ -24,11 +28,14 @@ export function PasswordStrengthMeter({
   password,
   labelId = "cr-admin-password-strength",
   context,
+  audience = "self",
+  historyHint = null,
 }: PasswordStrengthMeterProps) {
   const score = estimatePasswordStrength(password)
-  const requirements = evaluatePasswordRequirements(password, context)
+  const requirements = evaluatePasswordRequirements(password, { ...context, audience })
   const listId = `${labelId}-must`
-  const hintId = `${labelId}-save-hint`
+  const commonHintId = `${labelId}-common-hint`
+  const historyHintId = `${labelId}-history-hint`
   return (
     <div className="mt-2" data-score={score} data-testid="password-strength-meter">
       <div className="h-2 overflow-hidden rounded-full bg-gray-200" aria-hidden="true">
@@ -65,9 +72,14 @@ export function PasswordStrengthMeter({
           )
         })}
       </ul>
-      <p id={hintId} className="mt-1.5 text-xs text-text-muted">
-        {PASSWORD_SAVE_TIME_HINT}
+      <p id={commonHintId} className="mt-1.5 text-xs text-text-muted" data-testid="password-common-hint">
+        {PASSWORD_COMMON_SAVE_HINT}
       </p>
+      {historyHint ? (
+        <p id={historyHintId} className="mt-1 text-xs text-text-muted" data-testid="password-history-hint">
+          {historyHint}
+        </p>
+      ) : null}
     </div>
   )
 }

@@ -5,23 +5,32 @@ const LABELS = ["", "Weak", "Medium", "Good", "Strong"] as const
 const COMMON_PATTERN =
   /password|passw|qwerty|letmein|welcome|cyberrange|capstone|123456|abcdef|abcdefghijkl/i
 
-export type PasswordRequirementId = "length" | "notUsername" | "notEmail" | "notCommon"
+/** Live Must rows only — never include heuristic/blocklist as Must ✓/✗. */
+export type PasswordRequirementId = "length" | "notUsername" | "notEmail"
+
+export type PasswordMeterAudience = "self" | "admin"
 
 export interface PasswordRequirement {
   id: PasswordRequirementId
   /** Short “must …” line shown under the meter. */
   label: string
-  /** true = met, false = not met. Live checklist only includes client-checkable rules. */
+  /** true = met, false = not met. */
   met: boolean
 }
 
-/** Quiet note for rules Keycloak can only verify on save (password history). */
-export const PASSWORD_SAVE_TIME_HINT =
-  "Your last 3 passwords are also checked when you save."
+/** Always-on muted note: realm passwordBlacklist is checked on save. */
+export const PASSWORD_COMMON_SAVE_HINT = "Common passwords are checked when you save."
+
+/** Self-service history note (Keycloak UPDATE_PASSWORD / own account). */
+export const PASSWORD_HISTORY_HINT_SELF = "Your last 3 passwords are also checked when you save."
+
+/** Admin reset history note. */
+export const PASSWORD_HISTORY_HINT_ADMIN = "The user's last 3 passwords are also checked when you save."
 
 export interface PasswordRequirementContext {
   username?: string | null
   email?: string | null
+  audience?: PasswordMeterAudience
 }
 
 function normalizeIdentity(value: string): string {
@@ -51,13 +60,15 @@ export function estimatePasswordStrength(value: string): PasswordStrengthScore {
   return score
 }
 
-/** Live checklist aligned to the realm policy (no composition rules). */
+/** Live checklist aligned to client-checkable realm rules (no composition / no blocklist Must). */
 export function evaluatePasswordRequirements(
   value: string,
   context: PasswordRequirementContext = {},
 ): PasswordRequirement[] {
   const username = context.username?.trim() || ""
   const email = context.email?.trim() || ""
+  const audience = context.audience ?? "self"
+  const yourOrThe = audience === "admin" ? "the" : "your"
   const normalizedValue = value ? normalizeIdentity(value) : ""
   const items: PasswordRequirement[] = [
     {
@@ -69,22 +80,17 @@ export function evaluatePasswordRequirements(
   if (username) {
     items.push({
       id: "notUsername",
-      label: "Must not match your username",
+      label: `Must not match ${yourOrThe} username`,
       met: Boolean(value) && normalizedValue !== normalizeIdentity(username),
     })
   }
   if (email) {
     items.push({
       id: "notEmail",
-      label: "Must not match your email",
+      label: `Must not match ${yourOrThe} email`,
       met: Boolean(value) && normalizedValue !== normalizeIdentity(email),
     })
   }
-  items.push({
-    id: "notCommon",
-    label: "Must not be a common password",
-    met: value.length > 0 && !looksCommon(value),
-  })
   return items
 }
 

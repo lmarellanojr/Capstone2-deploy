@@ -17,36 +17,42 @@ test('conservative estimates including long predictable passwords', () => {
         assert.equal(estimate(value), score, value);
     }
 });
-test('must-include checklist mirrors realm rules', () => {
-    const withUser = evaluateRequirements('student_demo', { username: 'student_demo' });
-    assert.equal(withUser.find((item) => item.id === 'notUsername').met, false);
+test('must-include checklist mirrors client-checkable realm rules', () => {
+    const withUser = evaluateRequirements('student_demo', { accountName: 'student_demo' });
+    assert.equal(withUser.find((item) => item.id === 'notAccountName').met, false);
     assert.equal(withUser.find((item) => item.id === 'length').met, true);
-    const strong = evaluateRequirements('#!@#%^23456789!@#%^2', { username: 'student_demo' });
-    assert.equal(strong.find((item) => item.id === 'notCommon').met, true);
-    assert.equal(strong.some((item) => item.id === 'history'), false);
+    const strong = evaluateRequirements('#!@#%^23456789!@#%^2', { accountName: 'student_demo' });
+    assert.equal(strong.find((item) => item.id === 'notAccountName').met, true);
+    assert.equal(strong.some((item) => item.id === 'notCommon'), false);
 });
-test('save-time history sits outside the live must-include list', () => {
+test('save-time common and history sit outside the live must-include list', () => {
     const dom = new JSDOM('<form><input id="password-new"><input id="password-confirm"></form>');
     const doc = dom.window.document;
     mount(doc);
-    assert.match(doc.getElementById('cr-password-strength-save-hint').textContent, /last 3 passwords/i);
-    assert.equal([...doc.querySelectorAll('.cr-strength__must-item')].some((el) => /last 3 passwords/i.test(el.textContent)), false);
+    assert.match(doc.getElementById('cr-password-strength-common-hint').textContent, /Common passwords are checked when you save/);
+    assert.match(doc.getElementById('cr-password-strength-history-hint').textContent, /last 3 passwords/i);
+    assert.equal([...doc.querySelectorAll('.cr-strength__must-item')].some((el) => /common password|last 3 passwords/i.test(el.textContent)), false);
+    assert.match(doc.getElementById('password-new').getAttribute('aria-describedby'), /cr-password-strength-common-hint/);
+    assert.match(doc.getElementById('password-new').getAttribute('aria-describedby'), /cr-password-strength-history-hint/);
     dom.window.close();
 });
-test('checklist uses attempted username on the change-password page', () => {
-    const dom = new JSDOM('<div id="kc-attempted-username">avmagallanes</div><form><input id="password-new"><input id="password-confirm"></form>');
+test('checklist uses attempted account name including email-shaped login', () => {
+    const dom = new JSDOM('<div id="kc-attempted-username">student@example.test</div><form><input id="password-new"><input id="password-confirm"></form>');
     const doc = dom.window.document;
     mount(doc);
     const input = doc.getElementById('password-new');
-    input.value = 'avmagallanes';
+    input.value = 'student@example.test';
     input.dispatchEvent(new dom.window.Event('input'));
-    const usernameItem = [...doc.querySelectorAll('.cr-strength__must-item')].find((el) => /username/i.test(el.textContent));
-    assert.ok(usernameItem);
-    assert.equal(usernameItem.dataset.met, 'false');
+    const accountItem = [...doc.querySelectorAll('.cr-strength__must-item')].find((el) => /account name/i.test(el.textContent));
+    assert.ok(accountItem);
+    assert.equal(accountItem.dataset.met, 'false');
+    assert.match(accountItem.textContent, /\(not met\)/);
     input.value = '#!@#%^23456789!@#%^2';
     input.dispatchEvent(new dom.window.Event('input'));
-    const usernameOk = [...doc.querySelectorAll('.cr-strength__must-item')].find((el) => /username/i.test(el.textContent));
-    assert.equal(usernameOk.dataset.met, 'true');
+    const accountOk = [...doc.querySelectorAll('.cr-strength__must-item')].find((el) => /account name/i.test(el.textContent));
+    assert.equal(accountOk.dataset.met, 'true');
+    assert.match(accountOk.textContent, /\(met\)/);
+    assert.equal(accountOk.textContent.includes('(not met)'), false);
     dom.window.close();
 });
 test('mounts only on new-password form, preserves errors and controls, updates and resets', async () => {
@@ -127,7 +133,10 @@ test('generation fills both fields securely after a click and never submits', ()
     assert.deepEqual(events.slice(0, 4), ['password-new:input', 'password-new:change', 'password-confirm:input', 'password-confirm:change']);
     assert.equal(submitted, false);
     assert.match(doc.getElementById('cr-password-strength-hint').textContent, /Choose your own.*Generate password is optional/);
-    assert.match(doc.getElementById('cr-password-strength-save-hint').textContent, /last 3 passwords/i);
+    assert.match(doc.getElementById('cr-password-strength-common-hint').textContent, /Common passwords are checked when you save/);
+    assert.match(doc.getElementById('cr-password-strength-history-hint').textContent, /last 3 passwords/i);
+    assert.equal([...doc.querySelectorAll('.cr-strength__must-item')].some((el) => /common password/i.test(el.textContent)), false);
+    assert.equal([...doc.querySelectorAll('.cr-strength__must-item')].every((el) => el.dataset.met === 'true'), true);
     const saveHint = doc.querySelector('.cr-strength__save-hint');
     assert.equal(saveHint.hidden, false);
     assert.match(saveHint.textContent, /password manager/);

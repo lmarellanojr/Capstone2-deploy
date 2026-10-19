@@ -1,4 +1,5 @@
-/* Advisory only: Keycloak remains responsible for password acceptance. */
+/* Advisory only: Keycloak remains responsible for password acceptance.
+ * Keep estimate/requirement helpers in sync with portal/src/lib/passwordStrength.ts */
 (function () {
     "use strict";
     var COMMON_PATTERN = /password|passw|qwerty|letmein|welcome|cyberrange|capstone|123456|abcdef|abcdefghijkl/i;
@@ -27,31 +28,19 @@
         return el ? (el.textContent || "").trim() : "";
     }
 
+    /** Live Must rows only — never include heuristic/blocklist as Must ✓/✗. */
     function evaluateRequirements(value, context) {
         context = context || {};
-        var username = (context.username || "").trim();
-        var email = (context.email || "").trim();
+        var accountName = (context.accountName || context.username || "").trim();
         var normalizedValue = value ? normalizeIdentity(value) : "";
         var items = [{ id: "length", label: "Must be 8–128 characters", met: value.length >= 8 && value.length <= 128 }];
-        if (username) {
+        if (accountName) {
             items.push({
-                id: "notUsername",
-                label: "Must not match your username",
-                met: Boolean(value) && normalizedValue !== normalizeIdentity(username),
+                id: "notAccountName",
+                label: "Must not match your account name",
+                met: Boolean(value) && normalizedValue !== normalizeIdentity(accountName),
             });
         }
-        if (email) {
-            items.push({
-                id: "notEmail",
-                label: "Must not match your email",
-                met: Boolean(value) && normalizedValue !== normalizeIdentity(email),
-            });
-        }
-        items.push({
-            id: "notCommon",
-            label: "Must not be a common password",
-            met: value.length > 0 && !looksCommon(value),
-        });
         return items;
     }
 
@@ -84,7 +73,18 @@
             mark.setAttribute("aria-hidden", "true");
             mark.textContent = item.met ? "✓" : "○";
             var text = owner.createElement("span");
-            text.textContent = item.label;
+            text.appendChild(owner.createTextNode(item.label));
+            if (item.met) {
+                var met = owner.createElement("span");
+                met.className = "cr-sr-only";
+                met.textContent = " (met)";
+                text.appendChild(met);
+            } else if (password) {
+                var unmet = owner.createElement("span");
+                unmet.className = "cr-sr-only";
+                unmet.textContent = " (not met)";
+                text.appendChild(unmet);
+            }
             li.appendChild(mark);
             li.appendChild(text);
             list.appendChild(li);
@@ -113,10 +113,14 @@
         must.id = "cr-password-strength-must";
         must.className = "cr-strength__must";
         must.setAttribute("aria-label", "Password requirements");
-        var saveHintNote = doc.createElement("p");
-        saveHintNote.id = "cr-password-strength-save-hint";
-        saveHintNote.className = "cr-strength__hint";
-        saveHintNote.textContent = "Your last 3 passwords are also checked when you save.";
+        var commonHint = doc.createElement("p");
+        commonHint.id = "cr-password-strength-common-hint";
+        commonHint.className = "cr-strength__hint";
+        commonHint.textContent = "Common passwords are checked when you save.";
+        var historyHint = doc.createElement("p");
+        historyHint.id = "cr-password-strength-history-hint";
+        historyHint.className = "cr-strength__hint";
+        historyHint.textContent = "Your last 3 passwords are also checked when you save.";
         var hint = doc.createElement("p");
         hint.id = "cr-password-strength-hint";
         hint.className = "cr-strength__hint";
@@ -124,11 +128,12 @@
         container.appendChild(bar);
         container.appendChild(label);
         container.appendChild(must);
-        container.appendChild(saveHintNote);
+        container.appendChild(commonHint);
+        container.appendChild(historyHint);
         container.appendChild(hint);
-        var crypto = doc.defaultView && doc.defaultView.crypto;
+        var cryptoObj = doc.defaultView && doc.defaultView.crypto;
         var confirm = doc.getElementById("password-confirm");
-        if (crypto && typeof crypto.getRandomValues === "function" && input.form &&
+        if (cryptoObj && typeof cryptoObj.getRandomValues === "function" && input.form &&
             confirm && confirm.form === input.form && !input.disabled && !input.readOnly &&
             !confirm.disabled && !confirm.readOnly) {
             var generate = doc.createElement("button");
@@ -145,7 +150,7 @@
                 function randomIndex(max) {
                     var limit = Math.floor(0x100000000 / max) * max;
                     var bytes = new Uint32Array(1);
-                    do { crypto.getRandomValues(bytes); } while (bytes[0] >= limit);
+                    do { cryptoObj.getRandomValues(bytes); } while (bytes[0] >= limit);
                     return bytes[0] % max;
                 }
                 var chars = [digits[randomIndex(digits.length)], symbols[randomIndex(symbols.length)]];
@@ -171,12 +176,19 @@
         }
         var group = input.closest(".pf-c-input-group, .pf-v5-c-input-group") || input;
         group.insertAdjacentElement("afterend", container);
-        input.setAttribute("aria-describedby", [input.getAttribute("aria-describedby"), label.id, must.id, saveHintNote.id, hint.id].filter(Boolean).join(" "));
+        input.setAttribute("aria-describedby", [
+            input.getAttribute("aria-describedby"),
+            label.id,
+            must.id,
+            commonHint.id,
+            historyHint.id,
+            hint.id,
+        ].filter(Boolean).join(" "));
         function update() {
             var score = estimate(input.value);
             container.dataset.score = String(score);
             label.textContent = score ? "Password strength: " + ["", "Weak", "Medium", "Good", "Strong"][score] : "Enter a new password to see its strength.";
-            renderRequirements(must, evaluateRequirements(input.value, { username: readAttemptedUsername(doc) }), input.value);
+            renderRequirements(must, evaluateRequirements(input.value, { accountName: readAttemptedUsername(doc) }), input.value);
         }
         input.addEventListener("input", update);
         input.addEventListener("change", update);
