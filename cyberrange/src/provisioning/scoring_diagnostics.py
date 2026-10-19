@@ -41,8 +41,23 @@ REASON_CODES_BY_SCENARIO: dict[int, frozenset[str]] = {
         "REPORT_BODY_TOO_SHORT",
         "CHECK_ERROR",
     }),
+    # Catalog Scenario 2, SQL Injection. Not from scoring_checks.sh: the portal
+    # DVWA proxy classifies an attempt that did not score (browserNearMiss in
+    # portal/src/lib/dvwaScoreSignals.ts) and posts only the code.
+    6: frozenset({
+        "SECURITY_NOT_LOW",
+        "PAYLOAD_NO_ROWS",
+        "QUOTE_NO_ERROR",
+        "UNION_NO_METADATA",
+        "UNION_NO_HASH",
+        "XSS_NOT_REFLECTED",
+        "CHECK_ERROR",
+    }),
 }
 DIAGNOSTIC_SCENARIO_IDS = frozenset(REASON_CODES_BY_SCENARIO)
+# Scenarios whose failure reasons come from the portal proxy. Their shell-scorer
+# fallback prints no DIAG line, so only its PASS is recorded (scoring.py).
+BROWSER_SCENARIO_IDS = frozenset({6})
 # Every code any scenario may print (for "never shown to students" checks).
 REASON_CODES = frozenset().union(*REASON_CODES_BY_SCENARIO.values())
 LOCATION_CODES = frozenset({"HOME_MSFADMIN", "HOME_STUDENT", "TMP", "NONE"})

@@ -164,7 +164,11 @@ async def verify_milestone(
         conn.close()
 
         # Instructor-only reason code; after the score commit so it can't block it.
-        if diagnose:
+        # A browser scenario's Kali-fallback FAIL has no reason, so it must not
+        # overwrite the proxy's; its PASS still clears an earlier failure.
+        if diagnose and (
+            status_result == "PASS" or scenario_id not in scoring_diagnostics.BROWSER_SCENARIO_IDS
+        ):
             scoring_diagnostics.record_safely(pod, scenario_id, milestone_id, status_result, diag)
 
         log_event(

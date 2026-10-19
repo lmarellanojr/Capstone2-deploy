@@ -6,6 +6,7 @@ Instructors get a reason when a scored check fails. Students still see the gener
 
 | Scorer id | Catalog scenario | Reason codes | Status |
 |---|---|---|---|
+| 6 | Scenario 2 — Web Application Attack / SQL Injection | [SCENARIO2-DIAGNOSTICS.md](SCENARIO2-DIAGNOSTICS.md) | Off; from the DVWA proxy, not the shell scorer |
 | 9 | Scenario 3 — SIEM Alert Triage | [SCENARIO3-DIAGNOSTICS.md](SCENARIO3-DIAGNOSTICS.md) | Pilot |
 
 A scenario is listed here only after its check-to-code map has been reviewed against the live verifier. Codes describe a condition the check actually tested, in the order it tested them. A failure the check can't tell apart stays generic.
@@ -22,7 +23,8 @@ A scenario is listed here only after its check-to-code map has been reviewed aga
    Callers read only the last line, so the token contract is the same. `reason=NONE` means the check passed. `location` and `copies` are only meaningful for artifact checks; the others print `location=NONE copies=0`.
 2. `SSHVerifier.verify_milestone_detailed` parses that line with `scoring_diagnostics.parse_diag(stdout, scenario_id)`. Anything off-format is dropped. A code outside that scenario's list (`REASON_CODES_BY_SCENARIO`) becomes `CHECK_ERROR`.
 3. `scoring.verify_milestone` writes the score row exactly as before. Then, only when that scenario is switched on, it upserts one `scoring_diagnostics` row. A database error here is logged and swallowed, so it never affects scoring. Manual Verify and the score poller both go through this path.
-4. `GET /instructor/students/{student_id}/diagnostics` (instructor or admin) returns the rows. The portal's **Check reasons** panel on the instructor student page shows one table per scenario.
+4. **Browser scenarios** (`BROWSER_SCENARIO_IDS`, today only 6): the portal DVWA proxy classifies an attempt that did not score and posts only the code to `POST /internal/browser-diagnostic` (shared `BROWSER_SCORE_SECRET`). A browser pass clears it. Their Kali-fallback check prints no DIAG line, so step 3 records only its PASS and never overwrites the proxy's reason with `CHECK_ERROR`. See [SCENARIO2-DIAGNOSTICS.md](SCENARIO2-DIAGNOSTICS.md).
+5. `GET /instructor/students/{student_id}/diagnostics` (instructor or admin) returns the rows. The portal's **Check reasons** panel on the instructor student page shows one table per scenario.
 
 ## What is stored
 

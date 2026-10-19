@@ -78,6 +78,18 @@ ROUTE_POLICY = {
             "label": "browser:sqli-m1",
         },
     ),
+    # Same secret; instructor-only near-miss code for Scenario 2.
+    ("POST", "/internal/browser-diagnostic"): (
+        PUBLIC,
+        "/internal/browser-diagnostic",
+        {
+            "student_id": "student_demo",
+            "pod_id": POD,
+            "scenario_id": 6,
+            "milestone_id": 1,
+            "reason": "PAYLOAD_NO_ROWS",
+        },
+    ),
     ("GET", "/users/me/orientation"): (ANY_APP_ROLE, "/users/me/orientation", None),
     ("POST", "/users/me/orientation"): (ANY_APP_ROLE, "/users/me/orientation", None),
     ("POST", "/pods/provision"): (ANY_APP_ROLE, "/pods/provision", {"student_id": "ignored", "scenario_id": "01"}),
@@ -184,7 +196,7 @@ def _insert_pod(pod_id, owner, status="DESTROYED"):
 
 def _request(client, method, url, body):
     kwargs = {"json": body} if body is not None else {}
-    if url == "/internal/browser-score":
+    if url in ("/internal/browser-score", "/internal/browser-diagnostic"):
         kwargs["headers"] = {
             "X-Browser-Score-Secret": os.environ.get(
                 "BROWSER_SCORE_SECRET", "sec01-matrix-secret"

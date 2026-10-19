@@ -1,7 +1,9 @@
 import {
+  browserNearMiss,
   browserScoreFailureHint,
   browserScoreLabel,
   detectBrowserMilestone,
+  dvwaSecurityLevel,
   idValue,
   injectScoreNotice,
 } from './dvwaScoreSignals'
@@ -167,5 +169,77 @@ describe('injectScoreNotice', () => {
   it('escapes the title and message', () => {
     const out = injectScoreNotice('<body>', { title: '<i>', message: '<b>"x"</b>' })
     expect(out).toContain('<strong>&lt;i&gt;</strong> &lt;b&gt;&quot;x&quot;&lt;/b&gt;')
+  })
+})
+
+describe('dvwaSecurityLevel', () => {
+  it('reads the security cookie and ignores look-alike names', () => {
+    expect(dvwaSecurityLevel('cr_dvwa_sid=abc; security=Medium')).toBe('medium')
+    expect(dvwaSecurityLevel('xsecurity=high; cr_dvwa_sid=abc')).toBe('')
+    expect(dvwaSecurityLevel('')).toBe('')
+  })
+})
+
+describe('browserNearMiss', () => {
+  type Input = Parameters<typeof browserNearMiss>[0]
+  function miss(over: Partial<Input>) {
+    const input: Input = {
+      path: sqli,
+      search: '',
+      requestBody: '',
+      responseText: page(oneUser),
+      securityLevel: 'low',
+      ...over,
+    }
+    // The route only asks when the detector found nothing for the same request.
+    expect(detectBrowserMilestone({ ...input, method: 'GET' })).toBeNull()
+    return browserNearMiss(input)
+  }
+
+  it.each([
+    ['a bare visit', {}],
+    ['a plain id', { search: '?id=1&Submit=Submit' }],
+    ['a placeholder id', { search: "?id=%3Cadmin_hash_here%3E'&Submit=Submit" }],
+    ['a UNION on a table the detector has no rule for', { search: "?id=1'+UNION+SELECT+a,b+FROM+guestbook--+-" }],
+    ['another DVWA page', { path: '/vulnerabilities/exec/', search: "?id=1'" }],
+    ['a plain XSS name', { path: xssr, search: '?name=alice' }],
+    ['a placeholder XSS name', { path: xssr, search: '?name=%3Cscript%3E%3Csession_id%3E' }],
+  ])('stays generic for %s', (_label, over) => {
+    expect(miss(over as Partial<Input>)).toBeNull()
+  })
+
+  it.each([
+    ["OR 1=1 with one row", "?id=1'+OR+'1'%3D'1", 1, 'PAYLOAD_NO_ROWS'],
+    ["a quote with no SQL error", '?id=1%27', 1, 'QUOTE_NO_ERROR'],
+    ['UNION database() with no dvwa cell', "?id=1'+UNION+SELECT+null,database()--+-", 2, 'UNION_NO_METADATA'],
+    ['UNION information_schema with no match', "?id=1'+UNION+SELECT+1,table_name+FROM+information_schema.tables--+-", 2, 'UNION_NO_METADATA'],
+    ['UNION FROM users with no hash', "?id=1'+UNION+SELECT+user,first_name+FROM+users--+-", 3, 'UNION_NO_HASH'],
+  ])('%s', (_label, search, milestone, reason) => {
+    expect(miss({ search: search as string })).toEqual({ milestone, reason })
+  })
+
+  it('reads the id from a POST body too', () => {
+    expect(miss({ requestBody: "id=1'+OR+1%3D1&Submit=Submit" })).toEqual({ milestone: 1, reason: 'PAYLOAD_NO_ROWS' })
+  })
+
+  it('names a non-Low security cookie first, on the milestone the payload targets', () => {
+    expect(miss({ search: "?id=1'+UNION+SELECT+user,first_name+FROM+users--+-", securityLevel: 'high' })).toEqual({
+      milestone: 3,
+      reason: 'SECURITY_NOT_LOW',
+    })
+    expect(miss({ path: xssr, search: '?name=%3Cscript%3Ealert(1)%3C/script%3E', securityLevel: 'medium', responseText: page('Hello alert(1)') })).toEqual({
+      milestone: 4,
+      reason: 'SECURITY_NOT_LOW',
+    })
+  })
+
+  it('does not guess the security level when the cookie is absent', () => {
+    expect(miss({ search: '?id=1%27', securityLevel: '' })).toEqual({ milestone: 1, reason: 'QUOTE_NO_ERROR' })
+  })
+
+  it('reports an unreflected script for milestone 4', () => {
+    expect(
+      miss({ path: xssr, search: '?name=%3Cscript%3Ealert(1)%3C/script%3E', responseText: page('Hello &lt;script&gt;') }),
+    ).toEqual({ milestone: 4, reason: 'XSS_NOT_REFLECTED' })
   })
 })
