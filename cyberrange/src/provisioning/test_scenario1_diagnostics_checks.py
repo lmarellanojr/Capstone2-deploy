@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -55,16 +56,20 @@ SOCKET_OK = 'ESTAB 0 0 10.0.51.10:4444 10.0.51.20:49152 users:(("ruby",pid=4242,
 
 
 def run(tmp_path: Path, milestone: int, *, history: str = "", addr=True, route=True,
-        m4=None, script: str = SCRIPT) -> tuple[str, dict | None, list[str]]:
-    """Run scenario 1. m4 = dict(pane_info=, pane=, sockets=) for the M4 fixtures."""
+        m4=None, script: str = SCRIPT, ip_tool=True) -> tuple[str, dict | None, list[str]]:
+    """Run scenario 1. m4 = dict(pane_info=, pane=, sockets=) for the M4 fixtures.
+    ip_tool=False leaves out the ip stub (only meaningful where the host has no ip)."""
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     _write(home / ".bash_history", history)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     ip = bin_dir / "ip"
-    _write(ip, _ip_stub(addr, route))
-    ip.chmod(0o755)
+    if ip_tool:
+        _write(ip, _ip_stub(addr, route))
+        ip.chmod(0o755)
+    elif ip.exists():
+        ip.unlink()
     env = {
         **os.environ,
         "HOME": home.as_posix(),
@@ -106,6 +111,10 @@ CASES = [
     ("m1-no-address", 1, dict(history="nmap -sn 10.0.51.0/24\n", addr=False), "NO_POD_ADDRESS"),
     ("m1-no-history", 1, dict(), "COMMAND_NOT_FOUND"),
     ("m1-not-nmap", 1, dict(history="ping -c1 10.0.51.20\n"), "COMMAND_NOT_FOUND"),
+    # Lines that only mention nmap are not a scan.
+    ("m1-only-mentions-nmap", 1, dict(history="man nmap\nwhich nmap\nsudo apt install nmap\nzenmap\nnmap\n"),
+     "COMMAND_NOT_FOUND"),
+    ("m1-sudo-nmap-other-pod", 1, dict(history="sudo nmap -sn 10.0.55.0/24\n"), "COMMAND_NOT_MATCHED"),
     ("m1-other-pod", 1, dict(history="nmap -sn 10.0.55.0/24\n"), "COMMAND_NOT_MATCHED"),
     ("m1-wrong-prefix-len", 1, dict(history="nmap -sn 10.0.51.1/20\n"), "COMMAND_NOT_MATCHED"),
     ("m1-no-route", 1, dict(history="nmap -sn 10.0.51.0/24\n", route=False), "NO_SUBNET_ROUTE"),
@@ -126,6 +135,8 @@ CASES = [
     ("m3-no-sV", 3, dict(history="nmap -p 80 10.0.51.20\n"), "COMMAND_NOT_MATCHED"),
     ("m3-other-pod", 3, dict(history="nmap -sV 10.0.52.20\n"), "COMMAND_NOT_MATCHED"),
     ("m3-no-history", 3, dict(), "COMMAND_NOT_FOUND"),
+    ("m3-abs-path-no-sV", 3, dict(history="/usr/bin/nmap -p 80 10.0.51.20\n"), "COMMAND_NOT_MATCHED"),
+    ("m3-zsh-history-no-sV", 3, dict(history=": 1700000000:0;nmap -p 80 10.0.51.20\n"), "COMMAND_NOT_MATCHED"),
     ("m3-no-route", 3, dict(history="nmap -sV 10.0.51.20\n", route=False), "NO_SUBNET_ROUTE"),
     ("m3-no-address", 3, dict(history="nmap -sV 10.0.51.20\n", addr=False), "NO_POD_ADDRESS"),
     # M4 live Tomcat-manager Metasploit session
@@ -163,6 +174,23 @@ def test_reason_and_token(tmp_path, milestone, kwargs, reason):
     assert diag == {"reason": reason, "location": "NONE", "copies": 0}, lines
     # Only the DIAG line and the token: no commands, addresses or pane text.
     assert len(lines) == 2 and DIAG_LINE.match(lines[0]), lines
+
+
+_HOST_HAS_IP = shutil.which("ip") is not None
+
+
+@pytest.mark.skipif(_HOST_HAS_IP, reason="host has ip on PATH, so it can't be left out")
+@pytest.mark.parametrize("milestone,kwargs", [
+    (1, dict(history="nmap -sn 10.0.51.0/24\n")),
+    (2, dict(history="nmap -p 22 10.0.51.20\n")),
+    (3, dict(history="nmap -sV 10.0.51.20\n")),
+    (4, dict(m4=_m4())),
+])
+def test_missing_ip_tool_is_a_check_error(tmp_path, milestone, kwargs):
+    # Without ip the address and route checks fail for a missing tool, not the network.
+    token, diag, lines = run(tmp_path, milestone, ip_tool=False, **kwargs)
+    assert token == "FAIL", lines
+    assert diag == {"reason": "CHECK_ERROR", "location": "NONE", "copies": 0}, lines
 
 
 def test_unknown_milestone_prints_nothing(tmp_path):

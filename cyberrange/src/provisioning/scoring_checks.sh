@@ -229,14 +229,21 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 # Each milestone runs the same predicates in the same order as before and
 # names the first one that fails. PASS is printed only for NONE.
 
-# Which part of an nmap check failed: no nmap at all, or none that matched.
+# Which part of an nmap check failed: no nmap run at all, or none that matched.
+# Anchored to an nmap invocation with an argument (start of line, or after a
+# space, ;, &, | or /), so `man nmap`, `apt install nmap` or `zenmap` count as
+# not found rather than as a wrong scan.
+_S1_NMAP_RUN='(^|[;&|/[:space:]])nmap[[:space:]]+[^[:space:]]'
 _s1_command_reason() {
-    if check_behavior "nmap"; then echo COMMAND_NOT_MATCHED; else echo COMMAND_NOT_FOUND; fi
+    if check_behavior "$_S1_NMAP_RUN"; then echo COMMAND_NOT_MATCHED; else echo COMMAND_NOT_FOUND; fi
 }
 
 # M1/M3: [[ prefix ]] && check_behavior PATTERN && has_subnet_route.
 _s1_scan_reason() {
     local prefix="$1" pattern="$2"
+    # Without ip, own_subnet_prefix and has_subnet_route fail for a missing tool,
+    # not a network fault.
+    command -v ip >/dev/null 2>&1 || { echo CHECK_ERROR; return 0; }
     [[ -n "$prefix" ]] || { echo NO_POD_ADDRESS; return 0; }
     check_behavior "$pattern" || { _s1_command_reason; return 0; }
     has_subnet_route || { echo NO_SUBNET_ROUTE; return 0; }
@@ -246,6 +253,7 @@ _s1_scan_reason() {
 # M2 checks the address and the route first, then the command.
 _s1_route_first_reason() {
     local prefix="$1" pattern="$2"
+    command -v ip >/dev/null 2>&1 || { echo CHECK_ERROR; return 0; }
     [[ -n "$prefix" ]] || { echo NO_POD_ADDRESS; return 0; }
     has_subnet_route || { echo NO_SUBNET_ROUTE; return 0; }
     check_behavior "$pattern" || { _s1_command_reason; return 0; }
@@ -253,6 +261,7 @@ _s1_route_first_reason() {
 }
 
 _s1_m4_reason() {
+    command -v ip >/dev/null 2>&1 || { echo CHECK_ERROR; return 0; }
     S1_SESSION_REASON=CHECK_ERROR
     check_live_tomcat_msf_session "$1" || true
     echo "${S1_SESSION_REASON:-CHECK_ERROR}"

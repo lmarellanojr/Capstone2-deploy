@@ -19,14 +19,14 @@ M5 (flag) is scored by flag submission, not by this script, and has no reasons.
 
 | Code | Milestones | Meaning |
 |---|---|---|
-| `NO_POD_ADDRESS` | 1–4 | eth0 had no IPv4, so the check could not tell which subnet is this pod's |
-| `NO_SUBNET_ROUTE` | 1–3 | no route to a pod subnet right now |
-| `COMMAND_NOT_FOUND` | 1–3 | no `nmap` in shell history or the snoopy log |
-| `COMMAND_NOT_MATCHED` | 1–3 | `nmap` was run, but none matched this milestone's flags and this pod's target |
+| `NO_POD_ADDRESS` | 1–4 | eth0 had no IPv4 when scoring ran, so the check could not tell which subnet is this pod's |
+| `NO_SUBNET_ROUTE` | 1–3 | no route to a pod subnet when scoring ran. It is checked at verify time, not when the scan ran, so it says nothing about whether the scan reached its targets |
+| `COMMAND_NOT_FOUND` | 1–3 | no `nmap` command with an argument in shell history or the snoopy log. `man nmap`, `which nmap`, `apt install nmap` and `zenmap` don't count |
+| `COMMAND_NOT_MATCHED` | 1–3 | an `nmap` command with arguments was run, but none matched this milestone's flags and this pod's target |
 | `MSF_NOT_RUNNING` | 4 | no single `lab` pane, or that pane isn't running msfconsole |
 | `SESSION_NOT_OPENED` | 4 | msfconsole is running, but its output shows no `tomcat_mgr_deploy` session to this pod's meta |
 | `SESSION_NOT_LIVE` | 4 | a session was opened, but msfconsole no longer holds a connection to it |
-| `CHECK_ERROR` | 1–4 | the check could not run (tmux/ss/runuser missing, malformed pane data) or the verifier returned ERROR |
+| `CHECK_ERROR` | 1–4 | the check could not run (`ip`, tmux, ss or runuser missing, malformed pane data) or the verifier returned ERROR. A missing `ip` is checked first, so it is not reported as `NO_POD_ADDRESS`/`NO_SUBNET_ROUTE` |
 
 The reason is the **first** condition that failed, in the order above. So, for example, M1 with no nmap and no route reports `COMMAND_NOT_FOUND` (the command is checked first), while M2 with the same state reports `NO_SUBNET_ROUTE`.
 
