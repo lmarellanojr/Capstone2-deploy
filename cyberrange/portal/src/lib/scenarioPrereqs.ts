@@ -47,7 +47,7 @@ const PREREQS: Record<string, ScenarioPrereqs> = {
   },
   '06': {
     intro:
-      'You work entirely in the browser: DVWA loads inside the lab page, already connected to your session. Log in as admin / password, then set DVWA Security to Low. No terminal or sqlmap is needed.',
+      'You work entirely in the browser: DVWA loads inside the lab page, already signed in with DVWA Security set to Low (if a login page ever appears, use admin / password). No terminal or sqlmap is needed.',
     tools: [
       { term: 'DVWA', blurb: 'A deliberately vulnerable practice website; keep Security on Low or the payloads are blocked and nothing scores.' },
     ],

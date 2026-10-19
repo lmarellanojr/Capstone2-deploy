@@ -35,14 +35,17 @@ function defaultTabForScenario(scenarioId: string): TermTab {
   return 'kali-cli'
 }
 
-const DVWA_LOGIN_URL = `${DVWA_PREFIX}/login.php`
+// The pane, new-tab button and copied link all open DVWA's Home page: the
+// proxy signs a signed-out student in from there (it never does so on
+// login.php itself), so the lab opens ready to use. No Login button either,
+// since a signed-in student would only see the form again.
+const DVWA_HOME_URL = `${DVWA_PREFIX}/index.php`
 
 const DVWA_NAV: { label: string; path: string }[] = [
-  { label: 'Home', path: `${DVWA_PREFIX}/index.php` },
+  { label: 'Home', path: DVWA_HOME_URL },
   { label: 'SQL Injection', path: `${DVWA_PREFIX}/vulnerabilities/sqli/` },
   { label: 'XSS (Reflected)', path: `${DVWA_PREFIX}/vulnerabilities/xss_r/` },
   { label: 'DVWA Security', path: `${DVWA_PREFIX}/security.php` },
-  { label: 'Login', path: DVWA_LOGIN_URL },
 ]
 
 export interface TerminalViewProps {
@@ -95,7 +98,7 @@ export function TerminalView({
   const [activeTab, setActiveTab] = useState<TermTab>(() => defaultTabForScenario(scenario.id))
   const [showAccessHelp, setShowAccessHelp] = useState<'dvwa' | null>(null)
   const [showSiemModal, setShowSiemModal] = useState(false)
-  const [dvwaNav, setDvwaNav] = useState({ path: DVWA_LOGIN_URL, nonce: 0 })
+  const [dvwaNav, setDvwaNav] = useState({ path: DVWA_HOME_URL, nonce: 0 })
   const [infoModal, setInfoModal] = useState<'kali' | 'meta' | null>(null)
   const explainedTabs = useRef<Set<'kali' | 'meta'>>(new Set())
   const [localGuideExtra, setLocalGuideExtra] = useState<GuideExtra | null>(null)
@@ -268,7 +271,7 @@ export function TerminalView({
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => window.open(DVWA_LOGIN_URL, '_blank', 'noopener,noreferrer')}
+                  onClick={() => window.open(DVWA_HOME_URL, '_blank', 'noopener,noreferrer')}
                 >
                   Open in new tab
                   <ExternalLink size={14} aria-hidden="true" />
@@ -341,13 +344,14 @@ export function TerminalView({
                 session. Use <strong className="text-text-main">Open in new tab</strong> if you prefer a full window.
               </li>
               <li>
-                Log in with <code className="bg-muted px-1 rounded">admin</code> /{' '}
+                You&apos;re signed in automatically with Security set to <strong>Low</strong>. Only if DVWA
+                shows its login page: sign in with <code className="bg-muted px-1 rounded">admin</code> /{' '}
                 <code className="bg-muted px-1 rounded">password</code>, then set Security to <strong>Low</strong>.
               </li>
               <li>Each task is scored automatically as you work in DVWA.</li>
             </ul>
             <div className="flex flex-wrap gap-2 mb-2">
-              <Button size="sm" variant="secondary" onClick={() => copyText(DVWA_LOGIN_URL, 'DVWA link')}>
+              <Button size="sm" variant="secondary" onClick={() => copyText(DVWA_HOME_URL, 'DVWA link')}>
                 Copy link
               </Button>
             </div>

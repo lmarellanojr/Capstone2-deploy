@@ -42,9 +42,9 @@ describe('PrereqBox', () => {
     expect(document.getElementById('prereq-panel')).toBeInTheDocument()
   })
 
-  it('tells Scenario 2 students to log in, matching the guide', () => {
+  it('tells Scenario 2 students DVWA opens signed in at Low, with the login as a fallback', () => {
     const p = prereqsForScenario('06')!
-    expect(p.intro).not.toMatch(/signed in/i)
+    expect(p.intro).toMatch(/already signed in with DVWA Security set to Low/)
     expect(p.intro).toMatch(/admin \/ password/)
   })
 

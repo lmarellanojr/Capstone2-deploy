@@ -272,3 +272,114 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     expect(body).not.toContain('/dvwa-theme/css/main.css')
   })
 })
+
+describe('/lab/dvwa automatic sign-in', () => {
+  const loginForm = "<form><input type='hidden' name='user_token' value='tok' /></form>"
+  const redirect = (location: string, cookies: string[] = []) =>
+    new Response(null, {
+      status: 302,
+      headers: [['location', location], ...cookies.map((c) => ['set-cookie', c] as [string, string])],
+    })
+
+  beforeEach(() => {
+    fetchMock.mockReset()
+    mockedSession.mockReset()
+    mockedSession.mockResolvedValue({ accessToken: 'test-token' } as never)
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ pods: [{ pod_id: 1, status: 'ACTIVE' }] }),
+    } as Response)
+  })
+
+  it('signs in on the student pod and serves the page they asked for, with Security Low', async () => {
+    fetchMock
+      .mockResolvedValueOnce(redirect('login.php'))
+      .mockResolvedValueOnce(new Response(loginForm, { headers: [['set-cookie', 'PHPSESSID=s1; path=/']] }))
+      .mockResolvedValueOnce(redirect('index.php'))
+      .mockResolvedValueOnce(
+        new Response('<html><body>Welcome to DVWA</body></html>', {
+          status: 200,
+          headers: [['content-type', 'text/html']],
+        })
+      )
+
+    const res = await GET(makeRequest('/lab/dvwa/index.php'), {
+      params: Promise.resolve({ path: ['index.php'] }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('Welcome to DVWA')
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    const origin = urls[1].replace(/\/index\.php$/, '')
+    expect(urls.slice(2, 4)).toEqual([`${origin}/login.php`, `${origin}/login.php`])
+    expect(urls[4]).toBe(urls[1])
+    expect(fetchMock.mock.calls[4][1].headers.get('cookie')).toBe('PHPSESSID=s1; security=low')
+    const cookies = res.headers.getSetCookie()
+    expect(cookies).toContain('cr_dvwa_sid=s1; Path=/lab/dvwa/; HttpOnly; SameSite=Lax')
+    expect(cookies).toContain('security=low; Path=/lab/dvwa/; SameSite=Lax')
+  })
+
+  it("falls back to DVWA's own login redirect when sign-in fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(redirect('login.php'))
+      .mockResolvedValueOnce(new Response(loginForm, { headers: [['set-cookie', 'PHPSESSID=s1']] }))
+      .mockResolvedValueOnce(redirect('login.php'))
+
+    const res = await GET(makeRequest('/lab/dvwa/index.php'), {
+      params: Promise.resolve({ path: ['index.php'] }),
+    })
+
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toMatch(/\/lab\/dvwa\/login\.php$/)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(res.headers.getSetCookie().some((c) => c.startsWith('cr_dvwa_sid='))).toBe(false)
+  })
+
+  it('leaves the login page itself alone', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(loginForm, { status: 200, headers: [['content-type', 'text/html']] })
+    )
+    const res = await GET(makeRequest('/lab/dvwa/login.php'), {
+      params: Promise.resolve({ path: ['login.php'] }),
+    })
+    expect(res.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('replays a payload GET bounced by an expired session once, at Low, and still scores it', async () => {
+    const prevSecret = process.env.BROWSER_SCORE_SECRET
+    process.env.BROWSER_SCORE_SECRET = 'test-secret'
+    mockedSession.mockResolvedValue({ accessToken: 'test-token', user: { name: 'student1' } } as never)
+    const sqliHit =
+      "<html><body><pre>ID: 1' OR '1'='1<br />First name: admin<br />Surname: admin</pre>" +
+      "<pre>ID: 1' OR '1'='1<br />First name: Gordon<br />Surname: Brown</pre></body></html>"
+    const search = '?id=1%27+OR+%271%27%3D%271&Submit=Submit'
+    try {
+      fetchMock
+        .mockResolvedValueOnce(redirect('../../login.php'))
+        .mockResolvedValueOnce(new Response(loginForm, { headers: [['set-cookie', 'PHPSESSID=s2']] }))
+        .mockResolvedValueOnce(redirect('index.php'))
+        .mockResolvedValueOnce(
+          new Response(sqliHit, { status: 200, headers: [['content-type', 'text/html']] })
+        )
+        .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '{}' } as Response)
+
+      const res = await GET(makeRequest('/lab/dvwa/vulnerabilities/sqli/', search), {
+        params: Promise.resolve({ path: ['vulnerabilities', 'sqli'] }),
+      })
+
+      expect(res.status).toBe(200)
+      const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+      // pods, bounced payload, login form, login POST, one replay, score
+      expect(fetchMock).toHaveBeenCalledTimes(6)
+      expect(urls[4]).toBe(urls[1])
+      expect(urls[4]).toContain(search)
+      expect(fetchMock.mock.calls[4][1].headers.get('cookie')).toBe('PHPSESSID=s2; security=low')
+      expect(urls[5]).toMatch(/\/internal\/browser-score$/)
+      expect(JSON.parse(fetchMock.mock.calls[5][1].body)).toMatchObject({ milestone_id: 1, scenario_id: 6 })
+    } finally {
+      process.env.BROWSER_SCORE_SECRET = prevSecret
+    }
+  })
+})
