@@ -27,3 +27,20 @@ test("filters by status and combines with role", () => {
   expect(names(filterAdminUsers(users, "all", "disabled"))).toEqual(["stu_off", "inst_off"]);
   expect(names(filterAdminUsers(users, "student", "active"))).toEqual(["stu_on"]);
 });
+
+test("filters instructors and admins", () => {
+  expect(names(filterAdminUsers(users, "instructor", "all"))).toEqual(["inst_off"]);
+  expect(names(filterAdminUsers(users, "admin", "all"))).toEqual(["admin_on"]);
+  expect(names(filterAdminUsers(users, "admin", "disabled"))).toEqual([]);
+});
+
+test("'none' combines with status", () => {
+  expect(names(filterAdminUsers(users, "none", "active"))).toEqual(["norole"]);
+  expect(names(filterAdminUsers(users, "none", "disabled"))).toEqual([]);
+});
+
+test("kept ids stay visible even when they no longer match", () => {
+  const keep = new Set(["1", "5"]);
+  expect(names(filterAdminUsers(users, "admin", "disabled", keep))).toEqual(["stu_on", "norole"]);
+  expect(names(filterAdminUsers(users, "student", "disabled", keep))).toEqual(["stu_on", "stu_off", "norole"]);
+});

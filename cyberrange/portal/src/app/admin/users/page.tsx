@@ -55,7 +55,17 @@ export default function AdminUsersPage() {
   const [credentialHandoff, setCredentialHandoff] = useState<CredentialHandoff | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const firstRun = useRef(true);
-  const visibleUsers = useMemo(() => filterAdminUsers(users, roleFilter, statusFilter), [users, roleFilter, statusFilter]);
+  // Rows created or changed under the current search + filters stay visible
+  // even if they no longer match; changing the search or a filter drops them.
+  const viewKey = `${query}\u0000${roleFilter}\u0000${statusFilter}`;
+  const [kept, setKept] = useState<{ key: string; ids: ReadonlySet<string> }>({ key: viewKey, ids: new Set() });
+  const keptIds = kept.key === viewKey ? kept.ids : undefined;
+  const keepVisible = (id: string) =>
+    setKept((prev) => ({ key: viewKey, ids: new Set(prev.key === viewKey ? Array.from(prev.ids).concat(id) : [id]) }));
+  const visibleUsers = useMemo(
+    () => filterAdminUsers(users, roleFilter, statusFilter, keptIds),
+    [users, roleFilter, statusFilter, keptIds],
+  );
   const filtered = roleFilter !== "all" || statusFilter !== "all";
 
   // Debounced server-side search (Keycloak matches username/name/email).
@@ -73,12 +83,14 @@ export default function AdminUsersPage() {
     try {
       if (change.kind === "disable") {
         await setEnabled(change.user.id, false);
+        keepVisible(change.user.id);
         success(`${change.user.username} is disabled and signed out.`);
       } else if (change.kind === "mfa") {
         await resetMfa(change.user.id);
         success(`${change.user.username}'s authenticator was reset. They'll set up a new one at next sign-in.`);
       } else {
         await setRole(change.user.id, change.role);
+        keepVisible(change.user.id);
         success(`${change.user.username} is now ${ROLE_LABEL[change.role]}. It applies at their next sign-in.`);
       }
       setConfirm(null);
@@ -92,6 +104,7 @@ export default function AdminUsersPage() {
   const enable = async (u: AdminUser) => {
     try {
       await setEnabled(u.id, true);
+      keepVisible(u.id);
       success(`${u.username} can sign in again.`);
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Couldn't enable the user.");
@@ -341,6 +354,7 @@ export default function AdminUsersPage() {
         onClose={() => setCreating(false)}
         onCreate={createUser}
         onCreated={(u, password, temporary) => {
+          keepVisible(u.id);
           setCredentialHandoff({ username: u.username ?? "", password, temporary });
           const feedback = createCredentialFeedback(u, u.role ? ROLE_LABEL[u.role] : "no role");
           success(feedback.message);
