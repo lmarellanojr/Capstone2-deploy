@@ -45,7 +45,7 @@ function looksCommon(value: string): boolean {
     .replace(/3/g, "e")
     .replace(/\$/g, "s")
   return (
-    /(.+)\1{2,}/u.test(normalized) ||
+    /(.+)\1{2,}/.test(normalized) ||
     COMMON_PATTERN.test(normalized) ||
     new Set(normalized).size < 5
   )
