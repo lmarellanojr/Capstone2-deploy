@@ -34,3 +34,8 @@ test("keeps a reset password transiently for reconciliation after an ambiguous f
   expect(onClose).toHaveBeenCalled();
   await waitFor(() => expect(input).toHaveValue(""));
 });
+
+test("asks the browser not to fill the admin's saved password into the reset field", () => {
+  render(<ResetPasswordModal user={user} onClose={jest.fn()} onReset={jest.fn()} />);
+  expect(screen.getByLabelText(/^New password/)).toHaveAttribute("autocomplete", "new-password");
+});

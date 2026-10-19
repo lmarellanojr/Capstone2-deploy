@@ -142,6 +142,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
               {field("first_name", "First name")}
               <input
                 id={`${uid}-first_name`}
+                autoComplete="off"
                 value={form.first_name}
                 onChange={(e) => set("first_name", e.target.value)}
                 aria-invalid={!!errors.first_name}
@@ -153,6 +154,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
               {field("last_name", "Last name")}
               <input
                 id={`${uid}-last_name`}
+                autoComplete="off"
                 value={form.last_name}
                 onChange={(e) => set("last_name", e.target.value)}
                 aria-invalid={!!errors.last_name}
@@ -167,6 +169,8 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
             <input
               id={`${uid}-email`}
               type="email"
+              // These describe the new user, not the admin: no profile suggestions.
+              autoComplete="off"
               value={form.email}
               onChange={(e) => set("email", e.target.value)}
               aria-invalid={!!errors.email}
@@ -210,7 +214,9 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                 <input
                   id={`${uid}-password`}
                   type={showPassword ? "text" : "password"}
-                  autoComplete="off"
+                  // "new-password", not "off": browsers ignore "off" on a username +
+                  // password pair and fill in the signed-in admin's own saved login.
+                  autoComplete="new-password"
                   value={form.password}
                   onChange={(e) => set("password", e.target.value)}
                   aria-invalid={!!errors.password}
