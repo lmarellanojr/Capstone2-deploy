@@ -1,8 +1,8 @@
 /** @jest-environment jsdom */
 import React from 'react'
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
-import { LabTour, labTourSteps, placeCard } from './LabTour'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { LabTour, labTourSteps, placeCard, visibleBox } from './LabTour'
 
 const viewport = { width: 1200, height: 800 }
 const card = { width: 320, height: 160 }
@@ -34,6 +34,19 @@ describe('placeCard', () => {
     expect(overlaps({ ...placeCard(rightPane, card, viewport), ...card }, rightPane)).toBe(false)
   })
 
+  it('places against the visible slice of a pane partly scrolled off screen (phone)', () => {
+    const narrow = { width: 390, height: 700 }
+    // Stacked lab pane: starts 400px down and runs far below the fold.
+    const visible = visibleBox({ top: 400, left: 16, width: 358, height: 900 }, narrow)!
+    expect(visible).toEqual({ top: 400, left: 16, width: 358, height: 300 })
+    const pos = placeCard(visible, card, narrow)
+    expect(overlaps({ ...pos, ...card }, visible)).toBe(false)
+  })
+
+  it('reports nothing visible for an anchor entirely off screen', () => {
+    expect(visibleBox({ top: 900, left: 0, width: 100, height: 100 }, viewport)).toBeNull()
+  })
+
   it('stays inside a narrow viewport when nothing fits beside the anchor', () => {
     const narrow = { width: 390, height: 700 }
     const pane = { top: 0, left: 16, width: 358, height: 900 }
@@ -59,6 +72,8 @@ describe('LabTour', () => {
     for (const t of ['task-panel', 'lab-surface', 'task-status', 'lab-help']) {
       const el = document.createElement('div')
       el.setAttribute('data-tour', t)
+      // jsdom lays nothing out; give each anchor an on-screen box.
+      el.getBoundingClientRect = () => ({ top: 100, left: 40, width: 200, height: 40 }) as DOMRect
       document.body.appendChild(el)
     }
   })
@@ -91,12 +106,65 @@ describe('LabTour', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('can be dismissed with the close button or Escape', () => {
+  it('can be dismissed with the close button or Escape from inside the card', () => {
     const onClose = jest.fn()
     render(<LabTour open onClose={onClose} surface="dvwa" />)
     fireEvent.click(screen.getByRole('button', { name: /Close walkthrough/i }))
-    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Next' }), { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores Escape meant for an open dialog or typed outside the card (e.g. the terminal)', () => {
+    const onClose = jest.fn()
+    const terminal = document.createElement('textarea')
+    document.body.appendChild(terminal)
+    render(<LabTour open onClose={onClose} surface="terminal" />)
+
+    fireEvent.keyDown(terminal, { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+
+    const modal = document.createElement('div')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Next' }), { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('leaves focus in the terminal on auto-start and restores it on close', () => {
+    const terminal = document.createElement('textarea')
+    document.body.appendChild(terminal)
+    terminal.focus()
+
+    const { rerender } = render(<LabTour open onClose={jest.fn()} surface="terminal" focusOnOpen={false} />)
+    expect(document.activeElement).toBe(terminal)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /already connected/i }))
+
+    rerender(<LabTour open={false} onClose={jest.fn()} surface="terminal" focusOnOpen={false} />)
+    expect(document.activeElement).toBe(terminal)
+  })
+
+  it('measures at most once per frame while the page scrolls', () => {
+    jest.useFakeTimers()
+    try {
+      render(<LabTour open onClose={jest.fn()} surface="terminal" />)
+      const anchor = document.querySelector('[data-tour="task-panel"]') as HTMLElement
+      const spy = jest.spyOn(anchor, 'getBoundingClientRect')
+      for (let i = 0; i < 20; i++) fireEvent.scroll(window)
+      expect(spy).not.toHaveBeenCalled()
+      act(() => {
+        jest.advanceTimersByTime(20)
+      })
+      expect(spy).toHaveBeenCalledTimes(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('focuses the card heading when opened from the ? button', () => {
+    render(<LabTour open onClose={jest.fn()} surface="terminal" />)
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /first task/i }))
   })
 
   it('still shows the card (without a ring) if an anchor is missing', () => {

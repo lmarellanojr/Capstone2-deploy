@@ -86,8 +86,9 @@ const MARGIN = 16;
 
 /**
  * Where to put the card so it does not cover the element it points at: below,
- * above, right, then left of the anchor. When none fits (a pane taller than
- * the viewport) it pins to the viewport edge farther from the anchor's centre.
+ * above, right, then left of the anchor. When none fits — on phones, a stacked
+ * pane can fill the whole screen — it pins to the viewport edge farther from
+ * the anchor's centre and may overlap the pane; there is nowhere else to go.
  */
 export function placeCard(
   anchor: Box,
@@ -120,6 +121,20 @@ export function placeCard(
   };
 }
 
+/** The part of the anchor actually on screen, so placement uses what is visible. */
+export function visibleBox(anchor: Box, viewport: { width: number; height: number }): Box | null {
+  const top = Math.max(anchor.top, 0);
+  const left = Math.max(anchor.left, 0);
+  const bottom = Math.min(anchor.top + anchor.height, viewport.height);
+  const right = Math.min(anchor.left + anchor.width, viewport.width);
+  if (bottom <= top || right <= left) return null;
+  return { top, left, width: right - left, height: bottom - top };
+}
+
+const sameBox = (a: Box | null, b: Box | null) =>
+  a === b ||
+  (!!a && !!b && a.top === b.top && a.left === b.left && a.width === b.width && a.height === b.height);
+
 function findTarget(target: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-tour="${target}"]`);
 }
@@ -128,6 +143,11 @@ interface LabTourProps {
   open: boolean;
   onClose: () => void;
   surface: Surface;
+  /**
+   * Move focus into the card when it opens. Off for the automatic first-run
+   * start so a student already typing in the terminal keeps their focus.
+   */
+  focusOnOpen?: boolean;
 }
 
 /**
@@ -135,18 +155,36 @@ interface LabTourProps {
  * beside it. There is no backdrop, so the lab stays usable while it is open,
  * and it sits below modals (z-40) so a dialog always wins.
  */
-export function LabTour({ open, onClose, surface }: LabTourProps) {
+export function LabTour({ open, onClose, surface, focusOnOpen = true }: LabTourProps) {
   const steps = labTourSteps(surface);
   const [index, setIndex] = useState(0);
   const [anchor, setAnchor] = useState<Box | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const navigatedRef = useRef(false);
+  const frameRef = useRef<number | null>(null);
   const step = steps[Math.min(index, steps.length - 1)];
   const isLast = index >= steps.length - 1;
 
   useEffect(() => {
-    if (open) setIndex(0);
+    if (open) {
+      setIndex(0);
+      navigatedRef.current = false;
+    }
+  }, [open]);
+
+  // Hand focus back to wherever it was (e.g. the terminal) when the tour closes.
+  // A layout effect declared before the one below, so it records focus before
+  // the heading takes it.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    return () => {
+      if (previouslyFocused?.isConnected && typeof previouslyFocused.focus === "function") {
+        previouslyFocused.focus();
+      }
+    };
   }, [open]);
 
   const measure = useCallback(() => {
@@ -154,33 +192,54 @@ export function LabTour({ open, onClose, surface }: LabTourProps) {
     const card = cardRef.current;
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     const rect = el?.getBoundingClientRect();
-    const box = rect ? { top: rect.top, left: rect.left, width: rect.width, height: rect.height } : null;
-    setAnchor(box);
+    const box = rect
+      ? visibleBox({ top: rect.top, left: rect.left, width: rect.width, height: rect.height }, viewport)
+      : null;
     const size = { width: card?.offsetWidth ?? 320, height: card?.offsetHeight ?? 160 };
-    setPos(
-      box
-        ? placeCard(box, size, viewport)
-        : { top: viewport.height - size.height - MARGIN, left: viewport.width - size.width - MARGIN }
-    );
+    const next = box
+      ? placeCard(box, size, viewport)
+      : { top: viewport.height - size.height - MARGIN, left: viewport.width - size.width - MARGIN };
+    // Keep the previous objects when nothing moved, so a scroll that doesn't
+    // move the anchor (e.g. terminal output) doesn't re-render the tour.
+    setAnchor((prev) => (sameBox(prev, box) ? prev : box));
+    setPos((prev) => (prev && prev.top === next.top && prev.left === next.left ? prev : next));
   }, [step.target]);
+
+  // At most one measure per animation frame while scrolling or resizing.
+  const scheduleMeasure = useCallback(() => {
+    if (frameRef.current !== null) return;
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null;
+      measure();
+    });
+  }, [measure]);
 
   useLayoutEffect(() => {
     if (!open) return;
     findTarget(step.target)?.scrollIntoView?.({ block: "nearest" });
     measure();
-    headingRef.current?.focus();
-    window.addEventListener("resize", measure);
-    window.addEventListener("scroll", measure, true);
+    if (focusOnOpen || navigatedRef.current) headingRef.current?.focus();
+    window.addEventListener("resize", scheduleMeasure);
+    window.addEventListener("scroll", scheduleMeasure, true);
     return () => {
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", scheduleMeasure);
+      window.removeEventListener("scroll", scheduleMeasure, true);
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
     };
-  }, [open, step.target, measure]);
+  }, [open, step.target, measure, scheduleMeasure, focusOnOpen]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // A dialog on top owns Escape, and Escape typed elsewhere (vim/less in
+      // the terminal) isn't meant for the tour.
+      if (document.querySelector('[aria-modal="true"]')) return;
+      if (!cardRef.current?.contains(e.target as Node)) return;
+      onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -235,7 +294,10 @@ export function LabTour({ open, onClose, surface }: LabTourProps) {
             {index > 0 && (
               <button
                 type="button"
-                onClick={() => setIndex((i) => i - 1)}
+                onClick={() => {
+                  navigatedRef.current = true;
+                  setIndex((i) => i - 1);
+                }}
                 className="rounded-md px-2.5 py-1 text-xs font-medium text-text-muted hover:text-text-main focus-ring"
               >
                 Back
@@ -243,7 +305,11 @@ export function LabTour({ open, onClose, surface }: LabTourProps) {
             )}
             <button
               type="button"
-              onClick={() => (isLast ? onClose() : setIndex((i) => i + 1))}
+              onClick={() => {
+                if (isLast) return onClose();
+                navigatedRef.current = true;
+                setIndex((i) => i + 1);
+              }}
               className="rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white hover:opacity-90 focus-ring"
             >
               {isLast ? "Got it" : "Next"}

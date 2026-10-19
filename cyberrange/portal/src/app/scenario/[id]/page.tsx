@@ -94,7 +94,10 @@ export default function ScenarioDetailPage({ params }: PageProps) {
 
   // First-run walkthrough: auto-starts once per user on their first live lab.
   const [tourOpen, setTourOpen] = useState(false)
+  // Bumped by the ? button so a replay always restarts at step 1, even mid-tour.
+  const [tourRun, setTourRun] = useState(0)
   const tourAutoStarted = useRef(false)
+  const hasPod = !!pod
 
   // "Before you start — the big picture" welcome
   const [bigPictureOpen, setBigPictureOpen] = useState(false)
@@ -151,13 +154,20 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   }, [phase, scenario])
 
   useEffect(() => {
-    if (phase !== 'active' || !pod || !studentId || tourAutoStarted.current) return
-    tourAutoStarted.current = true
-    if (hasSeenLabTour(studentId)) return
+    if (phase !== 'active' || !hasPod || !studentId || tourAutoStarted.current) return
+    if (hasSeenLabTour(studentId)) {
+      tourAutoStarted.current = true
+      return
+    }
     // Let the panes lay out first so the coach marks anchor to real positions.
-    const t = window.setTimeout(() => setTourOpen(true), 600)
+    // Marked started only when it fires, so a re-render inside the delay
+    // can't cancel the first run for good.
+    const t = window.setTimeout(() => {
+      tourAutoStarted.current = true
+      setTourOpen(true)
+    }, 600)
     return () => window.clearTimeout(t)
-  }, [phase, pod, studentId])
+  }, [phase, hasPod, studentId])
 
   const closeTour = useCallback(() => {
     setTourOpen(false)
@@ -415,7 +425,10 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => setTourOpen(true)}
+                    onClick={() => {
+                      setTourRun((n) => n + 1)
+                      setTourOpen(true)
+                    }}
                     aria-label="Show lab walkthrough"
                     title="Show lab walkthrough"
                   >
@@ -508,6 +521,8 @@ export default function ScenarioDetailPage({ params }: PageProps) {
       </div>
 
       <LabTour
+        key={tourRun}
+        focusOnOpen={tourRun > 0}
         open={tourOpen && phase === 'active' && !!pod}
         onClose={closeTour}
         surface={getLabSurface(scenario)}

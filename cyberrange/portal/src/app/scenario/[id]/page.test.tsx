@@ -165,6 +165,32 @@ describe('ScenarioDetailPage first-run walkthrough', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
     expect(screen.getByText('DVWA opens here')).toBeInTheDocument()
   })
+
+  it('replays from step 1 when ? is pressed mid-tour', () => {
+    render(<ScenarioDetailPage params={{ id: '01' }} />)
+    act(() => {
+      jest.advanceTimersByTime(600)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByTestId('lab-tour-card')).toHaveAttribute('data-step-target', 'task-status')
+
+    fireEvent.click(screen.getByRole('button', { name: /Show lab walkthrough/i }))
+    expect(screen.getByTestId('lab-tour-card')).toHaveAttribute('data-step-target', 'task-panel')
+  })
+
+  it('still auto-starts when the pod re-renders inside the start delay', () => {
+    const { rerender } = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    act(() => {
+      jest.advanceTimersByTime(300)
+    })
+    // useScenarioPod hands back a new pod object on every poll.
+    rerender(<ScenarioDetailPage params={{ id: '01' }} />)
+    act(() => {
+      jest.advanceTimersByTime(300)
+    })
+    expect(screen.getByTestId('lab-tour-card')).toBeInTheDocument()
+  })
 })
 
 describe('ScenarioDetailPage right-pane surface selection', () => {
