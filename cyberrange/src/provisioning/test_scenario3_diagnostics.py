@@ -50,6 +50,12 @@ class PlainVerifier:
         return "FAIL", "Check completed: FAIL"
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_switches(monkeypatch):
+    for name in ("SCORING_DIAGNOSTICS_SCENARIOS", "SCORING_DIAGNOSTICS_RETENTION_DAYS"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def enabled(monkeypatch):
     monkeypatch.setenv("S3_DIAGNOSTICS_ENABLED", "1")
@@ -100,8 +106,8 @@ def _get(claims, path):
 
 def test_parse_diag_reads_the_last_diag_line():
     out = "noise\nDIAG reason=RULE_MISSING location=TMP copies=2\nFAIL\n"
-    assert sd.parse_diag(out) == {"reason": "RULE_MISSING", "location": "TMP", "copies": 2}
-    assert sd.parse_diag("DIAG reason=NONE location=HOME_STUDENT copies=1\nPASS") == {
+    assert sd.parse_diag(out, 9) == {"reason": "RULE_MISSING", "location": "TMP", "copies": 2}
+    assert sd.parse_diag("DIAG reason=NONE location=HOME_STUDENT copies=1\nPASS", 9) == {
         "reason": None, "location": "HOME_STUDENT", "copies": 1}
 
 
@@ -113,12 +119,60 @@ def test_parse_diag_reads_the_last_diag_line():
     "PASS",
 ])
 def test_parse_diag_rejects_anything_off_format(line):
-    assert sd.parse_diag(line + "\nFAIL") is None
+    assert sd.parse_diag(line + "\nFAIL", 9) is None
 
 
 def test_parse_diag_unknown_codes_are_coerced():
-    assert sd.parse_diag("DIAG reason=SOMETHING_NEW location=ELSEWHERE copies=1") == {
+    assert sd.parse_diag("DIAG reason=SOMETHING_NEW location=ELSEWHERE copies=1", 9) == {
         "reason": "CHECK_ERROR", "location": "NONE", "copies": 1}
+
+
+def test_parse_diag_is_scoped_to_the_scenarios_own_codes(monkeypatch):
+    # A valid scenario 9 code is still CHECK_ERROR for a scenario without it.
+    monkeypatch.setitem(sd.REASON_CODES_BY_SCENARIO, 1, frozenset({"COMMAND_NOT_FOUND", "CHECK_ERROR"}))
+    line = "DIAG reason=RULE_MISSING location=NONE copies=0"
+    assert sd.parse_diag(line, 9)["reason"] == "RULE_MISSING"
+    assert sd.parse_diag(line, 1)["reason"] == "CHECK_ERROR"
+    assert sd.parse_diag(line, 42)["reason"] == "CHECK_ERROR"
+
+
+# ── Per-scenario switches ───────────────────────────────────────────────────
+
+@pytest.mark.parametrize("raw,legacy,ids", [
+    (None, None, []),
+    ("9", None, [9]),
+    (" 9 , 9,", None, [9]),
+    (None, "1", [9]),       # the Scenario 3 pilot flag still works
+    ("", "true", [9]),
+    ("2,42,x,-9", None, []),  # ids without a code list are ignored
+])
+def test_enabled_scenarios(monkeypatch, raw, legacy, ids):
+    for name, value in (("SCORING_DIAGNOSTICS_SCENARIOS", raw), ("S3_DIAGNOSTICS_ENABLED", legacy)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert sd.enabled_scenarios() == ids
+    assert sd.enabled() is bool(ids)
+    assert sd.applies_to(9) is (9 in ids)
+
+
+@pytest.mark.anyio
+async def test_list_switch_records_scenario_9(monkeypatch):
+    monkeypatch.delenv("S3_DIAGNOSTICS_ENABLED", raising=False)
+    monkeypatch.setenv("SCORING_DIAGNOSTICS_SCENARIOS", "9")
+    await _verify(_pod(), _verifier("FAIL", "RULE_MISSING"))
+    assert [r["reason_code"] for r in _rows("scoring_diagnostics")] == ["RULE_MISSING"]
+    body = _get(INSTRUCTOR, "/instructor/students/alice/diagnostics").json()
+    assert body["enabled"] is True and body["enabled_scenarios"] == [9]
+
+
+@pytest.mark.anyio
+async def test_scenario_not_switched_on_records_nothing(monkeypatch):
+    # Scenario 9 on does not turn diagnostics on for another scenario's checks.
+    monkeypatch.setenv("S3_DIAGNOSTICS_ENABLED", "1")
+    await _verify(_pod(scenario_id="01"), _verifier("FAIL", "CHECK_ERROR"), scenario_id=1)
+    assert _rows("scoring_diagnostics") == []
 
 
 # ── Feature switch and scoring isolation ────────────────────────────────────
@@ -261,6 +315,12 @@ def test_retention_days(monkeypatch, raw, days):
     else:
         monkeypatch.setenv("S3_DIAGNOSTICS_RETENTION_DAYS", raw)
     assert sd.retention_days() == days
+
+
+def test_shared_retention_name_wins(monkeypatch):
+    monkeypatch.setenv("S3_DIAGNOSTICS_RETENTION_DAYS", "7")
+    monkeypatch.setenv("SCORING_DIAGNOSTICS_RETENTION_DAYS", "30")
+    assert sd.retention_days() == 30
 
 
 @pytest.mark.anyio

@@ -1,5 +1,7 @@
 # Scenario 3 check diagnostics
 
+Scenario 3 was the pilot for the shared framework in [SCORING-DIAGNOSTICS.md](SCORING-DIAGNOSTICS.md), which covers switches, storage, access and rollback for every scenario. This page keeps the Scenario 3 reason codes.
+
 Instructors get a reason when a Scenario 3 (SIEM Alert Triage, scorer id 9) artifact check fails. Students still see the generic result. Scoring rules, points, milestone history and pod teardown are unchanged.
 
 ## How it works
@@ -13,8 +15,8 @@ Instructors get a reason when a Scenario 3 (SIEM Alert Triage, scorer id 9) arti
 
    Callers read only the last line, so the token contract is the same.
 2. `SSHVerifier.verify_milestone_detailed` parses that line through `scoring_diagnostics.parse_diag`. Anything off-format is dropped, and an unknown code becomes `CHECK_ERROR`. `verify_milestone` still returns `(status, message)`, and the message is still `Check completed: FAIL`.
-3. `scoring.verify_milestone` writes the score row exactly as before. Then, only for scenario 9 and only when the feature is on, it upserts one `scoring_diagnostics` row. A database error here is logged and swallowed, so it never affects scoring.
-4. `GET /instructor/students/{student_id}/diagnostics` (instructor or admin) returns the rows. The portal shows them in the **Scenario 3 check reasons** panel on the instructor student page.
+3. `scoring.verify_milestone` writes the score row exactly as before. Then, only when scenario 9 is switched on, it upserts one `scoring_diagnostics` row. A database error here is logged and swallowed, so it never affects scoring.
+4. `GET /instructor/students/{student_id}/diagnostics` (instructor or admin) returns the rows. The portal shows them under **Scenario 3 — SIEM Alert Triage** in the **Check reasons** panel on the instructor student page.
 
 ## Reason codes
 
@@ -62,15 +64,16 @@ Each row holds the reason code, location name, copy count, student id, pod id, `
 
 | Variable | Default | Effect |
 |---|---|---|
-| `S3_DIAGNOSTICS_ENABLED` | off | `1` records diagnostics for scenario 9 |
-| `S3_DIAGNOSTICS_RETENTION_DAYS` | `14` | rows not updated for this many days are purged |
+| `SCORING_DIAGNOSTICS_SCENARIOS` | empty | list `9` to record diagnostics for scenario 9 |
+| `S3_DIAGNOSTICS_ENABLED` | off | `1` also turns on scenario 9 (the pilot's original flag, still honoured) |
+| `SCORING_DIAGNOSTICS_RETENTION_DAYS` | `14` | rows not updated for this many days are purged (falls back to `S3_DIAGNOSTICS_RETENTION_DAYS`) |
 
 The score poller purges at most once an hour, and it does so even when the flag is off.
 
 ## UAT rollout
 
 1. Deploy. The API runs migration v14 on startup. Back up `pod_mgmt.db` first.
-2. Set `S3_DIAGNOSTICS_ENABLED=1` in the API environment and restart the API.
+2. Set `SCORING_DIAGNOSTICS_SCENARIOS=9` (or the older `S3_DIAGNOSTICS_ENABLED=1`) in the API environment and restart the API.
 3. Run a few observed submissions on one pod: one passing set, then one failure per milestone (missing file, wrong agent, wrong rule, fabricated time, short report, a stale `/tmp` copy next to a correct `/home/msfadmin` file).
 4. For each one, compare the panel's reason and location with the actual file and the PASS/FAIL the student saw.
 5. Confirm that a Student account gets 403 on `/api/instructor/students/<id>/diagnostics`.
@@ -79,5 +82,5 @@ The score poller purges at most once an hour, and it does so even when the flag 
 
 ## Rollback
 
-- **Fast (diagnostics only):** unset `S3_DIAGNOSTICS_ENABLED` and restart. Nothing new is recorded, the panel hides itself, and old rows age out. This does **not** revert the artifact path order: `/home/msfadmin` before `/tmp` is in `scoring_checks.sh` and is not behind the flag. Scoring keeps the new order.
+- **Fast (diagnostics only):** remove `9` from `SCORING_DIAGNOSTICS_SCENARIOS`, unset `S3_DIAGNOSTICS_ENABLED`, and restart. Nothing new is recorded for Scenario 3 and its old rows age out. The panel hides itself once no scenario is on and no rows are kept. This does **not** revert the artifact path order: `/home/msfadmin` before `/tmp` is in `scoring_checks.sh` and is not behind the flag. Scoring keeps the new order.
 - **Code:** redeploy the last known-good release. This is the only way to restore the old `/tmp`-first path order if UAT shows a problem with it. The v14 table stays and is inert: older `migrate.apply()` skips versions it has already applied, and `milestone_verification` was never altered. Older code reads the scorer's last line only, so it is unaffected by the DIAG line. Dropping the table needs TRB approval (see `schema/README.md`).

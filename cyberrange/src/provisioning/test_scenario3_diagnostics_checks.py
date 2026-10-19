@@ -87,7 +87,7 @@ def run(tmp_path: Path, milestone: int, *, scenario: int = 9, **env_kw) -> tuple
     )
     assert res.returncode == 0, res.stderr
     lines = [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
-    return (lines[-1] if lines else ""), scoring_diagnostics.parse_diag(res.stdout), lines
+    return (lines[-1] if lines else ""), scoring_diagnostics.parse_diag(res.stdout, scenario), lines
 
 
 def check(tmp_path, milestone, content, *, token, reason, **kw):
@@ -324,7 +324,7 @@ def test_every_reason_the_script_can_print_is_allowlisted():
     script = Path(SCRIPT).read_text(encoding="utf-8")
     emitted = set(re.findall(r"echo ([A-Z][A-Z_]+[A-Z])\b", script[script.index("_s9_m1_reason()"):script.index("check_scenario_9()")]))
     emitted.discard("NONE")
-    assert emitted == scoring_diagnostics.REASON_CODES
+    assert emitted == scoring_diagnostics.REASON_CODES_BY_SCENARIO[9]
 
 
 @pytest.mark.parametrize("scenario,milestone", [(1, 1), (6, 1), (11, 2)])

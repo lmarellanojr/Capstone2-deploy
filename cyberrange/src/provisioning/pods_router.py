@@ -1021,12 +1021,12 @@ def instructor_get_student_diagnostics(
     pod_created_at: Optional[str] = Query(None, max_length=40),
     claims: dict = Depends(verify_token),
 ):
-    """Scenario 3 failure reason codes for one student (instructor/admin only).
+    """Check failure reason codes for one student (instructor/admin only).
 
     Role is checked first and rows are always scoped to the path's student_id,
     so a Student can neither read their own reasons nor another student's.
     pod_id / pod_created_at narrow to one lab. Values are allowlisted codes
-    only -- see scoring_diagnostics.REASON_CODES.
+    only -- see scoring_diagnostics.REASON_CODES_BY_SCENARIO.
     """
     auth.require_role(["instructor", "admin"], claims)
     conn = get_db_connection()
@@ -1037,6 +1037,7 @@ def instructor_get_student_diagnostics(
     return {
         "student_id": student_id,
         "enabled": scoring_diagnostics.enabled(),
+        "enabled_scenarios": scoring_diagnostics.enabled_scenarios(),
         "retention_days": scoring_diagnostics.retention_days(),
         "diagnostics": rows,
     }

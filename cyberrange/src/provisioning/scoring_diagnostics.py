@@ -1,12 +1,15 @@
-"""Scenario 3 (scorer id 9) failure diagnostics for instructors.
+"""Instructor-only failure diagnostics for scored artifact/behavior checks.
 
 scoring_checks.sh prints `DIAG reason=<CODE> location=<LOC> copies=<N>` before
-its PASS/FAIL token. This module turns that line into allowlisted values,
-keeps one current row per student + lab + milestone (schema v14), and reads
-them back for the instructor view. It never stores artifact contents, shell
-output, or exception text: anything outside the allowlists is dropped.
+its PASS/FAIL token for each scenario listed in REASON_CODES_BY_SCENARIO. This
+module turns that line into allowlisted values, keeps one current row per
+student + lab + scenario + milestone (schema v14), and reads them back for the
+instructor view. It never stores artifact contents, shell output, or exception
+text: anything outside the allowlists is dropped.
 
-Off unless S3_DIAGNOSTICS_ENABLED=1, so rollback is unsetting the flag.
+Each scenario has its own switch, so it can be enabled and rolled back alone:
+SCORING_DIAGNOSTICS_SCENARIOS is a comma list of scorer ids (e.g. "9" or "9,1").
+S3_DIAGNOSTICS_ENABLED=1 still turns on scenario 9 (the Scenario 3 pilot).
 Scoring never depends on this module -- every write here is best-effort.
 """
 from __future__ import annotations
@@ -19,24 +22,29 @@ from typing import Optional
 
 logger = logging.getLogger("provision_api")
 
-DIAGNOSTIC_SCENARIO_IDS = frozenset({9})
-
-# Keep in sync with the code list at check_scenario_9 in scoring_checks.sh.
-REASON_CODES = frozenset({
-    "ARTIFACT_MISSING",
-    "ARTIFACT_UNREADABLE",
-    "ARTIFACT_INVALID",
-    "PLACEHOLDER_OR_EXAMPLE",
-    "AGENT_MISSING",
-    "AGENT_MISMATCH",
-    "RULE_MISSING",
-    "RULE_MISMATCH",
-    "TIMESTAMP_MISSING",
-    "TIMESTAMP_NOT_MATCHED",
-    "REPORT_TOO_SHORT",
-    "REPORT_BODY_TOO_SHORT",
-    "CHECK_ERROR",
-})
+# Scorer scenario id -> the codes its check may print. Keep each set in sync
+# with the code list above that scenario's check in scoring_checks.sh.
+REASON_CODES_BY_SCENARIO: dict[int, frozenset[str]] = {
+    # Catalog Scenario 3, SIEM Alert Triage (check_scenario_9).
+    9: frozenset({
+        "ARTIFACT_MISSING",
+        "ARTIFACT_UNREADABLE",
+        "ARTIFACT_INVALID",
+        "PLACEHOLDER_OR_EXAMPLE",
+        "AGENT_MISSING",
+        "AGENT_MISMATCH",
+        "RULE_MISSING",
+        "RULE_MISMATCH",
+        "TIMESTAMP_MISSING",
+        "TIMESTAMP_NOT_MATCHED",
+        "REPORT_TOO_SHORT",
+        "REPORT_BODY_TOO_SHORT",
+        "CHECK_ERROR",
+    }),
+}
+DIAGNOSTIC_SCENARIO_IDS = frozenset(REASON_CODES_BY_SCENARIO)
+# Every code any scenario may print (for "never shown to students" checks).
+REASON_CODES = frozenset().union(*REASON_CODES_BY_SCENARIO.values())
 LOCATION_CODES = frozenset({"HOME_MSFADMIN", "HOME_STUDENT", "TMP", "NONE"})
 STATUSES = frozenset({"PASS", "FAIL", "ERROR", "UNKNOWN"})
 
@@ -44,27 +52,52 @@ _DIAG_RE = re.compile(r"^DIAG reason=([A-Z_]+) location=([A-Z_]+) copies=([0-3])
 _MAX_COPIES = 3
 
 
+def _truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+
+def enabled_scenarios() -> list[int]:
+    """Scorer ids whose diagnostics are switched on, sorted. Ids without a
+    reason-code list are ignored, so a typo can't enable an unmapped check."""
+    ids: set[int] = set()
+    for part in os.getenv("SCORING_DIAGNOSTICS_SCENARIOS", "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    if _truthy("S3_DIAGNOSTICS_ENABLED"):
+        ids.add(9)
+    return sorted(ids & DIAGNOSTIC_SCENARIO_IDS)
+
+
 def enabled() -> bool:
-    return os.getenv("S3_DIAGNOSTICS_ENABLED", "").strip().lower() in ("1", "true", "yes")
+    return bool(enabled_scenarios())
 
 
 def retention_days() -> int:
+    raw = os.getenv("SCORING_DIAGNOSTICS_RETENTION_DAYS") or os.getenv("S3_DIAGNOSTICS_RETENTION_DAYS", "14")
     try:
-        days = int(os.getenv("S3_DIAGNOSTICS_RETENTION_DAYS", "14"))
+        days = int(raw)
     except ValueError:
         return 14
     return days if days > 0 else 14
 
 
 def applies_to(scenario_id: int) -> bool:
-    return enabled() and scenario_id in DIAGNOSTIC_SCENARIO_IDS
+    return scenario_id in enabled_scenarios()
 
 
-def parse_diag(stdout: str) -> Optional[dict]:
+def _codes_for(scenario_id) -> frozenset[str]:
+    try:
+        return REASON_CODES_BY_SCENARIO.get(int(scenario_id), frozenset())
+    except (TypeError, ValueError):
+        return frozenset()
+
+
+def parse_diag(stdout: str, scenario_id: int) -> Optional[dict]:
     """The script's DIAG line as {reason, location, copies}, or None.
 
-    reason is None for a pass ("NONE"). An unrecognised code becomes
-    CHECK_ERROR rather than being passed through.
+    reason is None for a pass ("NONE"). A code outside this scenario's list
+    becomes CHECK_ERROR rather than being passed through.
     """
     for raw in reversed((stdout or "").splitlines()):
         m = _DIAG_RE.match(raw.strip())
@@ -73,7 +106,7 @@ def parse_diag(stdout: str) -> Optional[dict]:
         reason, location, copies = m.group(1), m.group(2), int(m.group(3))
         if reason == "NONE":
             reason = None
-        elif reason not in REASON_CODES:
+        elif reason not in _codes_for(scenario_id):
             reason = "CHECK_ERROR"
         if location not in LOCATION_CODES:
             location = "NONE"
@@ -106,7 +139,7 @@ def record(
     status: str,
     diag: Optional[dict],
 ) -> None:
-    """Upsert this lab's current diagnostic for one milestone.
+    """Upsert this lab's current diagnostic for one scenario milestone.
 
     A FAIL keeps its reason; a PASS replaces an earlier failure (reason NULL).
     ERROR from the verifier (exec/timeout) is CHECK_ERROR. The caller commits.
@@ -115,7 +148,7 @@ def record(
         status = "ERROR"
     if status == "PASS":
         reason = None
-    elif diag and diag.get("reason") in REASON_CODES:
+    elif diag and diag.get("reason") in _codes_for(scenario_id):
         reason = diag["reason"]
     else:
         reason = "CHECK_ERROR"
@@ -206,7 +239,7 @@ def list_for_student(
     out = []
     for r in conn.execute(sql, args).fetchall():
         d = dict(r)
-        if d["reason_code"] is not None and d["reason_code"] not in REASON_CODES:
+        if d["reason_code"] is not None and d["reason_code"] not in _codes_for(d["scenario_id"]):
             d["reason_code"] = "CHECK_ERROR"
         if d["location"] not in LOCATION_CODES:
             d["location"] = None

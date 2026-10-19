@@ -75,8 +75,8 @@ class SSHVerifier:
     async def verify_milestone_detailed(
         self, student_id: str, scenario_id: int, milestone_id: int
     ) -> Tuple[Literal["PASS", "FAIL", "UNKNOWN", "ERROR"], str, Optional[dict]]:
-        """verify_milestone plus the script's parsed DIAG line (Scenario 9 only
-        prints one; None otherwise). The message never carries the reason, so
+        """verify_milestone plus the script's parsed DIAG line (None for a
+        scenario that prints none -- see scoring_diagnostics). The message never carries the reason, so
         student-facing responses stay generic.
 
         Run scoring_checks.sh for (scenario, milestone) inside the target container.
@@ -101,7 +101,7 @@ class SSHVerifier:
 
         # Control-plane exec (runs as root in-container, minimal env). The script sets
         # its own behavior; stdout's last line is the result token (log() goes to a file).
-        # Scenario 9 also prints one allowlisted DIAG line before it.
+        # Scenarios with diagnostics also print one allowlisted DIAG line before it.
         cmd = ["lxc", "exec", container, "--", "bash", "-s", str(scenario_id), str(milestone_id)]
 
         try:
@@ -128,7 +128,7 @@ class SSHVerifier:
             lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
             token = lines[-1] if lines else ""
             if token in ("PASS", "FAIL", "UNKNOWN"):
-                return token, f"Check completed: {token}", scoring_diagnostics.parse_diag(result.stdout)
+                return token, f"Check completed: {token}", scoring_diagnostics.parse_diag(result.stdout, scenario_id)
             return "ERROR", f"Unexpected verifier output: {token or '(empty)'} | stderr: {result.stderr.strip()[:200]}", None
 
         except asyncio.TimeoutError:

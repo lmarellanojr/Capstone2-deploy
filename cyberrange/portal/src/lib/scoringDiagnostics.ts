@@ -1,13 +1,23 @@
-// Instructor-facing wording for Scenario 3 check failure reasons. Codes come
-// from the backend allowlist (scoring_diagnostics.REASON_CODES); anything else
-// is shown as a check error rather than echoed.
+// Instructor-facing wording for check failure reasons, per scorer scenario id.
+// Codes come from the backend allowlist (scoring_diagnostics.
+// REASON_CODES_BY_SCENARIO); anything else is shown as a check error rather
+// than echoed.
 
 export interface ReasonCopy {
   label: string;
   detail: string;
 }
 
-export const REASON_COPY: Record<string, ReasonCopy> = {
+export interface ScenarioDiagnostics {
+  /** Catalog title, e.g. "Scenario 3 — SIEM Alert Triage". */
+  title: string;
+  milestones: Record<number, string>;
+  reasons: Record<string, ReasonCopy>;
+  /** Artifact checks: show where the file was read and duplicate copies. */
+  showsLocation: boolean;
+}
+
+export const SCENARIO3_REASON_COPY: Record<string, ReasonCopy> = {
   ARTIFACT_MISSING: {
     label: "File missing",
     detail: "No artifact with the expected name in /home/msfadmin, /home/student, or /tmp on meta.",
@@ -70,15 +80,33 @@ export const LOCATION_LABELS: Record<string, string> = {
   NONE: "—",
 };
 
-export const SCENARIO3_MILESTONES: Record<number, string> = {
-  1: "1: Triage record",
-  2: "2: Timeline",
-  3: "3: Incident report",
+const CHECK_ERROR_COPY: ReasonCopy = SCENARIO3_REASON_COPY.CHECK_ERROR;
+
+/** Keyed by scorer scenario id (scoring_checks.sh), in display order. */
+export const DIAGNOSTIC_SCENARIOS: Record<number, ScenarioDiagnostics> = {
+  9: {
+    title: "Scenario 3 — SIEM Alert Triage",
+    milestones: {
+      1: "1: Triage record",
+      2: "2: Timeline",
+      3: "3: Incident report",
+    },
+    reasons: SCENARIO3_REASON_COPY,
+    showsLocation: true,
+  },
 };
 
-export function reasonCopy(code: string | null): ReasonCopy | null {
+export function scenarioDiagnostics(scenarioId: number): ScenarioDiagnostics | null {
+  return DIAGNOSTIC_SCENARIOS[scenarioId] ?? null;
+}
+
+export function reasonCopy(scenarioId: number, code: string | null): ReasonCopy | null {
   if (code === null) return null;
-  return REASON_COPY[code] ?? REASON_COPY.CHECK_ERROR;
+  return scenarioDiagnostics(scenarioId)?.reasons[code] ?? CHECK_ERROR_COPY;
+}
+
+export function milestoneLabel(scenarioId: number, milestoneId: number): string {
+  return scenarioDiagnostics(scenarioId)?.milestones[milestoneId] ?? `Milestone ${milestoneId}`;
 }
 
 export function locationLabel(location: string | null): string {
