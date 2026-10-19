@@ -72,6 +72,8 @@ jest.mock('@/hooks/useScenarioMilestones', () => ({
     doneCount: 0,
     progressPct: 0,
     nextMilestoneId: 1,
+    lastScoredId: null,
+    clearLastScored: jest.fn(),
     handleVerify: jest.fn(),
     onFlagPassed: jest.fn(),
   })),
@@ -105,8 +107,15 @@ jest.mock('@/components/scenario/DvwaView', () => ({
 }))
 
 jest.mock('@/components/scenario/ExercisePanel', () => ({
-  ExercisePanel: ({ currentTask }: { currentTask: { id: number } }) => (
-    <div data-testid="mock-exercise-panel" data-task-id={currentTask.id}>Exercise Panel</div>
+  ExercisePanel: ({ currentTask, startHere, justScored }: { currentTask: { id: number }; startHere?: boolean; justScored?: { id: number } | null }) => (
+    <div
+      data-testid="mock-exercise-panel"
+      data-task-id={currentTask.id}
+      data-start-here={String(!!startHere)}
+      data-just-scored={justScored?.id ?? ''}
+    >
+      Exercise Panel
+    </div>
   ),
 }))
 
@@ -179,5 +188,32 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
       requiredMilestoneIds: [1, 2, 3],
     }))
     expect(screen.getByTestId('mock-siem-view')).toBeInTheDocument()
+  })
+
+  it('marks the first task "Start here" on a fresh attempt and passes the just-scored step', () => {
+    const useMilestonesMock = jest.requireMock('@/hooks/useScenarioMilestones').useScenarioMilestones as jest.Mock
+    const base = useMilestonesMock.getMockImplementation()!()
+
+    const { unmount } = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'true')
+    expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-just-scored', '')
+    unmount()
+
+    const original = useMilestonesMock.getMockImplementation()!
+    useMilestonesMock.mockImplementation(() => ({
+      ...base,
+      completed: new Set([1]),
+      doneCount: 1,
+      nextMilestoneId: 2,
+      lastScoredId: 1,
+    }))
+    try {
+      render(<ScenarioDetailPage params={{ id: '01' }} />)
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-task-id', '2')
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'false')
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-just-scored', '1')
+    } finally {
+      useMilestonesMock.mockImplementation(original)
+    }
   })
 })

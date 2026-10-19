@@ -71,6 +71,8 @@ export default function ScenarioDetailPage({ params }: PageProps) {
     doneCount,
     progressPct,
     nextMilestoneId,
+    lastScoredId,
+    clearLastScored,
     handleVerify,
     onFlagPassed,
   } = useScenarioMilestones(
@@ -121,7 +123,8 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   const handleSelectTask = useCallback((taskId: number) => {
     if (taskId !== 0) setPreferPrep(false)
     setSelectedTaskId(taskId)
-  }, [])
+    clearLastScored()
+  }, [clearLastScored])
 
   // Current active task (SIEM starts on unscored prep when nothing scored yet)
   const currentTaskId =
@@ -134,6 +137,11 @@ export default function ScenarioDetailPage({ params }: PageProps) {
     presentationTasks.findIndex((m) => m.id === currentTaskId)
   )
   const currentMilestone = presentationTasks[currentTaskIndex]
+  // "Start here" only on a fresh attempt: nothing scored yet and still on the
+  // first task (SIEM prep counts as the first task).
+  const isStartHere = !milestonesLoading && doneCount === 0 && currentTaskIndex === 0
+  const justScoredMilestone =
+    lastScoredId != null ? scenario?.milestones.find((m) => m.id === lastScoredId) ?? null : null
 
   useEffect(() => {
     if (phase !== 'idle' || !scenario || autoOpened.current) return
@@ -320,6 +328,9 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                       hasLatestReview={!!latestRequest(currentMilestone.id)}
                       latestReviewStatus={latestRequest(currentMilestone.id)?.case?.status}
                       onOpenScoringInfo={() => setGuideExtra('scoring')}
+                      startHere={isStartHere}
+                      justScored={justScoredMilestone}
+                      onDismissJustScored={clearLastScored}
                     />
                   </div>
                 )}

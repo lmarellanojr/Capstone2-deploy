@@ -190,4 +190,51 @@ describe('useScenarioMilestones', () => {
     expect(scen3.prepTask?.id).toBe(0)
     expect(scen3.milestones.map((milestone) => milestone.id)).toEqual([1, 2, 3])
   })
+
+  it('reports only steps scored during this visit as lastScoredId, never the initial load', async () => {
+    ;(provisioning.getMilestones as jest.Mock).mockResolvedValue({
+      milestones: [{ scenario_id: 1, milestone_id: 1, status: 'PASS' }],
+      manual_check_locked: [],
+    })
+    const { result } = renderHook(() => useScenarioMilestones(42, '01', scen1.milestones))
+    await act(async () => {})
+    expect(result.current.completed.has(1)).toBe(true)
+    expect(result.current.lastScoredId).toBeNull()
+
+    ;(provisioning.getMilestones as jest.Mock).mockResolvedValueOnce({
+      milestones: [
+        { scenario_id: 1, milestone_id: 1, status: 'PASS' },
+        { scenario_id: 1, milestone_id: 2, status: 'PASS' },
+      ],
+      manual_check_locked: [],
+    })
+    await act(async () => {
+      jest.advanceTimersByTime(3000)
+    })
+    expect(result.current.lastScoredId).toBe(2)
+
+    act(() => result.current.clearLastScored())
+    expect(result.current.lastScoredId).toBeNull()
+
+    act(() => result.current.onFlagPassed(3))
+    expect(result.current.lastScoredId).toBe(3)
+  })
+
+  it('sets lastScoredId on a passing Manual Check but not on a failing one', async () => {
+    ;(provisioning.getMilestones as jest.Mock).mockResolvedValue({ milestones: [], manual_check_locked: [] })
+    ;(provisioning.verifyMilestone as jest.Mock).mockResolvedValueOnce({ status: 'FAIL' })
+    const { result } = renderHook(() => useScenarioMilestones(42, '01', scen1.milestones))
+    await act(async () => {})
+
+    await act(async () => {
+      await result.current.handleVerify(1)
+    })
+    expect(result.current.lastScoredId).toBeNull()
+
+    ;(provisioning.verifyMilestone as jest.Mock).mockResolvedValueOnce({ status: 'PASS' })
+    await act(async () => {
+      await result.current.handleVerify(2)
+    })
+    expect(result.current.lastScoredId).toBe(2)
+  })
 })
