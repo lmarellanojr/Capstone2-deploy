@@ -25,6 +25,17 @@ logger = logging.getLogger("provision_api")
 # Scorer scenario id -> the codes its check may print. Keep each set in sync
 # with the code list above that scenario's check in scoring_checks.sh.
 REASON_CODES_BY_SCENARIO: dict[int, frozenset[str]] = {
+    # Catalog Scenario 1, Network Reconnaissance & Exploitation (check_scenario_1).
+    1: frozenset({
+        "NO_POD_ADDRESS",
+        "NO_SUBNET_ROUTE",
+        "COMMAND_NOT_FOUND",
+        "COMMAND_NOT_MATCHED",
+        "MSF_NOT_RUNNING",
+        "SESSION_NOT_OPENED",
+        "SESSION_NOT_LIVE",
+        "CHECK_ERROR",
+    }),
     # Catalog Scenario 3, SIEM Alert Triage (check_scenario_9).
     9: frozenset({
         "ARTIFACT_MISSING",

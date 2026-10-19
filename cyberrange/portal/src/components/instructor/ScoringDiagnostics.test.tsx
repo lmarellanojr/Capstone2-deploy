@@ -101,6 +101,25 @@ it("has copy for every backend reason code", () => {
   expect(Object.keys(DIAGNOSTIC_SCENARIOS[9].reasons).sort()).toEqual(codes.sort())
 })
 
+it("shows Scenario 1 reasons without a file column", async () => {
+  await renderWith({
+    student_id: "alice", enabled: true, enabled_scenarios: [1], retention_days: 14,
+    diagnostics: [{ ...ROW, scenario_id: 1, milestone_id: 4, reason_code: "SESSION_NOT_LIVE", location: "NONE", copies: 0 }],
+  })
+  expect(screen.getByText("Scenario 1 — Network Reconnaissance & Exploitation")).toBeInTheDocument()
+  expect(screen.getByText("4: Tomcat manager exploit")).toBeInTheDocument()
+  expect(screen.getByText("Session no longer live")).toBeInTheDocument()
+  expect(screen.queryByText("File read from")).not.toBeInTheDocument()
+})
+
+it("has copy for every Scenario 1 backend reason code", () => {
+  const codes = [
+    "NO_POD_ADDRESS", "NO_SUBNET_ROUTE", "COMMAND_NOT_FOUND", "COMMAND_NOT_MATCHED",
+    "MSF_NOT_RUNNING", "SESSION_NOT_OPENED", "SESSION_NOT_LIVE", "CHECK_ERROR",
+  ]
+  expect(Object.keys(DIAGNOSTIC_SCENARIOS[1].reasons).sort()).toEqual(codes.sort())
+})
+
 it("groups rows by scenario and labels an unmapped scenario without trusting its code", async () => {
   await renderWith({
     student_id: "alice", enabled: true, retention_days: 14,

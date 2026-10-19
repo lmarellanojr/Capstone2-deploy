@@ -80,10 +80,57 @@ export const LOCATION_LABELS: Record<string, string> = {
   NONE: "—",
 };
 
+export const SCENARIO1_REASON_COPY: Record<string, ReasonCopy> = {
+  NO_POD_ADDRESS: {
+    label: "Kali has no lab address",
+    detail: "Kali's eth0 had no IPv4 address, so the check could not tell which subnet is this pod's. Not the student's fault.",
+  },
+  NO_SUBNET_ROUTE: {
+    label: "No route to the lab network",
+    detail: "Kali currently has no route to a 10.0.N.0/24 pod subnet, so a scan could not have reached the targets. Check the lab network.",
+  },
+  COMMAND_NOT_FOUND: {
+    label: "No nmap command found",
+    detail: "No nmap command in Kali's shell history or command log.",
+  },
+  COMMAND_NOT_MATCHED: {
+    label: "nmap didn't match this task",
+    detail:
+      "nmap was run, but not as this task needs against this pod: 1 scans this pod's .0/24 network; 2 uses -p or -F on .20 or .30; 3 uses -sV on .20 or .30.",
+  },
+  MSF_NOT_RUNNING: {
+    label: "Metasploit not running",
+    detail: "The lab terminal is not a single pane running msfconsole (it was closed, exited to the shell, or split).",
+  },
+  SESSION_NOT_OPENED: {
+    label: "No Tomcat session opened",
+    detail: "msfconsole is running, but its output shows no tomcat_mgr_deploy run that opened a session to this pod's meta (.20).",
+  },
+  SESSION_NOT_LIVE: {
+    label: "Session no longer live",
+    detail: "A session to meta was opened, but msfconsole no longer holds a connection to it. The session was closed or dropped.",
+  },
+  CHECK_ERROR: {
+    label: "Check error",
+    detail: "The check could not run or read the lab state (missing tool, unexpected output). Not the student's fault.",
+  },
+};
+
 const CHECK_ERROR_COPY: ReasonCopy = SCENARIO3_REASON_COPY.CHECK_ERROR;
 
 /** Keyed by scorer scenario id (scoring_checks.sh), in display order. */
 export const DIAGNOSTIC_SCENARIOS: Record<number, ScenarioDiagnostics> = {
+  1: {
+    title: "Scenario 1 — Network Reconnaissance & Exploitation",
+    milestones: {
+      1: "1: Host discovery",
+      2: "2: Port enumeration",
+      3: "3: Service versions",
+      4: "4: Tomcat manager exploit",
+    },
+    reasons: SCENARIO1_REASON_COPY,
+    showsLocation: false,
+  },
   9: {
     title: "Scenario 3 — SIEM Alert Triage",
     milestones: {
