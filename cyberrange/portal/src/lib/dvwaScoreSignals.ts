@@ -134,7 +134,13 @@ export function browserNearMiss(input: {
     if (/from\s+users/i.test(id)) attempt = { milestone: 3, reason: 'UNION_NO_HASH' }
     else if (/(information_schema|database\s*\()/i.test(id)) attempt = { milestone: 2, reason: 'UNION_NO_METADATA' }
   } else if (/or\s+['"]?1['"]?\s*=\s*['"]?1/i.test(id)) attempt = { milestone: 1, reason: 'PAYLOAD_NO_ROWS' }
-  else if (id.includes("'")) attempt = { milestone: 1, reason: 'QUOTE_NO_ERROR' }
+  else if (id.includes("'")) {
+    // Another tautology (`' or 'a'='a`, `' OR true#`, `' || 1#`) or a page that
+    // listed several users may have worked in a way the detector doesn't
+    // recognise, so only a lone quote with one row or none is a near-miss.
+    const rows = (input.responseText.match(/First name:/gi) || []).length
+    if (rows < 2 && !/\bor\b|\|\|/i.test(id)) attempt = { milestone: 1, reason: 'QUOTE_NO_ERROR' }
+  }
   if (!attempt) return null
   return notLow ? { milestone: attempt.milestone, reason: 'SECURITY_NOT_LOW' } : attempt
 }

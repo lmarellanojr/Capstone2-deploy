@@ -156,6 +156,24 @@ def test_near_miss_after_a_pass_keeps_the_pass(on, pod):
     assert (row["status"], row["reason_code"]) == ("PASS", None)
 
 
+def test_near_miss_racing_a_pass_keeps_the_pass(on, pod, monkeypatch):
+    # The proxy doesn't await the near-miss POST, so a pass can be recorded
+    # between the endpoint's "already passed?" read and its write.
+    import pods_router
+
+    real = pods_router._milestone_passed_on_pod
+
+    def pass_lands_in_between(conn, pod_row, milestone_id):
+        passed = real(conn, pod_row, milestone_id)
+        assert _post("/internal/browser-score").status_code == 200
+        return passed
+
+    monkeypatch.setattr(pods_router, "_milestone_passed_on_pod", pass_lands_in_between)
+    _post(reason="QUOTE_NO_ERROR")
+    (row,) = _diag_rows()
+    assert (row["status"], row["reason_code"]) == ("PASS", None)
+
+
 def test_each_milestone_has_its_own_row(on, pod):
     _post(milestone_id=1, reason="QUOTE_NO_ERROR")
     _post(milestone_id=4, reason="XSS_NOT_REFLECTED")

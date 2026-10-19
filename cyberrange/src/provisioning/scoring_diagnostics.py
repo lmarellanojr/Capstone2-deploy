@@ -155,11 +155,14 @@ def record(
     milestone_id: int,
     status: str,
     diag: Optional[dict],
+    keep_pass: bool = False,
 ) -> None:
     """Upsert this lab's current diagnostic for one scenario milestone.
 
     A FAIL keeps its reason; a PASS replaces an earlier failure (reason NULL).
     ERROR from the verifier (exec/timeout) is CHECK_ERROR. The caller commits.
+    keep_pass: leave an existing PASS row alone, decided in the same statement
+    as the write (a near-miss that races a browser pass must not overwrite it).
     """
     if status not in STATUSES:
         status = "ERROR"
@@ -187,7 +190,8 @@ def record(
         " status=excluded.status, reason_code=excluded.reason_code, "
         " location=excluded.location, copies=excluded.copies, "
         " lab_session_id=COALESCE(scoring_diagnostics.lab_session_id, excluded.lab_session_id), "
-        " check_count=scoring_diagnostics.check_count + 1, last_seen_at=CURRENT_TIMESTAMP",
+        " check_count=scoring_diagnostics.check_count + 1, last_seen_at=CURRENT_TIMESTAMP"
+        + (" WHERE scoring_diagnostics.status <> 'PASS'" if keep_pass else ""),
         (
             student_id,
             pod_id,
@@ -203,7 +207,9 @@ def record(
     )
 
 
-def record_safely(pod: dict, scenario_id: int, milestone_id: int, status: str, diag: Optional[dict]) -> None:
+def record_safely(
+    pod: dict, scenario_id: int, milestone_id: int, status: str, diag: Optional[dict], keep_pass: bool = False
+) -> None:
     """record() on its own connection; logs and swallows any error so a
     diagnostics problem (e.g. v14 not applied, a malformed pod row) can never
     affect scoring or the Verify response."""
@@ -213,7 +219,7 @@ def record_safely(pod: dict, scenario_id: int, milestone_id: int, status: str, d
         conn = get_db_connection()
         try:
             with conn:
-                record(conn, pod, scenario_id, milestone_id, status, diag)
+                record(conn, pod, scenario_id, milestone_id, status, diag, keep_pass=keep_pass)
         finally:
             conn.close()
     except Exception as e:  # runs after the score commit; never raise into scoring

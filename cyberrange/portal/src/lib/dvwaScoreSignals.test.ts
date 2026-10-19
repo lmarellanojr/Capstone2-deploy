@@ -204,6 +204,12 @@ describe('browserNearMiss', () => {
     ['another DVWA page', { path: '/vulnerabilities/exec/', search: "?id=1'" }],
     ['a plain XSS name', { path: xssr, search: '?name=alice' }],
     ['a placeholder XSS name', { path: xssr, search: '?name=%3Cscript%3E%3Csession_id%3E' }],
+    // Tautologies the detector has no rule for may have worked: not QUOTE_NO_ERROR.
+    ["a working ' or 'a'='a", { search: "?id=1'+or+'a'%3D'a'%23", responseText: page(twoUsers) }],
+    ["%' or '0'='0 listing every user", { search: "?id=%25'+or+'0'%3D'0", responseText: page(twoUsers) }],
+    ["an ' OR true payload", { search: "?id=1'+OR+true%23" }],
+    ["an ' || payload", { search: "?id=1'+||+1%23" }],
+    ['a quote whose page listed several users', { search: "?id=1'%23", responseText: page(twoUsers) }],
   ])('stays generic for %s', (_label, over) => {
     expect(miss(over as Partial<Input>)).toBeNull()
   })

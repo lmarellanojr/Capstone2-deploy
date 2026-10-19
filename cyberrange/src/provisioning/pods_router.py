@@ -165,7 +165,9 @@ def browser_diagnostic(
     if passed:
         return {"recorded": False}
     diag = {"reason": body.reason, "location": "NONE", "copies": 0}
-    scoring_diagnostics.record_safely(pod, 6, body.milestone_id, "FAIL", diag)
+    # keep_pass: a browser pass recorded between the check above and this write
+    # (the proxy doesn't await this call) must win.
+    scoring_diagnostics.record_safely(pod, 6, body.milestone_id, "FAIL", diag, keep_pass=True)
     return {"recorded": True}
 
 

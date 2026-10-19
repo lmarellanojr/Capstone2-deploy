@@ -25,13 +25,13 @@ A request that doesn't pass is ignored, and almost every page view doesn't pass.
 |---|---|---|
 | `SECURITY_NOT_LOW` | 1–4 | the request was an attempt, and DVWA's `security` cookie said medium, high or impossible. Checked first. If the cookie is absent, the level is not guessed |
 | `PAYLOAD_NO_ROWS` | 1 | an `OR 1=1` payload, but the page listed fewer than two users |
-| `QUOTE_NO_ERROR` | 1 | an id with a quote (and no `OR 1=1` or `UNION`), but the page showed no SQL syntax error |
+| `QUOTE_NO_ERROR` | 1 | an id with a quote and no `or`, `\|\|` or `UNION`, and the page showed no SQL syntax error and at most one user |
 | `UNION_NO_METADATA` | 2 | `UNION SELECT` on `information_schema`/`database()`, but no result cell was `information_schema` or `dvwa` |
 | `UNION_NO_HASH` | 3 | `UNION SELECT … FROM users`, but no result cell was a 32-character hash |
 | `XSS_NOT_REFLECTED` | 4 | a `name` containing `<script`, but the page did not contain `Hello <script` |
 | `CHECK_ERROR` | 1–4 | the panel's fallback for an unknown stored code. The proxy never sends it |
 
-These stay generic (nothing is sent): a plain `id` or `name`, a guide placeholder (`<session_id>`, `<admin_hash_here>`), a `UNION` on another table, other DVWA pages, and any response other than HTTP 200.
+These stay generic (nothing is sent): a plain `id` or `name`, a guide placeholder (`<session_id>`, `<admin_hash_here>`), a `UNION` on another table, a tautology the detector has no rule for (`' or 'a'='a`, `' OR true#`, `' || 1#`) or any quoted id whose page listed several users (it may have worked), other DVWA pages, and any response other than HTTP 200.
 
 Each code says what the response lacked. None says why, or how to fix it.
 
@@ -45,6 +45,6 @@ Each code says what the response lacked. None says why, or how to fix it.
 ## Rollout
 
 1. Enable only after the Scenario 3 pilot has been reviewed: add `6` to `SCORING_DIAGNOSTICS_SCENARIOS` (e.g. `9,6`) and restart the API. The portal needs no change beyond this release. It already has `BROWSER_SCORE_SECRET`.
-2. On one pod, in the browser: `1' OR '1'='1` with security set to medium (`SECURITY_NOT_LOW`); then, on Low, a `UNION … FROM users` that selects `first_name` instead of `password` (`UNION_NO_HASH`); then the real M1 payload, and check that the M1 row turns to PASS and a later bad M1 payload does not change it.
+2. On one pod, in the browser: Reflected XSS `<script>alert(1)</script>` with security set to medium (DVWA medium strips `<script>`, so this gives M4 `SECURITY_NOT_LOW`). Don't use a SQLi payload on medium for this: there `1' OR '1'='1` returns a SQL syntax error, and that scores M1. Then, on Low, a `UNION … FROM users` that selects `first_name` instead of `password` (`UNION_NO_HASH`). Then the real M1 payload: check that the M1 row turns to PASS, and that a later lone `1'` that shows no error doesn't change it.
 3. Compare each reason in the instructor panel with what was sent, and confirm that the page and the PASS/FAIL the student saw are unchanged.
 4. Roll back by removing `6` from the list and restarting. The proxy keeps posting, and the API stores nothing.
