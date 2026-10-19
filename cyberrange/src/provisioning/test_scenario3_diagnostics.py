@@ -325,6 +325,19 @@ def test_shared_retention_name_wins(monkeypatch):
     assert sd.retention_days() == 30
 
 
+@pytest.mark.parametrize("shared,legacy,days", [
+    ("abc", "7", 7),     # a bad shared value falls back to the pilot's, not to 14
+    ("0", "7", 7),
+    ("-3", "7", 7),
+    ("abc", "junk", 14),
+    ("", "7", 7),
+])
+def test_bad_shared_retention_falls_back_to_the_pilots(monkeypatch, shared, legacy, days):
+    monkeypatch.setenv("SCORING_DIAGNOSTICS_RETENTION_DAYS", shared)
+    monkeypatch.setenv("S3_DIAGNOSTICS_RETENTION_DAYS", legacy)
+    assert sd.retention_days() == days
+
+
 @pytest.mark.anyio
 async def test_poller_purges_even_when_disabled(monkeypatch, enabled):
     import score_poller

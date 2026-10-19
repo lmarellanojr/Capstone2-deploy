@@ -42,7 +42,7 @@ One row per student + pod slot + `pod_created_at` + scenario + milestone, so rep
 |---|---|---|
 | `SCORING_DIAGNOSTICS_SCENARIOS` | empty | comma list of scorer ids to record, e.g. `9` or `9,1`. Ids with no reviewed code list are ignored |
 | `S3_DIAGNOSTICS_ENABLED` | off | `1` also turns on `9` (the pilot's flag, still honoured) |
-| `SCORING_DIAGNOSTICS_RETENTION_DAYS` | `14` | rows not updated for this many days are purged. Falls back to `S3_DIAGNOSTICS_RETENTION_DAYS` |
+| `SCORING_DIAGNOSTICS_RETENTION_DAYS` | `14` | rows not updated for this many days are purged. If unset or not a positive integer, `S3_DIAGNOSTICS_RETENTION_DAYS` is used, then 14 |
 
 The score poller purges at most once an hour, even with every scenario switched off. The API response carries `enabled_scenarios` so the panel and UAT checks can see what is on.
 
