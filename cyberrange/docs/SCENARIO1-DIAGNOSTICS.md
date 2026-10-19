@@ -21,7 +21,7 @@ M5 (flag) is scored by flag submission, not by this script, and has no reasons.
 |---|---|---|
 | `NO_POD_ADDRESS` | 1–4 | eth0 had no IPv4 when scoring ran, so the check could not tell which subnet is this pod's |
 | `NO_SUBNET_ROUTE` | 1–3 | no route to a pod subnet when scoring ran. It is checked at verify time, not when the scan ran, so it says nothing about whether the scan reached its targets |
-| `COMMAND_NOT_FOUND` | 1–3 | no `nmap` command with an argument in shell history or the snoopy log. `man nmap`, `which nmap`, `apt install nmap` and `zenmap` don't count |
+| `COMMAND_NOT_FOUND` | 1–3 | no `nmap` run where a command starts (line start, after `;` `&` `\|`, or snoopy's `]: `; optionally behind `sudo` or a path) with an argument. `man nmap \| less`, `sudo apt install nmap -y`, `which nmap` and `zenmap` don't count |
 | `COMMAND_NOT_MATCHED` | 1–3 | an `nmap` command with arguments was run, but none matched this milestone's flags and this pod's target |
 | `MSF_NOT_RUNNING` | 4 | no single `lab` pane, or that pane isn't running msfconsole |
 | `SESSION_NOT_OPENED` | 4 | msfconsole is running, but its output shows no `tomcat_mgr_deploy` session to this pod's meta |

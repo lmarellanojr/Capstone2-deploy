@@ -114,7 +114,12 @@ CASES = [
     # Lines that only mention nmap are not a scan.
     ("m1-only-mentions-nmap", 1, dict(history="man nmap\nwhich nmap\nsudo apt install nmap\nzenmap\nnmap\n"),
      "COMMAND_NOT_FOUND"),
+    # ...including mid-line mentions that have an argument after them.
+    ("m1-mid-line-nmap", 1, dict(history="sudo apt install nmap -y\nsudo apt install nmap ncat\n"
+                                         "man nmap | less\nhistory | grep nmap -i\n"), "COMMAND_NOT_FOUND"),
     ("m1-sudo-nmap-other-pod", 1, dict(history="sudo nmap -sn 10.0.55.0/24\n"), "COMMAND_NOT_MATCHED"),
+    ("m1-indented-piped-nmap", 1, dict(history="  ping -c1 10.0.55.1 && nmap -sn 10.0.55.0/24\n"),
+     "COMMAND_NOT_MATCHED"),
     ("m1-other-pod", 1, dict(history="nmap -sn 10.0.55.0/24\n"), "COMMAND_NOT_MATCHED"),
     ("m1-wrong-prefix-len", 1, dict(history="nmap -sn 10.0.51.1/20\n"), "COMMAND_NOT_MATCHED"),
     ("m1-no-route", 1, dict(history="nmap -sn 10.0.51.0/24\n", route=False), "NO_SUBNET_ROUTE"),
@@ -174,6 +179,29 @@ def test_reason_and_token(tmp_path, milestone, kwargs, reason):
     assert diag == {"reason": reason, "location": "NONE", "copies": 0}, lines
     # Only the DIAG line and the token: no commands, addresses or pane text.
     assert len(lines) == 2 and DIAG_LINE.match(lines[0]), lines
+
+
+_SESSION_PASS = "            S1_SESSION_REASON=NONE\n            return 0\n"
+
+
+def _doctored(tmp_path: Path, new: str) -> str:
+    text = Path(SCRIPT).read_text()
+    assert text.count(_SESSION_PASS) == 1
+    path = tmp_path / "doctored_scoring_checks.sh"
+    _write(path, text.replace(_SESSION_PASS, new))
+    return str(path)
+
+
+@pytest.mark.parametrize("new,token,reason", [
+    # A future edit that returns 0 without setting NONE still passes...
+    ("            return 0\n", "PASS", None),
+    # ...and a path that sets NONE but returns 1 fails, labelled CHECK_ERROR.
+    ("            S1_SESSION_REASON=NONE\n            return 1\n", "FAIL", "CHECK_ERROR"),
+])
+def test_m4_token_comes_from_the_session_check_not_the_label(tmp_path, new, token, reason):
+    got, diag, lines = run(tmp_path, 4, m4=_m4(), script=_doctored(tmp_path, new))
+    assert got == token, lines
+    assert diag == {"reason": reason, "location": "NONE", "copies": 0}, lines
 
 
 _HOST_HAS_IP = shutil.which("ip") is not None

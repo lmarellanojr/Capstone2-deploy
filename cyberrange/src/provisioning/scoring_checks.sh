@@ -230,10 +230,12 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 # names the first one that fails. PASS is printed only for NONE.
 
 # Which part of an nmap check failed: no nmap run at all, or none that matched.
-# Anchored to an nmap invocation with an argument (start of line, or after a
-# space, ;, &, | or /), so `man nmap`, `apt install nmap` or `zenmap` count as
-# not found rather than as a wrong scan.
-_S1_NMAP_RUN='(^|[;&|/[:space:]])nmap[[:space:]]+[^[:space:]]'
+# Only nmap where a command starts, with an argument: the start of the line,
+# after ; & | (zsh's ": ts:0;" prefix), or after snoopy's "]: ", optionally
+# behind sudo and/or a path. So `man nmap | less`, `sudo apt install nmap -y`,
+# `history | grep nmap -i` or `zenmap` count as not found, not as a wrong scan.
+# []] is a literal ] (no stray-backslash warning from grep).
+_S1_NMAP_RUN='(^|[;&|]|[]]:)[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?nmap[[:space:]]+[^[:space:]]'
 _s1_command_reason() {
     if check_behavior "$_S1_NMAP_RUN"; then echo COMMAND_NOT_MATCHED; else echo COMMAND_NOT_FOUND; fi
 }
@@ -260,11 +262,18 @@ _s1_route_first_reason() {
     echo NONE
 }
 
+# The session check's return code decides PASS; S1_SESSION_REASON only labels
+# a failure, and a failure that claims NONE is reported as CHECK_ERROR.
 _s1_m4_reason() {
     command -v ip >/dev/null 2>&1 || { echo CHECK_ERROR; return 0; }
     S1_SESSION_REASON=CHECK_ERROR
-    check_live_tomcat_msf_session "$1" || true
-    echo "${S1_SESSION_REASON:-CHECK_ERROR}"
+    if check_live_tomcat_msf_session "$1"; then
+        echo NONE
+    else
+        local r="${S1_SESSION_REASON:-CHECK_ERROR}"
+        [[ "$r" == NONE ]] && r=CHECK_ERROR
+        echo "$r"
+    fi
 }
 
 check_scenario_1() {
