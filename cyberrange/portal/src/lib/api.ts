@@ -444,12 +444,13 @@ export interface ReviewAlertSnapshot {
   captured_at: string
 }
 
-// Scenario 3 check failure reasons (GET /instructor/students/{id}/diagnostics).
-// Instructor/admin only; reason_code is from a fixed backend allowlist.
+// Check failure reasons (GET /instructor/students/{id}/diagnostics).
+// Instructor/admin only; reason_code is from a fixed per-scenario backend allowlist.
 export interface ScoringDiagnostic {
   pod_id: number
   pod_created_at: string
   lab_session_id: number | null
+  /** scorer scenario id (9 = catalog Scenario 3) */
   scenario_id: number
   milestone_id: number
   status: 'PASS' | 'FAIL' | 'ERROR' | 'UNKNOWN'
@@ -467,6 +468,8 @@ export interface ScoringDiagnostic {
 export interface StudentDiagnostics {
   student_id: string
   enabled: boolean
+  /** scorer scenario ids currently recording reasons */
+  enabled_scenarios?: number[]
   retention_days: number
   diagnostics: ScoringDiagnostic[]
 }

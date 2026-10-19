@@ -7,7 +7,7 @@ import "@testing-library/jest-dom"
 import { act, render, screen } from "@testing-library/react"
 import { ScoringDiagnostics } from "./ScoringDiagnostics"
 import { instructor } from "@/lib/api"
-import { REASON_COPY } from "@/lib/scoringDiagnostics"
+import { CHECK_ERROR_COPY, DIAGNOSTIC_SCENARIOS, SCENARIO3_REASON_COPY } from "@/lib/scoringDiagnostics"
 
 jest.mock("@/lib/api", () => ({ instructor: { getStudentDiagnostics: jest.fn() } }))
 jest.mock("@/components/ui", () => ({
@@ -44,6 +44,7 @@ async function renderWith(data: unknown) {
 it("shows the reason, where the file was read, and duplicate copies", async () => {
   await renderWith({ student_id: "alice", enabled: true, retention_days: 14, diagnostics: [ROW] })
   expect(getStudentDiagnostics).toHaveBeenCalledWith("alice")
+  expect(screen.getByText("Scenario 3 — SIEM Alert Triage")).toBeInTheDocument()
   expect(screen.getByText("Wrong agent")).toBeInTheDocument()
   expect(screen.getByText("1: Triage record")).toBeInTheDocument()
   expect(screen.getByText("/home/msfadmin")).toBeInTheDocument()
@@ -66,7 +67,7 @@ it("never renders an unknown code or markup as-is", async () => {
     student_id: "alice", enabled: true, retention_days: 14,
     diagnostics: [{ ...ROW, reason_code: "<img src=x onerror=alert(1)>", location: "<b>/etc</b>" }],
   })
-  expect(screen.getByText(REASON_COPY.CHECK_ERROR.label)).toBeInTheDocument()
+  expect(screen.getByText(SCENARIO3_REASON_COPY.CHECK_ERROR.label)).toBeInTheDocument()
   expect(document.querySelector("img")).toBeNull()
   expect(document.body.innerHTML).not.toContain("onerror")
   expect(document.body.innerHTML).not.toContain("/etc")
@@ -79,7 +80,7 @@ it("renders nothing when the feature is off and nothing is kept", async () => {
 
 it("says so when enabled but empty", async () => {
   await renderWith({ student_id: "alice", enabled: true, retention_days: 14, diagnostics: [] })
-  expect(screen.getByText(/No Scenario 3 checks recorded/)).toBeInTheDocument()
+  expect(screen.getByText(/No checks recorded/)).toBeInTheDocument()
 })
 
 it("reports a load error", async () => {
@@ -97,5 +98,44 @@ it("has copy for every backend reason code", () => {
     "AGENT_MISSING", "AGENT_MISMATCH", "RULE_MISSING", "RULE_MISMATCH",
     "TIMESTAMP_MISSING", "TIMESTAMP_NOT_MATCHED", "REPORT_TOO_SHORT", "REPORT_BODY_TOO_SHORT", "CHECK_ERROR",
   ]
-  expect(Object.keys(REASON_COPY).sort()).toEqual(codes.sort())
+  expect(Object.keys(DIAGNOSTIC_SCENARIOS[9].reasons).sort()).toEqual(codes.sort())
+})
+
+it("groups rows by scenario and labels an unmapped scenario without trusting its code", async () => {
+  await renderWith({
+    student_id: "alice", enabled: true, retention_days: 14,
+    diagnostics: [{ ...ROW, scenario_id: 42, reason_code: "AGENT_MISMATCH", location: null, copies: 0 }, ROW],
+  })
+  const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)
+  expect(headings).toEqual(["Scenario 3 — SIEM Alert Triage", "Scenario id 42"])
+  expect(screen.getAllByText("Wrong agent")).toHaveLength(1)
+  expect(screen.getByText(SCENARIO3_REASON_COPY.CHECK_ERROR.label)).toBeInTheDocument()
+  expect(screen.getAllByText("File read from")).toHaveLength(1)
+})
+
+it("uses scenario-neutral fallback copy, not Scenario 3's", async () => {
+  expect(CHECK_ERROR_COPY.detail).not.toMatch(/auth log/)
+  await renderWith({
+    student_id: "alice", enabled: true, retention_days: 14,
+    diagnostics: [{ ...ROW, scenario_id: 42, reason_code: "ANYTHING", location: null, copies: 0 }],
+  })
+  expect(screen.getByText(CHECK_ERROR_COPY.detail)).toBeInTheDocument()
+  expect(screen.queryByText(SCENARIO3_REASON_COPY.CHECK_ERROR.detail)).not.toBeInTheDocument()
+})
+
+it("orders scenario tables by catalog order, not by id", async () => {
+  await renderWith({
+    student_id: "alice", enabled: true, retention_days: 14,
+    diagnostics: [
+      { ...ROW, scenario_id: 11, location: null, copies: 0 },
+      ROW,
+      { ...ROW, scenario_id: 1, location: null, copies: 0 },
+    ],
+  })
+  // Titles depend on which scenarios this build maps; the order must not.
+  const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "")
+  expect(headings).toHaveLength(3)
+  expect(headings[0]).toMatch(/^Scenario (id 1$|1 )/)
+  expect(headings[1]).toBe("Scenario 3 — SIEM Alert Triage")
+  expect(headings[2]).toMatch(/^Scenario (id 11$|4 )/)
 })

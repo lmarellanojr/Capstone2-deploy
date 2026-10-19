@@ -62,8 +62,8 @@ def _passed_milestone_ids(student_id: str, scenario_id: int) -> set:
     return {r["milestone_id"] for r in rows}
 
 
-# Scenario 3 diagnostics retention: purge at most hourly, and even with the
-# feature flag off, so disabling it still ages out what was recorded.
+# Scoring diagnostics retention: purge at most hourly, and even with every
+# scenario switched off, so disabling it still ages out what was recorded.
 DIAGNOSTICS_PURGE_INTERVAL_SECONDS = 3600
 _last_diagnostics_purge = 0.0
 
