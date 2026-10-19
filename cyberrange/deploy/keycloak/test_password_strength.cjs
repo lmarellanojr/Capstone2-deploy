@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
 const script = './themes/cyberrange/login/resources/js/password-strength.js';
-const { estimate, mount } = require(script);
+const { estimate, evaluateRequirements, mount } = require(script);
 
 test('conservative estimates including long predictable passwords', () => {
     for (const [value, score] of [['', 0], ['short', 1], ['password123456789', 1],
@@ -16,6 +16,30 @@ test('conservative estimates including long predictable passwords', () => {
         ['#!@#%^23456789!@#%^2', 4]]) {
         assert.equal(estimate(value), score, value);
     }
+});
+test('must-include checklist mirrors realm rules', () => {
+    const withUser = evaluateRequirements('student_demo', { username: 'student_demo' });
+    assert.equal(withUser.find((item) => item.id === 'notUsername').met, false);
+    assert.equal(withUser.find((item) => item.id === 'length').met, true);
+    const strong = evaluateRequirements('#!@#%^23456789!@#%^2', { username: 'student_demo' });
+    assert.equal(strong.find((item) => item.id === 'notCommon').met, true);
+    assert.equal(strong.find((item) => item.id === 'history').met, null);
+});
+test('checklist uses attempted username on the change-password page', () => {
+    const dom = new JSDOM('<div id="kc-attempted-username">avmagallanes</div><form><input id="password-new"><input id="password-confirm"></form>');
+    const doc = dom.window.document;
+    mount(doc);
+    const input = doc.getElementById('password-new');
+    input.value = 'avmagallanes';
+    input.dispatchEvent(new dom.window.Event('input'));
+    const usernameItem = [...doc.querySelectorAll('.cr-strength__must-item')].find((el) => /username/i.test(el.textContent));
+    assert.ok(usernameItem);
+    assert.equal(usernameItem.dataset.met, 'false');
+    input.value = '#!@#%^23456789!@#%^2';
+    input.dispatchEvent(new dom.window.Event('input'));
+    const usernameOk = [...doc.querySelectorAll('.cr-strength__must-item')].find((el) => /username/i.test(el.textContent));
+    assert.equal(usernameOk.dataset.met, 'true');
+    dom.window.close();
 });
 test('mounts only on new-password form, preserves errors and controls, updates and resets', async () => {
     const dom = new JSDOM('<form><div class="pf-c-input-group"><input id="password-new" aria-describedby="existing-error"><button>Show</button></div><input id="password-confirm"></form>');
@@ -37,6 +61,8 @@ test('mounts only on new-password form, preserves errors and controls, updates a
     assert.equal(doc.querySelector('[role=status]').textContent, 'Password strength: Medium');
     assert.ok(doc.querySelector('.cr-strength__fill'));
     assert.equal(doc.querySelectorAll('.cr-strength__bar span').length, 0);
+    assert.match(doc.getElementById('cr-password-strength-must').textContent, /Must be 8–128 characters/);
+    assert.equal(doc.querySelector('[data-met="true"]').dataset.met, 'true');
     input.value = 'short'; input.dispatchEvent(new dom.window.Event('change'));
     assert.equal(doc.querySelector('.cr-strength').dataset.score, '1');
     input.type = 'text';
