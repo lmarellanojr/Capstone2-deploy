@@ -214,6 +214,9 @@ export interface AdminUser {
   created_at: string | null
 }
 
+// users_router.list_users caps `max` at 200 and returns only that first page.
+export const ADMIN_USERS_MAX = 200
+
 // users_router.CreateUserRequest (extra="forbid": send exactly these keys).
 export interface CreateUserInput {
   username: string
@@ -653,7 +656,7 @@ export const admin = {
 
   // ADM-USER (#32 / PR #88) — Keycloak-backed user management.
   listUsers: async (search?: string): Promise<{ users: AdminUser[] }> => {
-    const params: Record<string, string> = { max: '200' }
+    const params: Record<string, string> = { max: String(ADMIN_USERS_MAX) }
     if (search?.trim()) params.search = search.trim()
     const response = await apiClient.get('/admin/users', { params })
     return response.data

@@ -16,7 +16,7 @@ import { formatSqliteDate } from "@/lib/sqliteTime";
 import { APP_ROLES } from "@/lib/adminUserValidation";
 import { createCredentialFeedback, resetCredentialFeedback } from "@/lib/adminCredentialFeedback";
 import { filterAdminUsers, type RoleFilter, type StatusFilter } from "@/lib/adminUserFilter";
-import type { AdminUser, AppRole } from "@/lib/api";
+import { ADMIN_USERS_MAX, type AdminUser, type AppRole } from "@/lib/api";
 
 const ROLE_BADGE: Record<AppRole, "brand" | "info" | "default"> = {
   admin: "brand",
@@ -56,17 +56,23 @@ export default function AdminUsersPage() {
   const [confirmBusy, setConfirmBusy] = useState(false);
   const firstRun = useRef(true);
   // Rows created or changed under the current search + filters stay visible
-  // even if they no longer match; changing the search or a filter drops them.
-  const viewKey = `${query}\u0000${roleFilter}\u0000${statusFilter}`;
+  // even if they no longer match; changing the search or a filter drops them
+  // for good (state is reset during render, so returning to a view starts empty).
+  const viewKey = JSON.stringify([query, roleFilter, statusFilter]);
   const [kept, setKept] = useState<{ key: string; ids: ReadonlySet<string> }>({ key: viewKey, ids: new Set() });
+  if (kept.key !== viewKey) setKept({ key: viewKey, ids: new Set() });
   const keptIds = kept.key === viewKey ? kept.ids : undefined;
-  const keepVisible = (id: string) =>
-    setKept((prev) => ({ key: viewKey, ids: new Set(prev.key === viewKey ? Array.from(prev.ids).concat(id) : [id]) }));
+  // `startKey` is the view the action began in; a request that finishes after
+  // the Admin moved to another view is ignored rather than clobbering its pins.
+  const keepVisible = (id: string, startKey: string) =>
+    setKept((prev) => (prev.key === startKey ? { key: prev.key, ids: new Set(Array.from(prev.ids).concat(id)) } : prev));
   const visibleUsers = useMemo(
     () => filterAdminUsers(users, roleFilter, statusFilter, keptIds),
     [users, roleFilter, statusFilter, keptIds],
   );
   const filtered = roleFilter !== "all" || statusFilter !== "all";
+  // The API only returns the first page, so filters/count cover loaded accounts only.
+  const capped = users.length >= ADMIN_USERS_MAX;
 
   // Debounced server-side search (Keycloak matches username/name/email).
   useEffect(() => {
@@ -79,18 +85,19 @@ export default function AdminUsersPage() {
   }, [query, search]);
 
   const runChange = async (change: PendingChange) => {
+    const startKey = viewKey;
     setConfirmBusy(true);
     try {
       if (change.kind === "disable") {
         await setEnabled(change.user.id, false);
-        keepVisible(change.user.id);
+        keepVisible(change.user.id, startKey);
         success(`${change.user.username} is disabled and signed out.`);
       } else if (change.kind === "mfa") {
         await resetMfa(change.user.id);
         success(`${change.user.username}'s authenticator was reset. They'll set up a new one at next sign-in.`);
       } else {
         await setRole(change.user.id, change.role);
-        keepVisible(change.user.id);
+        keepVisible(change.user.id, startKey);
         success(`${change.user.username} is now ${ROLE_LABEL[change.role]}. It applies at their next sign-in.`);
       }
       setConfirm(null);
@@ -102,9 +109,10 @@ export default function AdminUsersPage() {
   };
 
   const enable = async (u: AdminUser) => {
+    const startKey = viewKey;
     try {
       await setEnabled(u.id, true);
-      keepVisible(u.id);
+      keepVisible(u.id, startKey);
       success(`${u.username} can sign in again.`);
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Couldn't enable the user.");
@@ -187,6 +195,7 @@ export default function AdminUsersPage() {
         {!loading && !error && (
           <span className="text-sm text-text-muted" aria-live="polite">
             {filtered ? `${visibleUsers.length} of ${users.length}` : users.length} {users.length === 1 ? "user" : "users"}
+            {capped && ` (first ${ADMIN_USERS_MAX} loaded; search to narrow)`}
           </span>
         )}
       </div>
@@ -212,7 +221,11 @@ export default function AdminUsersPage() {
           <div className="py-12 px-6 text-center">
             <Users size={28} className="mx-auto mb-3 text-text-faint" aria-hidden="true" />
             <p className="font-semibold text-text-main">No users match these filters</p>
-            <p className="text-sm text-text-muted mt-1">Try another role or status, or clear the filters.</p>
+            <p className="text-sm text-text-muted mt-1">
+              {capped
+                ? `Only the first ${ADMIN_USERS_MAX} accounts are loaded. Search by name to find others, or clear the filters.`
+                : "Try another role or status, or clear the filters."}
+            </p>
           </div>
         ) : users.length === 0 && !error ? (
           <div className="py-12 px-6 text-center">
@@ -354,7 +367,7 @@ export default function AdminUsersPage() {
         onClose={() => setCreating(false)}
         onCreate={createUser}
         onCreated={(u, password, temporary) => {
-          keepVisible(u.id);
+          keepVisible(u.id, viewKey);
           setCredentialHandoff({ username: u.username ?? "", password, temporary });
           const feedback = createCredentialFeedback(u, u.role ? ROLE_LABEL[u.role] : "no role");
           success(feedback.message);
