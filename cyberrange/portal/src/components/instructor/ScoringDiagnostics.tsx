@@ -5,7 +5,7 @@ import { instructor, type ScoringDiagnostic, type StudentDiagnostics } from "@/l
 import { mapErrorToMessage } from "@/lib/errorHandler";
 import { formatSqliteDateSeconds } from "@/lib/sqliteTime";
 import {
-  DIAGNOSTIC_SCENARIOS,
+  CATALOG_ORDER,
   locationLabel,
   milestoneLabel,
   reasonCopy,
@@ -25,7 +25,7 @@ function byScenario(rows: ScoringDiagnostic[]): [number, ScoringDiagnostic[]][] 
     list.push(row);
     groups.set(row.scenario_id, list);
   }
-  const order = Object.keys(DIAGNOSTIC_SCENARIOS).map(Number);
+  const order = CATALOG_ORDER;
   const rank = (id: number) => (order.includes(id) ? order.indexOf(id) : order.length);
   return Array.from(groups.entries()).sort(([a], [b]) => rank(a) - rank(b) || a - b);
 }

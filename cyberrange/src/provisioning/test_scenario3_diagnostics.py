@@ -145,6 +145,8 @@ def test_parse_diag_is_scoped_to_the_scenarios_own_codes(monkeypatch):
     (None, "1", [9]),       # the Scenario 3 pilot flag still works
     ("", "true", [9]),
     ("2,42,x,-9", None, []),  # ids without a code list are ignored
+    ("9,²", None, [9]),       # non-ASCII digits are skipped, never raise
+    ("9,x", None, [9]),
 ])
 def test_enabled_scenarios(monkeypatch, raw, legacy, ids):
     for name, value in (("SCORING_DIAGNOSTICS_SCENARIOS", raw), ("S3_DIAGNOSTICS_ENABLED", legacy)):
