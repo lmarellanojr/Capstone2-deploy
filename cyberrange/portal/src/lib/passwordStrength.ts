@@ -45,6 +45,8 @@ function looksCommon(value: string): boolean {
     .replace(/3/g, "e")
     .replace(/\$/g, "s")
   return (
+    // No /u here (unlike password-strength.js): tsconfig has no target, so
+    // next build rejects the flag (TS1501). Same matches for well-formed strings.
     /(.+)\1{2,}/.test(normalized) ||
     COMMON_PATTERN.test(normalized) ||
     new Set(normalized).size < 5
