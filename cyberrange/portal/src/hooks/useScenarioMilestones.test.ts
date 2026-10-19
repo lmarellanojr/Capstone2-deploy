@@ -237,4 +237,58 @@ describe('useScenarioMilestones', () => {
     })
     expect(result.current.lastScoredId).toBe(2)
   })
+
+  it('treats the first poll after a failed initial load as a baseline, not fresh passes', async () => {
+    ;(provisioning.getMilestones as jest.Mock).mockRejectedValueOnce(new Error('network'))
+    const { result } = renderHook(() => useScenarioMilestones(42, '01', scen1.milestones))
+    await act(async () => {})
+    expect(mockError).toHaveBeenCalled()
+
+    // Reload after a previous visit: tasks 1–2 already passed.
+    ;(provisioning.getMilestones as jest.Mock).mockResolvedValueOnce({
+      milestones: [
+        { scenario_id: 1, milestone_id: 1, status: 'PASS' },
+        { scenario_id: 1, milestone_id: 2, status: 'PASS' },
+      ],
+      manual_check_locked: [],
+    })
+    await act(async () => {
+      jest.advanceTimersByTime(3000)
+    })
+    expect(result.current.completed.has(1)).toBe(true)
+    expect(result.current.completed.has(2)).toBe(true)
+    expect(result.current.lastScoredId).toBeNull()
+    expect(mockSuccess).not.toHaveBeenCalled()
+
+    // A genuinely new pass after the baseline is still announced.
+    ;(provisioning.getMilestones as jest.Mock).mockResolvedValueOnce({
+      milestones: [
+        { scenario_id: 1, milestone_id: 1, status: 'PASS' },
+        { scenario_id: 1, milestone_id: 2, status: 'PASS' },
+        { scenario_id: 1, milestone_id: 3, status: 'PASS' },
+      ],
+      manual_check_locked: [],
+    })
+    await act(async () => {
+      jest.advanceTimersByTime(3000)
+    })
+    expect(result.current.lastScoredId).toBe(3)
+    expect(mockSuccess).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not announce old passes when the poll beats a slow initial load', async () => {
+    ;(provisioning.getMilestones as jest.Mock)
+      .mockReturnValueOnce(new Promise(() => {}))
+      .mockResolvedValueOnce({
+        milestones: [{ scenario_id: 1, milestone_id: 1, status: 'PASS' }],
+        manual_check_locked: [],
+      })
+    const { result } = renderHook(() => useScenarioMilestones(42, '01', scen1.milestones))
+    await act(async () => {
+      jest.advanceTimersByTime(3000)
+    })
+    expect(result.current.completed.has(1)).toBe(true)
+    expect(result.current.lastScoredId).toBeNull()
+    expect(mockSuccess).not.toHaveBeenCalled()
+  })
 })

@@ -137,9 +137,9 @@ export default function ScenarioDetailPage({ params }: PageProps) {
     presentationTasks.findIndex((m) => m.id === currentTaskId)
   )
   const currentMilestone = presentationTasks[currentTaskIndex]
-  // "Start here" only on a fresh attempt: nothing scored yet and still on the
-  // first task (SIEM prep counts as the first task).
-  const isStartHere = !milestonesLoading && doneCount === 0 && currentTaskIndex === 0
+  // "Start here" only on a fresh, live attempt: lab active, nothing scored yet
+  // and still on the first task (SIEM prep counts as the first task).
+  const isStartHere = phase === 'active' && !milestonesLoading && doneCount === 0 && currentTaskIndex === 0
   const justScoredMilestone =
     lastScoredId != null ? scenario?.milestones.find((m) => m.id === lastScoredId) ?? null : null
 

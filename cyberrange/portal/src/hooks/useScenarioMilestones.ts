@@ -36,6 +36,10 @@ export function useScenarioMilestones(
   currentProgressKeyRef.current = currentProgressKey
 
   const prevPassedRef = useRef<Set<number>>(new Set())
+  // True once prevPassedRef holds this pod's already-passed milestones. Until
+  // then a poll can't tell new passes from old ones (initial load failed or is
+  // still in flight), so the first poll only records a baseline.
+  const baselineReadyRef = useRef(false)
   const milestonesRef = useRef(milestones)
   milestonesRef.current = milestones
 
@@ -49,6 +53,7 @@ export function useScenarioMilestones(
       setMilestonesLoading(false)
       setLastScoredId(null)
       prevPassedRef.current = new Set()
+      baselineReadyRef.current = false
       return
     }
 
@@ -62,6 +67,7 @@ export function useScenarioMilestones(
     setMilestonesLoading(true)
     setLastScoredId(null)
     prevPassedRef.current = new Set()
+    baselineReadyRef.current = false
 
     provisioning.getMilestones(podId).then((res) => {
       if (!active || currentProgressKeyRef.current !== requestKey) return
@@ -69,6 +75,7 @@ export function useScenarioMilestones(
         const passed = passedMilestoneIdsForScenario(res.milestones, scenarioId)
         setCompleted(passed)
         prevPassedRef.current = new Set(passed)
+        baselineReadyRef.current = true
       }
       setLockedReview(new Set(res?.manual_check_locked ?? []))
       setLoadedProgressKey(requestKey)
@@ -100,6 +107,18 @@ export function useScenarioMilestones(
 
         setLockedReview(new Set(res.manual_check_locked ?? []))
         const newPassed = passedMilestoneIdsForScenario(res.milestones, scenarioId)
+
+        if (!baselineReadyRef.current) {
+          // Earlier passes from a previous visit: show them, don't announce them.
+          baselineReadyRef.current = true
+          newPassed.forEach((mid) => prevPassedRef.current.add(mid))
+          setCompleted((prev) => {
+            const next = new Set(prev)
+            newPassed.forEach((id) => next.add(id))
+            return next
+          })
+          return
+        }
 
         const freshPassed: number[] = []
         newPassed.forEach((mid) => {

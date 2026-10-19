@@ -30,9 +30,11 @@ jest.mock('@/context/ToastContext', () => ({
   useToastContext: () => ({ success: jest.fn(), warning: jest.fn(), error: jest.fn() }),
 }))
 
+let mockPodPhase: 'active' | 'expired' = 'active'
+
 jest.mock('@/hooks/useScenarioPod', () => ({
   useScenarioPod: (id: string) => ({
-    phase: 'active',
+    phase: mockPodPhase,
     pod: {
       pod_id: 1,
       student_id: 'student',
@@ -214,6 +216,16 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
       expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-just-scored', '1')
     } finally {
       useMilestonesMock.mockImplementation(original)
+    }
+  })
+
+  it('does not mark "Start here" on an expired lab', () => {
+    mockPodPhase = 'expired'
+    try {
+      render(<ScenarioDetailPage params={{ id: '01' }} />)
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'false')
+    } finally {
+      mockPodPhase = 'active'
     }
   })
 })
