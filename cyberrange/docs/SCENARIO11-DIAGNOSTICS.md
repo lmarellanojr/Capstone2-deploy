@@ -17,7 +17,7 @@ Instructors get a reason when a Vulnerability Hardening check fails. The portal 
 | Code | Milestones | Meaning |
 |---|---|---|
 | `COMMAND_NOT_FOUND` | 1, 3 | no related command at all: nothing naming `tomcat-users` (M1), no curl to the manager or port 8180 (M3) |
-| `COMMAND_NOT_MATCHED` | 1, 3 | a related command exists, but not the one the check needs: `tomcat-users` without `sudo` (M1), a manager curl without `tomcat:tomcat` (M3) |
+| `COMMAND_NOT_MATCHED` | 1, 3 | a related command exists, but not the one the check needs: a command mentions `tomcat-users`, but none ran it with `sudo` before any pipe (M1; this doesn't say whether the student tried to read the file), a manager curl without `tomcat:tomcat` (M3) |
 | `DEFAULT_PASSWORD_PRESENT` | 2 | the users file still has the default password, in either quote style |
 | `CONFIG_MISSING` | 2 | no users file at the usual path, and no `sed -i` of it in history |
 | `OLD_CREDS_ACCEPTED` | 3 | the manager still answers 200 to `tomcat:tomcat` |

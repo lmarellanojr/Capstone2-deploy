@@ -90,7 +90,7 @@ export const SCENARIO4_REASON_COPY: Record<string, ReasonCopy> = {
   COMMAND_NOT_MATCHED: {
     label: "Command didn't match this task",
     detail:
-      "1: tomcat-users was read without sudo, so the file was never shown. 3: a curl to the manager was run, but not with the old tomcat:tomcat credentials.",
+      "1: a command mentions tomcat-users, but none ran it with sudo (as msfadmin the file can only be read with sudo). 3: a curl to the manager was run, but not with the old tomcat:tomcat credentials.",
   },
   DEFAULT_PASSWORD_PRESENT: {
     label: "Default password still set",
