@@ -120,6 +120,25 @@ it("has copy for every Scenario 1 backend reason code", () => {
   expect(Object.keys(DIAGNOSTIC_SCENARIOS[1].reasons).sort()).toEqual(codes.sort())
 })
 
+it("shows Scenario 4 (scorer id 11) reasons without a file column", async () => {
+  await renderWith({
+    student_id: "alice", enabled: true, enabled_scenarios: [11], retention_days: 14,
+    diagnostics: [{ ...ROW, scenario_id: 11, milestone_id: 3, reason_code: "OLD_CREDS_ACCEPTED", location: "NONE", copies: 0 }],
+  })
+  expect(screen.getByText("Scenario 4 — Vulnerability Hardening")).toBeInTheDocument()
+  expect(screen.getByText("3: Confirm the path is closed")).toBeInTheDocument()
+  expect(screen.getByText("Old credentials still work")).toBeInTheDocument()
+  expect(screen.queryByText("File read from")).not.toBeInTheDocument()
+})
+
+it("has copy for every Scenario 4 (scorer id 11) backend reason code", () => {
+  const codes = [
+    "COMMAND_NOT_FOUND", "COMMAND_NOT_MATCHED", "DEFAULT_PASSWORD_PRESENT", "CONFIG_MISSING",
+    "OLD_CREDS_ACCEPTED", "MANAGER_UNREACHABLE", "MANAGER_UNEXPECTED_STATUS", "CHECK_ERROR",
+  ]
+  expect(Object.keys(DIAGNOSTIC_SCENARIOS[11].reasons).sort()).toEqual(codes.sort())
+})
+
 it("groups rows by scenario and labels an unmapped scenario without trusting its code", async () => {
   await renderWith({
     student_id: "alice", enabled: true, retention_days: 14,

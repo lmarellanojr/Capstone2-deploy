@@ -52,6 +52,17 @@ REASON_CODES_BY_SCENARIO: dict[int, frozenset[str]] = {
         "REPORT_BODY_TOO_SHORT",
         "CHECK_ERROR",
     }),
+    # Catalog Scenario 4, Vulnerability Hardening (check_scenario_11).
+    11: frozenset({
+        "COMMAND_NOT_FOUND",
+        "COMMAND_NOT_MATCHED",
+        "DEFAULT_PASSWORD_PRESENT",
+        "CONFIG_MISSING",
+        "OLD_CREDS_ACCEPTED",
+        "MANAGER_UNREACHABLE",
+        "MANAGER_UNEXPECTED_STATUS",
+        "CHECK_ERROR",
+    }),
 }
 DIAGNOSTIC_SCENARIO_IDS = frozenset(REASON_CODES_BY_SCENARIO)
 # Every code any scenario may print (for "never shown to students" checks).

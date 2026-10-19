@@ -116,6 +116,44 @@ export const SCENARIO1_REASON_COPY: Record<string, ReasonCopy> = {
   },
 };
 
+// Scorer id 11 is catalog Scenario 4.
+export const SCENARIO4_REASON_COPY: Record<string, ReasonCopy> = {
+  COMMAND_NOT_FOUND: {
+    label: "Command not found",
+    detail:
+      "No related command in meta's shell history or command log. 1: nothing naming tomcat-users. 3: no curl to the Tomcat manager (port 8180).",
+  },
+  COMMAND_NOT_MATCHED: {
+    label: "Command didn't match this task",
+    detail:
+      "1: a command mentions tomcat-users, but none ran it with sudo (as msfadmin the file can only be read with sudo). 3: a curl to the manager was run, but not with the old tomcat:tomcat credentials.",
+  },
+  DEFAULT_PASSWORD_PRESENT: {
+    label: "Default password still set",
+    detail: "tomcat-users.xml still has password=\"tomcat\" (either quote style).",
+  },
+  CONFIG_MISSING: {
+    label: "tomcat-users.xml missing",
+    detail: "The Tomcat users file is not at its usual path and there is no sed -i edit of it in history to fall back on.",
+  },
+  OLD_CREDS_ACCEPTED: {
+    label: "Old credentials still work",
+    detail: "The Tomcat manager still accepts tomcat:tomcat (HTTP 200), so the change is not in effect.",
+  },
+  MANAGER_UNREACHABLE: {
+    label: "Tomcat not answering",
+    detail: "Nothing answered on port 8180 on meta (the connection failed).",
+  },
+  MANAGER_UNEXPECTED_STATUS: {
+    label: "Unexpected manager response",
+    detail: "The manager answered, but with neither 401/403 (closed) nor 200 (open), e.g. 404 or 500.",
+  },
+  CHECK_ERROR: {
+    label: "Check error",
+    detail: "The check could not run (curl missing on meta) or the verifier returned an error. Not the student's fault.",
+  },
+};
+
 /** Fallback for an unmapped scenario, or a code missing from a scenario's copy.
  *  Scenario-neutral: each scenario's `reasons` carries its own CHECK_ERROR wording. */
 export const CHECK_ERROR_COPY: ReasonCopy = {
@@ -149,6 +187,16 @@ export const DIAGNOSTIC_SCENARIOS: Record<number, ScenarioDiagnostics> = {
     },
     reasons: SCENARIO3_REASON_COPY,
     showsLocation: true,
+  },
+  11: {
+    title: "Scenario 4 — Vulnerability Hardening",
+    milestones: {
+      1: "1: Identify the weakness",
+      2: "2: Apply the remediation",
+      3: "3: Confirm the path is closed",
+    },
+    reasons: SCENARIO4_REASON_COPY,
+    showsLocation: false,
   },
 };
 

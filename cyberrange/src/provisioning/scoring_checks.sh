@@ -1198,8 +1198,34 @@ check_scenario_10() {
 }
 
 # Scenario 11: Vulnerability Hardening (meta target; defender perspective)
+#
+# Diagnostics (instructor-only): before the PASS/FAIL token each milestone prints
+#   DIAG reason=<CODE> location=NONE copies=0
+# Callers read only the last stdout line, so the token contract is unchanged.
+# CODE is from the fixed set below -- never a command, a password, or file
+# contents. NONE = passed.
+#   COMMAND_NOT_FOUND COMMAND_NOT_MATCHED DEFAULT_PASSWORD_PRESENT CONFIG_MISSING
+#   OLD_CREDS_ACCEPTED MANAGER_UNREACHABLE MANAGER_UNEXPECTED_STATUS CHECK_ERROR
+# Each milestone runs the same predicates in the same order as before and
+# names the first one that fails. PASS is printed only for NONE.
+
+# A behavior check failed: was there a related command (pattern $1) at all?
+_s11_command_reason() {
+    if check_behavior "$1"; then echo COMMAND_NOT_MATCHED; else echo COMMAND_NOT_FOUND; fi
+}
+
+# M3 state: why the manager did not reject the old credentials.
+_s11_status_reason() {
+    local code="$1"
+    if [[ "$code" == "200" ]]; then echo OLD_CREDS_ACCEPTED
+    elif [[ "$code" == 000* ]]; then
+        if command -v curl >/dev/null 2>&1; then echo MANAGER_UNREACHABLE; else echo CHECK_ERROR; fi
+    else echo MANAGER_UNEXPECTED_STATUS
+    fi
+}
+
 check_scenario_11() {
-    local milestone=$1
+    local milestone=$1 reason
     case $milestone in
         1)
             # M1: Identify the weakness (default Tomcat manager credential).
@@ -1209,8 +1235,9 @@ check_scenario_11() {
             # `cat` returns "Permission denied" and never shows the credential.
             # Require sudo so the credited command actually reveals the weakness
             # (previously a denied `cat` still passed -- false positive).
-            if check_behavior "sudo[^|]*tomcat-users"; then echo "PASS"; return; fi
-            echo "FAIL"
+            if check_behavior "sudo[^|]*tomcat-users"; then reason=NONE
+            else reason=$(_s11_command_reason "tomcat-users") || reason=CHECK_ERROR
+            fi
             ;;
         2)
             # M2: Apply the remediation. nano/vim deliberately NOT in behavior
@@ -1224,15 +1251,14 @@ check_scenario_11() {
                 # The file's state decides. Previously a `sed -i` on the file
                 # passed even when the default password was still there.
                 if ! grep -qE "password=[\"']tomcat[\"']" "$users_file" 2>/dev/null; then
-                    echo "PASS"
+                    reason=NONE
                 else
-                    echo "FAIL"
+                    reason=DEFAULT_PASSWORD_PRESENT
                 fi
-                return
-            fi
             # No file to inspect (moved/renamed): fall back to the behavior trail.
-            if check_behavior "sed -i.*tomcat-users"; then echo "PASS"; return; fi
-            echo "FAIL"
+            elif check_behavior "sed -i.*tomcat-users"; then reason=NONE
+            else reason=CONFIG_MISSING
+            fi
             ;;
         3)
             # M3: Confirm the exploit path is closed. This is the "confirm" step,
@@ -1246,14 +1272,19 @@ check_scenario_11() {
             # requiring the curl in history fixes that false auto-pass.
             local code
             code=$(curl -s -o /dev/null -w '%{http_code}' -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list 2>/dev/null || echo "000")
-            if { [[ "$code" == "401" || "$code" == "403" ]]; } \
-                && check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
-                echo "PASS"
+            if [[ "$code" != "401" && "$code" != "403" ]]; then
+                reason=$(_s11_status_reason "$code") || reason=CHECK_ERROR
+            elif check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
+                reason=NONE
             else
-                echo "FAIL"
+                reason=$(_s11_command_reason "curl.*(8180|manager)") || reason=CHECK_ERROR
             fi
             ;;
+        *) return ;;
     esac
+    [[ -n "$reason" ]] || reason=CHECK_ERROR
+    printf 'DIAG reason=%s location=NONE copies=0\n' "$reason"
+    if [[ "$reason" == NONE ]]; then echo "PASS"; else echo "FAIL"; fi
 }
 
 # Default fallback (should not be reached for defined scenarios)
