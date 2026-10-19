@@ -207,7 +207,7 @@ export function ExercisePanel({
         </div>
 
         {/* Task Auto-Score or Flag Status */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5" data-tour="task-status">
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
               Status
