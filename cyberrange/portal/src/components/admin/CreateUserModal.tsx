@@ -214,7 +214,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                   value={form.password}
                   onChange={(e) => set("password", e.target.value)}
                   aria-invalid={!!errors.password}
-                  aria-describedby={`${uid}-password-strength ${uid}-password-strength-must ${uid}-password-msg`}
+                  aria-describedby={`${uid}-password-strength ${uid}-password-strength-must ${uid}-password-strength-save-hint ${uid}-password-msg`}
                   className={`${input(errors.password)} pr-10`}
                 />
                 <button

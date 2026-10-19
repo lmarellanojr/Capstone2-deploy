@@ -52,11 +52,6 @@
             label: "Must not be a common password",
             met: value.length > 0 && !looksCommon(value),
         });
-        items.push({
-            id: "history",
-            label: "Must not reuse your last 3 passwords (checked when you save)",
-            met: null,
-        });
         return items;
     }
 
@@ -81,14 +76,13 @@
         list.textContent = "";
         items.forEach(function (item) {
             var li = owner.createElement("li");
-            var metAttr = item.met === null ? "pending" : String(item.met);
-            li.dataset.met = metAttr;
+            li.dataset.met = String(item.met);
             li.className = "cr-strength__must-item" +
-                (item.met === true ? " is-met" : item.met === false && password ? " is-unmet" : " is-pending");
+                (item.met ? " is-met" : password ? " is-unmet" : " is-pending");
             var mark = owner.createElement("span");
             mark.className = "cr-strength__must-mark";
             mark.setAttribute("aria-hidden", "true");
-            mark.textContent = item.met === true ? "✓" : item.met === false ? "○" : "•";
+            mark.textContent = item.met ? "✓" : "○";
             var text = owner.createElement("span");
             text.textContent = item.label;
             li.appendChild(mark);
@@ -119,13 +113,18 @@
         must.id = "cr-password-strength-must";
         must.className = "cr-strength__must";
         must.setAttribute("aria-label", "Password requirements");
+        var saveHintNote = doc.createElement("p");
+        saveHintNote.id = "cr-password-strength-save-hint";
+        saveHintNote.className = "cr-strength__hint";
+        saveHintNote.textContent = "Your last 3 passwords are also checked when you save.";
         var hint = doc.createElement("p");
         hint.id = "cr-password-strength-hint";
         hint.className = "cr-strength__hint";
-        hint.textContent = "Choose your own password or a longer unique passphrase. Generate password is optional; strength is an estimate. Keycloak still checks these rules when you save.";
+        hint.textContent = "Choose your own password or a longer unique passphrase. Generate password is optional; strength is an estimate.";
         container.appendChild(bar);
         container.appendChild(label);
         container.appendChild(must);
+        container.appendChild(saveHintNote);
         container.appendChild(hint);
         var crypto = doc.defaultView && doc.defaultView.crypto;
         var confirm = doc.getElementById("password-confirm");
@@ -172,7 +171,7 @@
         }
         var group = input.closest(".pf-c-input-group, .pf-v5-c-input-group") || input;
         group.insertAdjacentElement("afterend", container);
-        input.setAttribute("aria-describedby", [input.getAttribute("aria-describedby"), label.id, must.id, hint.id].filter(Boolean).join(" "));
+        input.setAttribute("aria-describedby", [input.getAttribute("aria-describedby"), label.id, must.id, saveHintNote.id, hint.id].filter(Boolean).join(" "));
         function update() {
             var score = estimate(input.value);
             container.dataset.score = String(score);

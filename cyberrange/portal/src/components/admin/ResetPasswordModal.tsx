@@ -91,7 +91,7 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                     }}
                     onBlur={() => setTouched(true)}
                     aria-invalid={touched && !!lengthError}
-                    aria-describedby={`${uid}-pw-strength ${uid}-pw-strength-must ${uid}-pw-msg`}
+                    aria-describedby={`${uid}-pw-strength ${uid}-pw-strength-must ${uid}-pw-strength-save-hint ${uid}-pw-msg`}
                     className={`w-full rounded-lg border bg-secondary px-3 py-2 pr-10 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-brand/20 ${
                       touched && lengthError ? "border-red-300" : "border-border focus:border-brand/40"
                     }`}

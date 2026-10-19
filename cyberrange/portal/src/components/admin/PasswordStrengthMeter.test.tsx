@@ -34,5 +34,6 @@ test("shows a continuous bar, must-include checklist, and updates while typing",
   expect(screen.getByTestId("password-strength-meter")).toHaveAttribute("data-score", "4")
   expect(screen.getByRole("status")).toHaveTextContent("Password strength: Strong")
   expect(screen.getByText(/Must be 8–128 characters/).closest("li")).toHaveAttribute("data-met", "true")
-  expect(screen.getByText(/Must not reuse your last 3 passwords/).closest("li")).toHaveAttribute("data-met", "pending")
+  expect(screen.queryByText(/Must not reuse your last 3 passwords/)).not.toBeInTheDocument()
+  expect(screen.getByText(/Your last 3 passwords are also checked when you save/)).toBeInTheDocument()
 })
