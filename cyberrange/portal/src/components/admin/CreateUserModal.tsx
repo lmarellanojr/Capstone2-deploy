@@ -12,6 +12,7 @@ import {
   type CreateUserForm,
 } from "@/lib/adminUserValidation";
 import { UserAdminSetupHint } from "./UserAdminSetupHint";
+import { PasswordStrengthMeter } from "./PasswordStrengthMeter";
 import { generatePassword } from "@/lib/generatePassword";
 
 const EMPTY: CreateUserForm = {
@@ -213,7 +214,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                   value={form.password}
                   onChange={(e) => set("password", e.target.value)}
                   aria-invalid={!!errors.password}
-                  aria-describedby={`${uid}-password-msg`}
+                  aria-describedby={`${uid}-password-strength ${uid}-password-msg`}
                   className={`${input(errors.password)} pr-10`}
                 />
                 <button
@@ -237,6 +238,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                 Generate
               </Button>
             </div>
+            <PasswordStrengthMeter password={form.password} labelId={`${uid}-password-strength`} />
             {errorText("password", "Choose your own unique password or passphrase (8–128 characters). Avoid common passwords, your username, and your email. Generate is optional.")}
           </div>
 

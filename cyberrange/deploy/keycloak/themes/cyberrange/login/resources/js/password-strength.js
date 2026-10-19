@@ -37,9 +37,12 @@
         const bar = doc.createElement("div");
         bar.className = "cr-strength__bar";
         bar.setAttribute("aria-hidden", "true");
-        for (let i = 0; i < 4; i++) bar.appendChild(doc.createElement("span"));
+        const fill = doc.createElement("div");
+        fill.className = "cr-strength__fill";
+        bar.appendChild(fill);
         const label = doc.createElement("p");
         label.id = "cr-password-strength-label";
+        label.className = "cr-strength__label";
         label.setAttribute("role", "status");
         label.setAttribute("aria-live", "polite");
         label.setAttribute("aria-atomic", "true");
@@ -99,7 +102,7 @@
         function update() {
             const score = estimate(input.value);
             container.dataset.score = String(score);
-            label.textContent = score ? "Password strength: " + ["", "Weak", "Fair", "Good", "Strong"][score] : "Enter a new password to see its strength.";
+            label.textContent = score ? "Password strength: " + ["", "Weak", "Medium", "Good", "Strong"][score] : "Enter a new password to see its strength.";
         }
         input.addEventListener("input", update);
         input.addEventListener("change", update);
