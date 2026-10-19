@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import React from 'react'
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import ScenarioDetailPage from './page'
 import { SCENARIOS, getLabSurface } from '@/hooks/useScenarios'
 
@@ -128,6 +128,44 @@ jest.mock('@/components/scenario/BigPictureModal', () => ({
 jest.mock('@/components/scenario/GuideExtraModal', () => ({
   GuideExtraModal: () => null,
 }))
+
+describe('ScenarioDetailPage first-run walkthrough', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    jest.useFakeTimers()
+  })
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('auto-starts once per user, then only reopens from the ? button', () => {
+    const first = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    expect(screen.queryByTestId('lab-tour-card')).toBeNull()
+    act(() => {
+      jest.advanceTimersByTime(600)
+    })
+    expect(screen.getByTestId('lab-tour-card')).toHaveAttribute('data-step-target', 'task-panel')
+    expect(document.querySelector('[data-tour="task-panel"]')).not.toBeNull()
+    expect(document.querySelector('[data-tour="lab-surface"]')).not.toBeNull()
+    expect(document.querySelector('[data-tour="lab-help"]')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Close walkthrough/i }))
+    expect(screen.queryByTestId('lab-tour-card')).toBeNull()
+    expect(window.localStorage.getItem('cr.labTourSeen.student')).toBe('1')
+    first.unmount()
+
+    render(<ScenarioDetailPage params={{ id: '06' }} />)
+    act(() => {
+      jest.advanceTimersByTime(2000)
+    })
+    expect(screen.queryByTestId('lab-tour-card')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Show lab walkthrough/i }))
+    expect(screen.getByTestId('lab-tour-card')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('DVWA opens here')).toBeInTheDocument()
+  })
+})
 
 describe('ScenarioDetailPage right-pane surface selection', () => {
   it('correctly maps labSurface metadata across scenarios', () => {
