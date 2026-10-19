@@ -5,7 +5,9 @@ import { Eye, EyeOff, KeyRound, Wand2 } from "lucide-react";
 import { Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { generatePassword } from "@/lib/generatePassword";
 import { PASSWORD_MAX, PASSWORD_MIN } from "@/lib/adminUserValidation";
+import { PASSWORD_HISTORY_HINT_ADMIN } from "@/lib/passwordStrength";
 import type { AdminUser } from "@/lib/api";
+import { PasswordStrengthMeter } from "./PasswordStrengthMeter";
 
 interface ResetPasswordModalProps {
   user: AdminUser | null;
@@ -90,7 +92,7 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                     }}
                     onBlur={() => setTouched(true)}
                     aria-invalid={touched && !!lengthError}
-                    aria-describedby={`${uid}-pw-msg`}
+                    aria-describedby={`${uid}-pw-strength ${uid}-pw-strength-must ${uid}-pw-strength-common-hint ${uid}-pw-strength-history-hint ${uid}-pw-msg`}
                     className={`w-full rounded-lg border bg-secondary px-3 py-2 pr-10 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-brand/20 ${
                       touched && lengthError ? "border-red-300" : "border-border focus:border-brand/40"
                     }`}
@@ -116,6 +118,13 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                   Generate
                 </Button>
               </div>
+              <PasswordStrengthMeter
+                password={password}
+                labelId={`${uid}-pw-strength`}
+                audience="admin"
+                historyHint={PASSWORD_HISTORY_HINT_ADMIN}
+                context={{ username: user.username, email: user.email }}
+              />
               <p id={`${uid}-pw-msg`} className={`mt-1 text-xs ${touched && lengthError ? "text-danger" : "text-text-muted"}`}>
                 {touched && lengthError ? lengthError : "Choose your own unique password or passphrase (8–128 characters). Avoid common passwords, the username, the email, and the last 3 passwords. Generate is optional."}
               </p>
