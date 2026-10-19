@@ -210,7 +210,9 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                 <input
                   id={`${uid}-password`}
                   type={showPassword ? "text" : "password"}
-                  autoComplete="off"
+                  // "new-password", not "off": browsers ignore "off" on a username +
+                  // password pair and fill in the signed-in admin's own saved login.
+                  autoComplete="new-password"
                   value={form.password}
                   onChange={(e) => set("password", e.target.value)}
                   aria-invalid={!!errors.password}

@@ -85,7 +85,8 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                     id={`${uid}-pw`}
                     data-autofocus
                     type={show ? "text" : "password"}
-                    autoComplete="off"
+                    // "new-password" so the browser never fills the admin's saved password.
+                    autoComplete="new-password"
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value);
