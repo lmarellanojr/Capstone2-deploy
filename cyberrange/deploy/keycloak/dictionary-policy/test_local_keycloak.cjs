@@ -102,7 +102,7 @@ async function browserFlow(javaScriptEnabled) {
       generated = await page.locator('#password-new').inputValue();
       assert.equal(generated.length, 24);
       assert(!/[A-Za-z]/.test(generated));
-      await page.locator('#password-confirm').fill(generated);
+      assert.equal(await page.locator('#password-confirm').inputValue(), generated);
     } else {
       generated = strong();
       await page.locator('#password-new').fill(generated);
