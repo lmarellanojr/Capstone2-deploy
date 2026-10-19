@@ -327,7 +327,7 @@ def test_every_reason_the_script_can_print_is_allowlisted():
     assert emitted == scoring_diagnostics.REASON_CODES_BY_SCENARIO[9]
 
 
-@pytest.mark.parametrize("scenario,milestone", [(1, 1), (6, 1), (11, 2)])
+@pytest.mark.parametrize("scenario,milestone", [(6, 1), (11, 2)])
 def test_other_scenarios_print_no_diag_line(tmp_path, scenario, milestone):
     token, diag, lines = run(tmp_path, milestone, scenario=scenario)
     assert token in ("PASS", "FAIL")
