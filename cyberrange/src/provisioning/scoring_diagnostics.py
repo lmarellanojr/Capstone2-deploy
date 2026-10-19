@@ -87,12 +87,17 @@ def enabled() -> bool:
 
 
 def retention_days() -> int:
-    raw = os.getenv("SCORING_DIAGNOSTICS_RETENTION_DAYS") or os.getenv("S3_DIAGNOSTICS_RETENTION_DAYS", "14")
-    try:
-        days = int(raw)
-    except ValueError:
-        return 14
-    return days if days > 0 else 14
+    """The first positive int of the shared name, then the pilot's; else 14.
+    A bad shared value falls through to the pilot's, so an operator's shorter
+    retention for this student data is never silently replaced by the default."""
+    for name in ("SCORING_DIAGNOSTICS_RETENTION_DAYS", "S3_DIAGNOSTICS_RETENTION_DAYS"):
+        try:
+            days = int(os.getenv(name, "").strip())
+        except ValueError:
+            continue
+        if days > 0:
+            return days
+    return 14
 
 
 def applies_to(scenario_id: int) -> bool:
