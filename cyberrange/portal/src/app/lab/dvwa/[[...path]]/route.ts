@@ -21,10 +21,13 @@ import {
   stripDisallowedDvwaMenu,
 } from '@/lib/dvwaProxy'
 import {
+  browserNearMiss,
   browserScoreFailureHint,
   browserScoreLabel,
   detectBrowserMilestone,
+  dvwaSecurityLevel,
   injectScoreNotice,
+  type NearMiss,
   type ScoreNotice,
 } from '@/lib/dvwaScoreSignals'
 import {
@@ -61,6 +64,26 @@ const HOP = new Set([
 ])
 
 type RouteCtx = { params: Promise<{ path?: string[] }> | { path?: string[] } }
+
+/** Instructor-only near-miss code (Scenario 2 diagnostics). Not awaited: the page
+ *  never waits on it, and a failure only loses the reason. The API stores nothing
+ *  unless scenario 6 diagnostics are switched on. Only the code is sent.
+ */
+function postNearMiss(secret: string, studentId: string, podId: number, miss: NearMiss): void {
+  fetch(`${API_URL}/internal/browser-diagnostic`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-browser-score-secret': secret },
+    body: JSON.stringify({
+      student_id: studentId,
+      pod_id: podId,
+      scenario_id: 6,
+      milestone_id: miss.milestone,
+      reason: miss.reason,
+    }),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(5000),
+  }).catch(() => {})
+}
 
 async function ownerActivePodId(accessToken: string | undefined): Promise<number | null> {
   const headers: Record<string, string> = {}
@@ -277,6 +300,16 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
         console.error('dvwa proxy: browser score failed', err)
         scoreNotice = browserScoreFailureHint(null)
       }
+    }
+    if (!milestone && up.status === 200 && secret && studentName) {
+      const miss = browserNearMiss({
+        path: upstreamPath,
+        search: req.nextUrl.search,
+        requestBody: requestText,
+        responseText: text,
+        securityLevel: dvwaSecurityLevel(rawCookie || ''),
+      })
+      if (miss) postNearMiss(secret, studentName, podId, miss)
     }
 
     out.set('content-type', up.headers.get('content-type') || 'text/html; charset=utf-8')

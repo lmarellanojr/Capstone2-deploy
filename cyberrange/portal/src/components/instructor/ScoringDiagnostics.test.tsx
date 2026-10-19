@@ -177,3 +177,22 @@ it("orders scenario tables by catalog order, not by id", async () => {
   expect(headings[1]).toBe("Scenario 3 — SIEM Alert Triage")
   expect(headings[2]).toMatch(/^Scenario (id 11$|4 )/)
 })
+
+it("shows Scenario 2 browser reasons without a file column", async () => {
+  await renderWith({
+    student_id: "alice", enabled: true, enabled_scenarios: [6], retention_days: 14,
+    diagnostics: [{ ...ROW, scenario_id: 6, milestone_id: 3, reason_code: "UNION_NO_HASH", location: "NONE", copies: 0 }],
+  })
+  expect(screen.getByText("Scenario 2 — Web Application Attack / SQL Injection")).toBeInTheDocument()
+  expect(screen.getByText("3: Admin hash")).toBeInTheDocument()
+  expect(screen.getByText("No password hash in result")).toBeInTheDocument()
+  expect(screen.queryByText("File read from")).not.toBeInTheDocument()
+})
+
+it("has copy for every Scenario 2 backend reason code", () => {
+  const codes = [
+    "SECURITY_NOT_LOW", "PAYLOAD_NO_ROWS", "QUOTE_NO_ERROR", "UNION_NO_METADATA",
+    "UNION_NO_HASH", "XSS_NOT_REFLECTED", "CHECK_ERROR",
+  ]
+  expect(Object.keys(DIAGNOSTIC_SCENARIOS[6].reasons).sort()).toEqual(codes.sort())
+})

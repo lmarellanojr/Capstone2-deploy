@@ -70,15 +70,19 @@ class BrowserScoreIn(BaseModel):
     label: str
 
 
+class BrowserDiagnosticIn(BaseModel):
+    student_id: str
+    pod_id: int
+    scenario_id: int
+    milestone_id: int
+    reason: str
+
+
 def _pod_scenario_is_06(raw) -> bool:
     return str(raw).lstrip("0") == "6" or str(raw) in {"6", "06"}
 
 
-@internal_router.post("/internal/browser-score")
-def browser_score(
-    body: BrowserScoreIn,
-    x_browser_score_secret: str = Header(default=""),
-):
+def _require_browser_secret(got: str) -> None:
     expected = os.environ.get("BROWSER_SCORE_SECRET") or ""
     if not expected:
         logger.warning(
@@ -86,11 +90,35 @@ def browser_score(
             "Set the same value in env/.env and portal/.env.local."
         )
         raise HTTPException(status_code=503, detail="Browser scoring is not configured")
-    got = x_browser_score_secret or ""
     # Bytes compare: never raises on non-ASCII (str compare_digest would -> 500),
     # and returns False for unequal length. Guarantees 401, not 500.
-    if not hmac.compare_digest(got.encode("utf-8"), expected.encode("utf-8")):
+    if not hmac.compare_digest((got or "").encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _browser_pod(conn: sqlite3.Connection, pod_id: int, student_id: str) -> dict:
+    """The ACTIVE scenario 06 pod this student owns, or the HTTPException to send."""
+    row = conn.execute("SELECT * FROM pods WHERE pod_id=?", (pod_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Pod not found")
+    pod = dict(row)
+    if pod["status"] != "ACTIVE":
+        raise HTTPException(
+            status_code=409, detail=f"Pod not active (status: {pod['status']})"
+        )
+    if pod["student_id"] != student_id:
+        raise HTTPException(status_code=403, detail="Pod owner mismatch")
+    if not _pod_scenario_is_06(pod.get("scenario_id")):
+        raise HTTPException(status_code=409, detail="Pod is not on scenario 06")
+    return pod
+
+
+@internal_router.post("/internal/browser-score")
+def browser_score(
+    body: BrowserScoreIn,
+    x_browser_score_secret: str = Header(default=""),
+):
+    _require_browser_secret(x_browser_score_secret)
     if body.scenario_id != 6 or body.milestone_id not in _BROWSER_LABELS:
         raise HTTPException(status_code=400, detail="Unsupported milestone")
     if body.label != _BROWSER_LABELS[body.milestone_id]:
@@ -98,25 +126,59 @@ def browser_score(
 
     conn = get_db_connection()
     try:
-        row = conn.execute(
-            "SELECT * FROM pods WHERE pod_id=?", (body.pod_id,)
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Pod not found")
-        pod = dict(row)
-        if pod["status"] != "ACTIVE":
-            raise HTTPException(
-                status_code=409, detail=f"Pod not active (status: {pod['status']})"
-            )
-        if pod["student_id"] != body.student_id:
-            raise HTTPException(status_code=403, detail="Pod owner mismatch")
-        if not _pod_scenario_is_06(pod.get("scenario_id")):
-            raise HTTPException(status_code=409, detail="Pod is not on scenario 06")
+        pod = _browser_pod(conn, body.pod_id, body.student_id)
         with conn:
             record_browser_milestone(conn, pod, body.milestone_id, body.label)
     finally:
         conn.close()
+    # A pass replaces an earlier near-miss reason; after the score commit.
+    if scoring_diagnostics.applies_to(6):
+        scoring_diagnostics.record_safely(pod, 6, body.milestone_id, "PASS", None)
     return {"status": "PASS", "milestone_id": body.milestone_id}
+
+
+@internal_router.post("/internal/browser-diagnostic")
+def browser_diagnostic(
+    body: BrowserDiagnosticIn,
+    x_browser_score_secret: str = Header(default=""),
+):
+    """Instructor-only reason a Scenario 2 browser attempt did not score.
+
+    The portal posts only an allowlisted code -- never the payload or the page.
+    Nothing is stored unless 6 is in SCORING_DIAGNOSTICS_SCENARIOS, and a
+    milestone this student already passed on this pod keeps its PASS row.
+    """
+    _require_browser_secret(x_browser_score_secret)
+    if body.scenario_id != 6 or body.milestone_id not in _BROWSER_LABELS:
+        raise HTTPException(status_code=400, detail="Unsupported milestone")
+    if body.reason not in scoring_diagnostics.REASON_CODES_BY_SCENARIO[6]:
+        raise HTTPException(status_code=400, detail="Unknown reason")
+    if not scoring_diagnostics.applies_to(6):
+        return {"recorded": False}
+
+    conn = get_db_connection()
+    try:
+        pod = _browser_pod(conn, body.pod_id, body.student_id)
+        passed = _milestone_passed_on_pod(conn, pod, body.milestone_id)
+    finally:
+        conn.close()
+    if passed:
+        return {"recorded": False}
+    diag = {"reason": body.reason, "location": "NONE", "copies": 0}
+    # keep_pass: a browser pass recorded between the check above and this write
+    # (the proxy doesn't await this call) must win.
+    scoring_diagnostics.record_safely(pod, 6, body.milestone_id, "FAIL", diag, keep_pass=True)
+    return {"recorded": True}
+
+
+def _milestone_passed_on_pod(conn: sqlite3.Connection, pod: dict, milestone_id: int) -> bool:
+    """Any PASS (browser or Kali fallback) for this student on this pod."""
+    row = conn.execute(
+        "SELECT 1 FROM milestone_verification "
+        "WHERE pod_id=? AND student_id=? AND scenario_id=6 AND milestone_id=? AND status='PASS' LIMIT 1",
+        (pod["pod_id"], pod["student_id"], milestone_id),
+    ).fetchone()
+    return row is not None
 
 
 def _scoring_deps() -> dict:

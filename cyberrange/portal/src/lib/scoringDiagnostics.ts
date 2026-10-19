@@ -73,6 +73,39 @@ export const SCENARIO3_REASON_COPY: Record<string, ReasonCopy> = {
   },
 };
 
+// Scenario 2 codes come from the DVWA proxy (browserNearMiss), not the shell
+// scorer. Each says what the DVWA response lacked; none says how to fix it.
+export const SCENARIO2_REASON_COPY: Record<string, ReasonCopy> = {
+  SECURITY_NOT_LOW: {
+    label: "Security level not Low",
+    detail: "The attempt was sent with DVWA's security cookie set to medium, high or impossible.",
+  },
+  PAYLOAD_NO_ROWS: {
+    label: "OR payload returned too few rows",
+    detail: "An OR 1=1 payload was sent, but the page listed fewer than two users.",
+  },
+  QUOTE_NO_ERROR: {
+    label: "Quote gave no SQL error",
+    detail: "An id with a quote was sent, but the page showed no SQL syntax error.",
+  },
+  UNION_NO_METADATA: {
+    label: "No database name in result",
+    detail: "A UNION SELECT on information_schema or database() was sent, but no result cell was information_schema or dvwa.",
+  },
+  UNION_NO_HASH: {
+    label: "No password hash in result",
+    detail: "A UNION SELECT … FROM users was sent, but no result cell was a 32-character hash.",
+  },
+  XSS_NOT_REFLECTED: {
+    label: "Script not reflected",
+    detail: "A name with <script was sent, but the page did not contain Hello <script.",
+  },
+  CHECK_ERROR: {
+    label: "Check error",
+    detail: "A stored Scenario 2 reason could not be read. The proxy never sends this; it is the fallback for an unknown code. Not the student's fault.",
+  },
+};
+
 export const LOCATION_LABELS: Record<string, string> = {
   HOME_MSFADMIN: "/home/msfadmin",
   HOME_STUDENT: "/home/student",
@@ -176,6 +209,17 @@ export const DIAGNOSTIC_SCENARIOS: Record<number, ScenarioDiagnostics> = {
       4: "4: Tomcat manager exploit",
     },
     reasons: SCENARIO1_REASON_COPY,
+    showsLocation: false,
+  },
+  6: {
+    title: "Scenario 2 — Web Application Attack / SQL Injection",
+    milestones: {
+      1: "1: Injection point",
+      2: "2: Database extraction",
+      3: "3: Admin hash",
+      4: "4: Reflected XSS",
+    },
+    reasons: SCENARIO2_REASON_COPY,
     showsLocation: false,
   },
   9: {

@@ -76,6 +76,75 @@ export function detectBrowserMilestone(input: {
   return null
 }
 
+/** Instructor-only codes; keep in sync with REASON_CODES_BY_SCENARIO[6] in scoring_diagnostics.py. */
+export type NearMissReason =
+  | 'SECURITY_NOT_LOW'
+  | 'PAYLOAD_NO_ROWS'
+  | 'QUOTE_NO_ERROR'
+  | 'UNION_NO_METADATA'
+  | 'UNION_NO_HASH'
+  | 'XSS_NOT_REFLECTED'
+
+export type NearMiss = { milestone: BrowserMilestone; reason: NearMissReason }
+
+/** DVWA's `security` cookie (low/medium/high/impossible), lowercased, or '' when absent. */
+export function dvwaSecurityLevel(cookieHeader: string): string {
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq !== -1 && part.slice(0, eq).trim() === 'security') {
+      return part.slice(eq + 1).trim().toLowerCase()
+    }
+  }
+  return ''
+}
+
+/** Why an attack on this page did not score, for instructors. Call only when
+ *  detectBrowserMilestone returned null for the same request.
+ *  Returns null unless the input is clearly an attempt at one milestone: a plain
+ *  id or name, a placeholder, or a payload shape the detector does not look for
+ *  stays generic. The reason names what the response lacked, never a fix.
+ */
+export function browserNearMiss(input: {
+  path: string
+  search: string
+  requestBody: string
+  responseText: string
+  securityLevel: string
+}): NearMiss | null {
+  const path = input.path.toLowerCase()
+  const notLow = input.securityLevel !== '' && input.securityLevel !== 'low'
+
+  if (path.includes('/vulnerabilities/xss_r')) {
+    const name = nameValue(input.search, input.requestBody)
+    if (!name || PLACEHOLDER.test(name) || !/<script/i.test(name)) return null
+    if (notLow) return { milestone: 4, reason: 'SECURITY_NOT_LOW' }
+    if (!/Hello <script/i.test(input.responseText)) return { milestone: 4, reason: 'XSS_NOT_REFLECTED' }
+    return null
+  }
+
+  if (!path.includes('/vulnerabilities/sqli')) return null
+  const id = idValue(input.search, input.requestBody)
+  if (!id || PLACEHOLDER.test(id)) return null
+
+  // Same payload tests as detectBrowserMilestone, most specific first.
+  const union = /union\s+select/i.test(id)
+  let attempt: NearMiss | null = null
+  if (union) {
+    // A UNION the detector has no rule for (e.g. another table) stays generic.
+    if (/from\s+users/i.test(id)) attempt = { milestone: 3, reason: 'UNION_NO_HASH' }
+    else if (/(information_schema|database\s*\()/i.test(id)) attempt = { milestone: 2, reason: 'UNION_NO_METADATA' }
+  } else if (/or\s+['"]?1['"]?\s*=\s*['"]?1/i.test(id)) attempt = { milestone: 1, reason: 'PAYLOAD_NO_ROWS' }
+  else if (id.includes("'")) {
+    // Another tautology (`' or 'a'='a`, `' OR true#`, `' || 1#`) or a page that
+    // listed several users may have worked in a way the detector doesn't
+    // recognise, so only a lone quote with one row or none is a near-miss.
+    const rows = (input.responseText.match(/First name:/gi) || []).length
+    if (rows < 2 && !/\bor\b|\|\|/i.test(id)) attempt = { milestone: 1, reason: 'QUOTE_NO_ERROR' }
+  }
+  if (!attempt) return null
+  return notLow ? { milestone: attempt.milestone, reason: 'SECURITY_NOT_LOW' } : attempt
+}
+
 export type ScoreNotice = { title: string; message: string }
 
 /** Student-facing reason a detected attack did not earn points.
