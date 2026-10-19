@@ -7,7 +7,7 @@ import "@testing-library/jest-dom"
 import { act, render, screen } from "@testing-library/react"
 import { ScoringDiagnostics } from "./ScoringDiagnostics"
 import { instructor } from "@/lib/api"
-import { DIAGNOSTIC_SCENARIOS, SCENARIO3_REASON_COPY } from "@/lib/scoringDiagnostics"
+import { CHECK_ERROR_COPY, DIAGNOSTIC_SCENARIOS, SCENARIO3_REASON_COPY } from "@/lib/scoringDiagnostics"
 
 jest.mock("@/lib/api", () => ({ instructor: { getStudentDiagnostics: jest.fn() } }))
 jest.mock("@/components/ui", () => ({
@@ -130,4 +130,31 @@ it("groups rows by scenario and labels an unmapped scenario without trusting its
   expect(screen.getAllByText("Wrong agent")).toHaveLength(1)
   expect(screen.getByText(SCENARIO3_REASON_COPY.CHECK_ERROR.label)).toBeInTheDocument()
   expect(screen.getAllByText("File read from")).toHaveLength(1)
+})
+
+it("uses scenario-neutral fallback copy, not Scenario 3's", async () => {
+  expect(CHECK_ERROR_COPY.detail).not.toMatch(/auth log/)
+  await renderWith({
+    student_id: "alice", enabled: true, retention_days: 14,
+    diagnostics: [{ ...ROW, scenario_id: 42, reason_code: "ANYTHING", location: null, copies: 0 }],
+  })
+  expect(screen.getByText(CHECK_ERROR_COPY.detail)).toBeInTheDocument()
+  expect(screen.queryByText(SCENARIO3_REASON_COPY.CHECK_ERROR.detail)).not.toBeInTheDocument()
+})
+
+it("orders scenario tables by catalog order, not by id", async () => {
+  await renderWith({
+    student_id: "alice", enabled: true, retention_days: 14,
+    diagnostics: [
+      { ...ROW, scenario_id: 11, location: null, copies: 0 },
+      ROW,
+      { ...ROW, scenario_id: 1, location: null, copies: 0 },
+    ],
+  })
+  // Titles depend on which scenarios this build maps; the order must not.
+  const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent ?? "")
+  expect(headings).toHaveLength(3)
+  expect(headings[0]).toMatch(/^Scenario (id 1$|1 )/)
+  expect(headings[1]).toBe("Scenario 3 — SIEM Alert Triage")
+  expect(headings[2]).toMatch(/^Scenario (id 11$|4 )/)
 })

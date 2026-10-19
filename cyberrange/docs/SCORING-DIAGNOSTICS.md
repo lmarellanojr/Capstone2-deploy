@@ -50,7 +50,7 @@ The score poller purges at most once an hour, even with every scenario switched 
 
 1. Baseline the deployed scorer for that scenario and map each check to a code. Leave failures the check can't tell apart generic.
 2. Print the DIAG line from that scenario's check, computing PASS/FAIL from the same reason so the two can't disagree. Keep the predicates and their order.
-3. Add the scenario's codes to `REASON_CODES_BY_SCENARIO` and its copy and milestone labels to `portal/src/lib/scoringDiagnostics.ts`.
+3. Add the scenario's codes to `REASON_CODES_BY_SCENARIO` and its copy and milestone labels to `DIAGNOSTIC_SCENARIOS` in `portal/src/lib/scoringDiagnostics.ts`. Both need a `CHECK_ERROR` entry: the shared fallback copy is deliberately generic, so give the scenario its own wording for what "could not run" means there. `LOCATION_CODES` and the `copies` range are shared and Scenario 3-shaped; a non-artifact check prints `location=NONE copies=0`.
 4. Test every mapped branch against the real script, plus "no text leaks" and "nothing in the VM log".
 5. Enable it on its own by adding its id to `SCORING_DIAGNOSTICS_SCENARIOS`, after the Scenario 3 pilot has been reviewed.
 
