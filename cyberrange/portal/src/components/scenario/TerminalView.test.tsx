@@ -115,4 +115,25 @@ describe('TerminalView presentation component', () => {
     const modal = screen.getByTestId('guide-extra-modal')
     expect(modal).toHaveAttribute('data-which', 'tools')
   })
+
+  describe('Scenario 2 DVWA pane', () => {
+    const scen2 = SCENARIOS.find((s) => s.id === '06')!
+
+    it('opens DVWA on Home (where the proxy signs in), never on login.php', async () => {
+      const open = jest.spyOn(window, 'open').mockImplementation(() => null)
+      try {
+        render(<TerminalView pod={pod(2)} scenario={scen2} surface="dvwa" onEnd={jest.fn()} />)
+        const frame = document.querySelector('iframe') as HTMLIFrameElement
+        expect(frame.getAttribute('src')).toBe('/lab/dvwa/index.php')
+
+        fireEvent.click(screen.getByRole('button', { name: /Open in new tab/i }))
+        expect(open).toHaveBeenCalledWith('/lab/dvwa/index.php', '_blank', 'noopener,noreferrer')
+
+        expect(screen.queryByRole('button', { name: 'Login' })).toBeNull()
+        expect(document.body.innerHTML).not.toContain('login.php')
+      } finally {
+        open.mockRestore()
+      }
+    })
+  })
 })

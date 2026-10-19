@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronRight, Clock, Lightbulb, LifeBuoy, XCircle } from 'lucide-react'
+import { ChevronRight, CircleHelp, Clock, Lightbulb, LifeBuoy, XCircle } from 'lucide-react'
 import { LayoutWrapper } from '@/components/layout/LayoutWrapper'
 import { Badge, Button, LoadingSpinner, Modal, ModalHeader, ModalBody, ModalFooter } from '@/components/ui'
 import {
@@ -19,6 +19,7 @@ import {
 import { LabSurface } from '@/components/scenario/LabSurface'
 import { ExercisePanel } from '@/components/scenario/ExercisePanel'
 import { ScenarioOutline } from '@/components/scenario/ScenarioOutline'
+import { LabTour } from '@/components/scenario/LabTour'
 import { GuideExtraModal, type GuideExtra } from '@/components/scenario/GuideExtraModal'
 import { VerificationRequestModal } from '@/components/reviews/VerificationRequestModal'
 import { useScenarios, scenarioDisplayTitle, isFlagMilestone, getLabSurface } from '@/hooks/useScenarios'
@@ -28,6 +29,7 @@ import { useMyReviews } from '@/hooks/useMyReviews'
 import { useToastContext } from '@/context/ToastContext'
 import { uploadScreenshots } from '@/lib/screenshotUpload'
 import { hasSeenBigPicture, markBigPictureSeen } from '@/lib/bigPictureSeen'
+import { hasSeenLabTour, markLabTourSeen } from '@/lib/labTourSeen'
 import { destroySession, sessionKey } from '@/components/terminal/terminalSessionManager'
 import { isScenarioComplete } from '@/lib/scenarioCompletion'
 
@@ -71,6 +73,8 @@ export default function ScenarioDetailPage({ params }: PageProps) {
     doneCount,
     progressPct,
     nextMilestoneId,
+    lastScoredId,
+    clearLastScored,
     handleVerify,
     onFlagPassed,
   } = useScenarioMilestones(
@@ -89,6 +93,13 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   const [showCompletion, setShowCompletion] = useState(false)
 
   const [troubleshootingOpen, setTroubleshootingOpen] = useState(false)
+
+  // First-run walkthrough: auto-starts once per user on their first live lab.
+  const [tourOpen, setTourOpen] = useState(false)
+  // Bumped by the ? button so a replay always restarts at step 1, even mid-tour.
+  const [tourRun, setTourRun] = useState(0)
+  const tourAutoStarted = useRef(false)
+  const hasPod = !!pod
 
   // "Before you start — the big picture" welcome
   const [bigPictureOpen, setBigPictureOpen] = useState(false)
@@ -121,7 +132,8 @@ export default function ScenarioDetailPage({ params }: PageProps) {
   const handleSelectTask = useCallback((taskId: number) => {
     if (taskId !== 0) setPreferPrep(false)
     setSelectedTaskId(taskId)
-  }, [])
+    clearLastScored()
+  }, [clearLastScored])
 
   // Current active task (SIEM starts on unscored prep when nothing scored yet)
   const currentTaskId =
@@ -134,6 +146,11 @@ export default function ScenarioDetailPage({ params }: PageProps) {
     presentationTasks.findIndex((m) => m.id === currentTaskId)
   )
   const currentMilestone = presentationTasks[currentTaskIndex]
+  // "Start here" only on a fresh, live attempt: lab active, nothing scored yet
+  // and still on the first task (SIEM prep counts as the first task).
+  const isStartHere = phase === 'active' && !milestonesLoading && doneCount === 0 && currentTaskIndex === 0
+  const justScoredMilestone =
+    lastScoredId != null ? scenario?.milestones.find((m) => m.id === lastScoredId) ?? null : null
 
   useEffect(() => {
     if (phase !== 'idle' || !scenario || autoOpened.current) return
@@ -143,6 +160,27 @@ export default function ScenarioDetailPage({ params }: PageProps) {
       setBigPictureOpen(true)
     }
   }, [phase, scenario])
+
+  useEffect(() => {
+    if (phase !== 'active' || !hasPod || !studentId || tourAutoStarted.current) return
+    if (hasSeenLabTour(studentId)) {
+      tourAutoStarted.current = true
+      return
+    }
+    // Let the panes lay out first so the coach marks anchor to real positions.
+    // Marked started only when it fires, so a re-render inside the delay
+    // can't cancel the first run for good.
+    const t = window.setTimeout(() => {
+      tourAutoStarted.current = true
+      setTourOpen(true)
+    }, 600)
+    return () => window.clearTimeout(t)
+  }, [phase, hasPod, studentId])
+
+  const closeTour = useCallback(() => {
+    setTourOpen(false)
+    if (studentId) markLabTourSeen(studentId)
+  }, [studentId])
 
   useEffect(() => {
     if (authStatus === 'unauthenticated') {
@@ -301,7 +339,7 @@ export default function ScenarioDetailPage({ params }: PageProps) {
               <div className="flex-1 min-h-0 grid grid-cols-1 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 mb-3 overflow-y-auto min-[900px]:overflow-hidden">
                 {/* Left Pane: ExercisePanel */}
                 {currentMilestone && (
-                  <div className="min-h-0 h-full">
+                  <div className="min-h-0 h-full" data-tour="task-panel">
                     <ExercisePanel
                       pod={pod}
                       scenario={scenario}
@@ -320,12 +358,15 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                       hasLatestReview={!!latestRequest(currentMilestone.id)}
                       latestReviewStatus={latestRequest(currentMilestone.id)?.case?.status}
                       onOpenScoringInfo={() => setGuideExtra('scoring')}
+                      startHere={isStartHere}
+                      justScored={justScoredMilestone}
+                      onDismissJustScored={clearLastScored}
                     />
                   </div>
                 )}
 
                 {/* Right pane: surface chosen by scenario metadata (terminal/dvwa/siem) */}
-                <div className="min-w-0 min-h-0 h-full flex flex-col">
+                <div className="min-w-0 min-h-0 h-full flex flex-col" data-tour="lab-surface">
                   <LabSurface
                     pod={pod}
                     scenario={scenario}
@@ -391,7 +432,19 @@ export default function ScenarioDetailPage({ params }: PageProps) {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" data-tour="lab-help">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setTourRun((n) => n + 1)
+                      setTourOpen(true)
+                    }}
+                    aria-label="Show lab walkthrough"
+                    title="Show lab walkthrough"
+                  >
+                    <CircleHelp size={14} aria-hidden="true" />
+                  </Button>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -477,6 +530,14 @@ export default function ScenarioDetailPage({ params }: PageProps) {
           )}
         </div>
       </div>
+
+      <LabTour
+        key={tourRun}
+        focusOnOpen={tourRun > 0}
+        open={tourOpen && phase === 'active' && !!pod}
+        onClose={closeTour}
+        surface={getLabSurface(scenario)}
+      />
 
       <TroubleshootingDrawer
         isOpen={troubleshootingOpen}

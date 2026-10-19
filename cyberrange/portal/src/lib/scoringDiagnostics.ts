@@ -80,6 +80,42 @@ export const LOCATION_LABELS: Record<string, string> = {
   NONE: "—",
 };
 
+export const SCENARIO1_REASON_COPY: Record<string, ReasonCopy> = {
+  NO_POD_ADDRESS: {
+    label: "Kali has no lab address",
+    detail: "Kali's eth0 had no IPv4 address when scoring ran, so the check could not tell which subnet is this pod's. Not the student's fault.",
+  },
+  NO_SUBNET_ROUTE: {
+    label: "No route to the lab network",
+    detail: "Kali had no route to a 10.0.N.0/24 pod subnet when scoring ran. This is checked at scoring time, not when the scan ran. Check the lab network, then re-run the check.",
+  },
+  COMMAND_NOT_FOUND: {
+    label: "No nmap scan found",
+    detail: "No nmap command with arguments in Kali's shell history or command log (man nmap or installing nmap doesn't count).",
+  },
+  COMMAND_NOT_MATCHED: {
+    label: "nmap didn't match this task",
+    detail:
+      "An nmap command was run, but none matched this task against this pod: 1 scans this pod's .0/24 network; 2 uses -p or -F on .20 or .30; 3 uses -sV on .20 or .30.",
+  },
+  MSF_NOT_RUNNING: {
+    label: "Metasploit not running",
+    detail: "The lab terminal is not a single pane running msfconsole (it was closed, exited to the shell, or split).",
+  },
+  SESSION_NOT_OPENED: {
+    label: "No Tomcat session opened",
+    detail: "msfconsole is running, but its output shows no tomcat_mgr_deploy run that opened a session to this pod's meta (.20).",
+  },
+  SESSION_NOT_LIVE: {
+    label: "Session no longer live",
+    detail: "A session to meta was opened, but msfconsole no longer holds a connection to it. The session was closed or dropped.",
+  },
+  CHECK_ERROR: {
+    label: "Check error",
+    detail: "The check could not run or read the lab state (a missing tool such as ip, or unexpected pane output). Not the student's fault.",
+  },
+};
+
 // Scorer id 11 is catalog Scenario 4.
 export const SCENARIO4_REASON_COPY: Record<string, ReasonCopy> = {
   COMMAND_NOT_FOUND: {
@@ -131,6 +167,17 @@ export const CATALOG_ORDER: readonly number[] = [1, 6, 9, 11];
 
 /** Keyed by scorer scenario id (scoring_checks.sh). */
 export const DIAGNOSTIC_SCENARIOS: Record<number, ScenarioDiagnostics> = {
+  1: {
+    title: "Scenario 1 — Network Reconnaissance & Exploitation",
+    milestones: {
+      1: "1: Host discovery",
+      2: "2: Port enumeration",
+      3: "3: Service versions",
+      4: "4: Tomcat manager exploit",
+    },
+    reasons: SCENARIO1_REASON_COPY,
+    showsLocation: false,
+  },
   9: {
     title: "Scenario 3 — SIEM Alert Triage",
     milestones: {

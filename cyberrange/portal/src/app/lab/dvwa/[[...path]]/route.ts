@@ -27,6 +27,12 @@ import {
   injectScoreNotice,
   type ScoreNotice,
 } from '@/lib/dvwaScoreSignals'
+import {
+  dvwaAutoLogin,
+  dvwaSessionBrowserCookies,
+  needsDvwaLogin,
+  withDvwaSession,
+} from '@/lib/dvwaAutoLogin'
 
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://10.115.77.1:5000'
 
@@ -142,6 +148,26 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     )
   }
 
+  // Signed out of DVWA (first visit, expired PHP session): sign in on the
+  // student's own pod and replay the request, so the lab opens ready to use.
+  let loginCookies: string[] = []
+  if (needsDvwaLogin(req.method, upstreamPath, up)) {
+    const sid = await dvwaAutoLogin(dvwaUpstreamOrigin(podId))
+    if (sid) {
+      upstreamCookie = withDvwaSession(upstreamCookie, sid)
+      try {
+        up = await fetchUp(upstreamCookie)
+        loginCookies = dvwaSessionBrowserCookies(sid)
+      } catch (err) {
+        console.error('dvwa proxy: replay after sign-in failed', upstream, err)
+        return new NextResponse(
+          'DVWA proxy unreachable. From Kali: curl -sI http://$TARGET_DVWA/  (do not use the host :18301 URL).',
+          { status: 502, headers: { 'content-type': 'text/plain; charset=utf-8' } }
+        )
+      }
+    }
+  }
+
   const upType = up.headers.get('content-type')
   let text: string | null = null
   if (shouldRewriteBody(upType) && req.method !== 'HEAD') {
@@ -181,6 +207,10 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     out.append('set-cookie', rewriteCookie(c))
   }
   for (const c of stalePhpSessionClearCookies()) {
+    out.append('set-cookie', c)
+  }
+  // After DVWA's own cookies so the session we opened is the one that sticks.
+  for (const c of loginCookies) {
     out.append('set-cookie', c)
   }
 

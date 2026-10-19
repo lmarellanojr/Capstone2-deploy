@@ -27,12 +27,19 @@ export function useScenarioMilestones(
   const [verifying, setVerifying] = useState<Set<number>>(new Set())
   const [milestonesLoading, setMilestonesLoading] = useState(true)
   const [loadedProgressKey, setLoadedProgressKey] = useState<string | null>(null)
+  // Most recent milestone the scorer passed during this visit (never set by the
+  // initial progress load), so the panel can confirm the step after it advances.
+  const [lastScoredId, setLastScoredId] = useState<number | null>(null)
 
   const currentProgressKey = podId && scenarioId ? scenarioProgressKey(podId, scenarioId) : null
   const currentProgressKeyRef = useRef(currentProgressKey)
   currentProgressKeyRef.current = currentProgressKey
 
   const prevPassedRef = useRef<Set<number>>(new Set())
+  // True once prevPassedRef holds this pod's already-passed milestones. Until
+  // then a poll can't tell new passes from old ones (initial load failed or is
+  // still in flight), so the first poll only records a baseline.
+  const baselineReadyRef = useRef(false)
   const milestonesRef = useRef(milestones)
   milestonesRef.current = milestones
 
@@ -44,7 +51,9 @@ export function useScenarioMilestones(
       setVerifying(new Set())
       setLoadedProgressKey(null)
       setMilestonesLoading(false)
+      setLastScoredId(null)
       prevPassedRef.current = new Set()
+      baselineReadyRef.current = false
       return
     }
 
@@ -56,7 +65,9 @@ export function useScenarioMilestones(
     setVerifying(new Set())
     setLoadedProgressKey(null)
     setMilestonesLoading(true)
+    setLastScoredId(null)
     prevPassedRef.current = new Set()
+    baselineReadyRef.current = false
 
     provisioning.getMilestones(podId).then((res) => {
       if (!active || currentProgressKeyRef.current !== requestKey) return
@@ -64,6 +75,7 @@ export function useScenarioMilestones(
         const passed = passedMilestoneIdsForScenario(res.milestones, scenarioId)
         setCompleted(passed)
         prevPassedRef.current = new Set(passed)
+        baselineReadyRef.current = true
       }
       setLockedReview(new Set(res?.manual_check_locked ?? []))
       setLoadedProgressKey(requestKey)
@@ -96,6 +108,18 @@ export function useScenarioMilestones(
         setLockedReview(new Set(res.manual_check_locked ?? []))
         const newPassed = passedMilestoneIdsForScenario(res.milestones, scenarioId)
 
+        if (!baselineReadyRef.current) {
+          // Earlier passes from a previous visit: show them, don't announce them.
+          baselineReadyRef.current = true
+          newPassed.forEach((mid) => prevPassedRef.current.add(mid))
+          setCompleted((prev) => {
+            const next = new Set(prev)
+            newPassed.forEach((id) => next.add(id))
+            return next
+          })
+          return
+        }
+
         const freshPassed: number[] = []
         newPassed.forEach((mid) => {
           if (!prevPassedRef.current.has(mid)) {
@@ -110,6 +134,7 @@ export function useScenarioMilestones(
             newPassed.forEach((id) => next.add(id))
             return next
           })
+          setLastScoredId(freshPassed[freshPassed.length - 1])
           freshPassed.forEach((mid) => {
             const pts = milestonesRef.current.find((m) => m.id === mid)?.points ?? 0
             successRef.current(`Task auto-detected! +${pts} pts`)
@@ -145,6 +170,7 @@ export function useScenarioMilestones(
           prevPassedRef.current.add(milestoneId)
           return next
         })
+        setLastScoredId(milestoneId)
         const pts = milestonesRef.current.find((m) => m.id === milestoneId)?.points ?? 0
         let msg = `Task complete! +${pts} pts`
         if (result.detection_score && result.detection_score > 0) {
@@ -183,7 +209,10 @@ export function useScenarioMilestones(
       prevPassedRef.current.add(milestoneId)
       return next
     })
+    setLastScoredId(milestoneId)
   }, [])
+
+  const clearLastScored = useCallback(() => setLastScoredId(null), [])
 
   const totalPoints = useMemo(
     () => milestones.reduce((sum, m) => sum + m.points, 0),
@@ -218,6 +247,8 @@ export function useScenarioMilestones(
     doneCount,
     progressPct,
     nextMilestoneId,
+    lastScoredId,
+    clearLastScored,
     handleVerify,
     onFlagPassed,
   }

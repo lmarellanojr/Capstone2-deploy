@@ -37,8 +37,8 @@ If pending, check **Low**, the correct module and field, and the actual result b
 ## 3. Set up your lab
 
 1. Start **SQL Injection** and wait for **ACTIVE**. DVWA appears inside the lab page; **Open in new tab** is available if preferred.
-2. Log in to DVWA with lab username `admin` and password `password`. If it shows database setup instead of the menu, ask your instructor to check the lab.
-3. Select **DVWA Security**, choose **Low**, and select **Submit**. Confirm the displayed security level.
+2. DVWA opens already signed in, with **DVWA Security** set to **Low** for you. If you ever see the DVWA login page instead, sign in with lab username `admin` and password `password`. If it shows database setup instead of the menu, ask your instructor to check the lab.
+3. Optional: select **DVWA Security** to confirm the displayed level is **Low**. If it is not, choose **Low** and select **Submit**.
 4. Select **SQL Injection** above the DVWA panel. Use **User ID** for Tasks 1–3.
 
 ## 4. Do the tasks
@@ -49,7 +49,7 @@ If pending, check **Low**, the correct module and field, and the actual result b
 
 **Where to work:** **SQL Injection**, **User ID** in the DVWA panel.
 
-> **DVWA sign-in:** username `admin`; password `password`. After signing in, set **DVWA Security** to **Low** before running this task.
+> **DVWA sign-in:** the lab signs you in and sets Security to Low automatically, so there is nothing to do here. Only if DVWA shows its login page: use username `admin`; password `password`. If you had to sign in manually, set **DVWA Security** to **Low** before running this task.
 
 1. Enter normal ID `1`, select **Submit**, and note the single user's result as your baseline.
 2. In DVWA's **User ID** field, paste this payload and select **Submit**:

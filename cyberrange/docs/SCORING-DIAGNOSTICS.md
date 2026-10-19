@@ -6,6 +6,7 @@ Instructors get a reason when a scored check fails. Students still see the gener
 
 | Scorer id | Catalog scenario | Reason codes | Status |
 |---|---|---|---|
+| 1 | Scenario 1 — Network Reconnaissance & Exploitation | [SCENARIO1-DIAGNOSTICS.md](SCENARIO1-DIAGNOSTICS.md) | Mapped; off until the pilot is reviewed |
 | 9 | Scenario 3 — SIEM Alert Triage | [SCENARIO3-DIAGNOSTICS.md](SCENARIO3-DIAGNOSTICS.md) | Pilot |
 | 11 | Scenario 4 — Vulnerability Hardening | [SCENARIO11-DIAGNOSTICS.md](SCENARIO11-DIAGNOSTICS.md) | Mapped; off until the pilot is reviewed |
 

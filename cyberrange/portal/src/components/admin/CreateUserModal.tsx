@@ -12,6 +12,7 @@ import {
   type CreateUserForm,
 } from "@/lib/adminUserValidation";
 import { UserAdminSetupHint } from "./UserAdminSetupHint";
+import { PasswordStrengthMeter } from "./PasswordStrengthMeter";
 import { generatePassword } from "@/lib/generatePassword";
 
 const EMPTY: CreateUserForm = {
@@ -141,6 +142,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
               {field("first_name", "First name")}
               <input
                 id={`${uid}-first_name`}
+                autoComplete="off"
                 value={form.first_name}
                 onChange={(e) => set("first_name", e.target.value)}
                 aria-invalid={!!errors.first_name}
@@ -152,6 +154,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
               {field("last_name", "Last name")}
               <input
                 id={`${uid}-last_name`}
+                autoComplete="off"
                 value={form.last_name}
                 onChange={(e) => set("last_name", e.target.value)}
                 aria-invalid={!!errors.last_name}
@@ -166,6 +169,8 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
             <input
               id={`${uid}-email`}
               type="email"
+              // These describe the new user, not the admin: no profile suggestions.
+              autoComplete="off"
               value={form.email}
               onChange={(e) => set("email", e.target.value)}
               aria-invalid={!!errors.email}
@@ -209,11 +214,13 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                 <input
                   id={`${uid}-password`}
                   type={showPassword ? "text" : "password"}
-                  autoComplete="off"
+                  // "new-password", not "off": browsers ignore "off" on a username +
+                  // password pair and fill in the signed-in admin's own saved login.
+                  autoComplete="new-password"
                   value={form.password}
                   onChange={(e) => set("password", e.target.value)}
                   aria-invalid={!!errors.password}
-                  aria-describedby={`${uid}-password-msg`}
+                  aria-describedby={`${uid}-password-strength ${uid}-password-strength-must ${uid}-password-strength-common-hint ${uid}-password-msg`}
                   className={`${input(errors.password)} pr-10`}
                 />
                 <button
@@ -237,6 +244,13 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                 Generate
               </Button>
             </div>
+            <PasswordStrengthMeter
+              password={form.password}
+              labelId={`${uid}-password-strength`}
+              audience="admin"
+              historyHint={null}
+              context={{ username: form.username, email: form.email }}
+            />
             {errorText("password", "Choose your own unique password or passphrase (8–128 characters). Avoid common passwords, your username, and your email. Generate is optional.")}
           </div>
 
