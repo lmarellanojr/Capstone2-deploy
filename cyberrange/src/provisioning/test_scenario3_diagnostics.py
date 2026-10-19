@@ -209,6 +209,18 @@ async def test_missing_table_never_breaks_scoring(enabled):
     assert len(_rows("milestone_verification")) == 1
 
 
+@pytest.mark.anyio
+async def test_non_db_error_in_record_never_breaks_scoring(enabled, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("bad pod row")
+
+    monkeypatch.setattr(sd, "record", boom)
+    res = await _verify(_pod(), _verifier("FAIL", "RULE_MISSING"))
+    assert res.status == "FAIL"
+    assert len(_rows("milestone_verification")) == 1
+    assert len(_rows("audit_log", event_type="MILESTONE_VERIFIED")) == 1
+
+
 # ── Lab-session association and pod-slot reuse ──────────────────────────────
 
 @pytest.mark.anyio

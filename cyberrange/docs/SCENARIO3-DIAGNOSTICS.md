@@ -26,13 +26,20 @@ Instructors get a reason when a Scenario 3 (SIEM Alert Triage, scorer id 9) arti
 | `PLACEHOLDER_OR_EXAMPLE` | `PASTE…`/`HH:MM`/`<…>` or guide fiction | same | guide fiction or the §5 example report |
 | `AGENT_MISSING` | no `agent … pod-…-meta` | — | no pod-…-meta named |
 | `AGENT_MISMATCH` | a pod-…-meta, not this lab's | — | a pod-…-meta, not this lab's |
-| `RULE_MISSING` | no 5710 and no rule number | no `rule … 5710` line, no rule number | no 5710, no rule number |
+| `RULE_MISSING` | no 5710 and no rule number | no `rule`/`Rule … 5710` line, no rule number | no 5710, no rule number |
 | `RULE_MISMATCH` | a rule number, not 5710 | same | same |
 | `TIMESTAMP_MISSING` | no ISO `…Z` time | no `…Z` on a rule 5710 line | — |
 | `TIMESTAMP_NOT_MATCHED` | `…Z` not within ±5 min of a real invalid-user SSH event | same | — |
 | `REPORT_TOO_SHORT` | — | — | ≤ 200 bytes |
 | `REPORT_BODY_TOO_SHORT` | — | — | < 120 chars after headings |
 | `CHECK_ERROR` | no auth log, unknown agent, or verifier ERROR | no auth log or verifier ERROR | unknown agent or verifier ERROR |
+
+**Reasons follow what the scorer read.** The M1 agent check and the M2 timeline check read the file line by line. They skip a last line with no trailing newline, and the timeline check only reads lines starting `rule`/`Rule` (not `RULE`). The reasons are computed the same way, so they name what the scorer actually saw:
+
+- `AGENT_MISSING` on a one-line triage file can mean the correct agent is on a final line with no newline.
+- `RULE_MISSING` on a timeline can mean the rule 5710 line has no final newline or is written `RULE 5710`.
+
+Have the student check the file in either case. Fixing the scorer itself changes scores, so it is tracked separately in #243.
 
 A row is stored for a PASS too (`reason_code` NULL). It replaces the earlier failure for that lab and milestone. JSON syntax was never a scoring predicate, so a malformed but otherwise complete triage file still passes, and it gets no reason.
 
@@ -72,5 +79,5 @@ The score poller purges at most once an hour, and it does so even when the flag 
 
 ## Rollback
 
-- **Fast:** unset `S3_DIAGNOSTICS_ENABLED` and restart. Nothing new is recorded, the panel hides itself, and old rows age out.
-- **Code:** redeploy the last known-good release. The v14 table stays and is inert: older `migrate.apply()` skips versions it has already applied, and `milestone_verification` was never altered. Older code reads the scorer's last line only, so it is unaffected by the DIAG line. Dropping the table needs TRB approval (see `schema/README.md`).
+- **Fast (diagnostics only):** unset `S3_DIAGNOSTICS_ENABLED` and restart. Nothing new is recorded, the panel hides itself, and old rows age out. This does **not** revert the artifact path order: `/home/msfadmin` before `/tmp` is in `scoring_checks.sh` and is not behind the flag. Scoring keeps the new order.
+- **Code:** redeploy the last known-good release. This is the only way to restore the old `/tmp`-first path order if UAT shows a problem with it. The v14 table stays and is inert: older `migrate.apply()` skips versions it has already applied, and `milestone_verification` was never altered. Older code reads the scorer's last line only, so it is unaffected by the DIAG line. Dropping the table needs TRB approval (see `schema/README.md`).

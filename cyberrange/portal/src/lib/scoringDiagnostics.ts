@@ -26,7 +26,7 @@ export const REASON_COPY: Record<string, ReasonCopy> = {
   },
   AGENT_MISSING: {
     label: "Agent missing",
-    detail: "No pod-…-meta agent name found.",
+    detail: "No pod-…-meta agent name found. On a one-line file, the agent may be on a last line with no line break.",
   },
   AGENT_MISMATCH: {
     label: "Wrong agent",
@@ -34,7 +34,8 @@ export const REASON_COPY: Record<string, ReasonCopy> = {
   },
   RULE_MISSING: {
     label: "Rule 5710 missing",
-    detail: "No rule number given (for the timeline: no line naming rule 5710).",
+    detail:
+      "No rule number given. For the timeline: no line naming rule 5710 (written rule/Rule, not RULE, and ending in a line break).",
   },
   RULE_MISMATCH: {
     label: "Wrong rule",

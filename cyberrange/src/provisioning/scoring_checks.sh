@@ -944,9 +944,18 @@ _s9_authlog_path() {
     return 0
 }
 
+# The lines the scorer's `while read` loops see (M1 agent, M2 timeline). A last
+# line with no trailing newline is skipped there, so the diagnostics skip it too
+# and report what the scorer saw, not what the file holds.
+_s9_scorer_lines() {
+    local line
+    while IFS= read -r line; do printf '%s
+' "$line"; done < "$1"
+}
+
 # Diagnostic only: names some pod-…-meta agent (M1 field form), even a wrong one.
 _s9_names_any_meta_agent_field() {
-    grep -qE '[Aa]gent[^[:alnum:]]+"?pod-[A-Za-z0-9][A-Za-z0-9-]*-meta' "$1" 2>/dev/null
+    _s9_scorer_lines "$1" 2>/dev/null | grep -qE '[Aa]gent[^[:alnum:]]+"?pod-[A-Za-z0-9][A-Za-z0-9-]*-meta'
 }
 
 # Diagnostic only: names some pod-…-meta host anywhere (M3 prose form).
@@ -963,9 +972,21 @@ _s9_has_any_timestamp() {
     grep -qE "$_S9_TIMESTAMP_RE" "$1" 2>/dev/null
 }
 
+# Diagnostic only (M2): the timeline lines _s9_timeline_time_is_real reads, with
+# its exact filter -- "rule"/"Rule" only, so "RULE 5710" is not a rule line.
+_S9_TIMELINE_RULE_RE='[Rr]ule[^0-9]{0,15}5710([^0-9]|$)'
+
+_s9_timeline_has_rule_line() {
+    _s9_scorer_lines "$1" 2>/dev/null | grep -qE "$_S9_TIMELINE_RULE_RE"
+}
+
+_s9_timeline_names_other_rule() {
+    _s9_scorer_lines "$1" 2>/dev/null | grep -qE '[Rr]ule[^0-9]{0,15}[0-9]{3,6}'
+}
+
 # Diagnostic only: some rule-5710 line in the timeline carries an ISO …Z stamp.
 _s9_rule_line_has_timestamp() {
-    grep -iE 'rule[^0-9]{0,15}5710([^0-9]|$)' "$1" 2>/dev/null | grep -qE "$_S9_TIMESTAMP_RE"
+    _s9_scorer_lines "$1" 2>/dev/null | grep -E "$_S9_TIMELINE_RULE_RE" | grep -qE "$_S9_TIMESTAMP_RE"
 }
 
 _s9_m1_reason() {
@@ -1007,8 +1028,8 @@ _s9_m2_reason() {
     if ! _s9_timeline_time_is_real "$f" 5; then
         # The timeline check only reads timestamps on a "rule … 5710" line.
         if [[ -z "$(_s9_authlog_path)" ]]; then echo CHECK_ERROR
-        elif ! grep -qiE 'rule[^0-9]{0,15}5710([^0-9]|$)' "$f" 2>/dev/null; then
-            if _s9_names_other_rule "$f"; then echo RULE_MISMATCH; else echo RULE_MISSING; fi
+        elif ! _s9_timeline_has_rule_line "$f"; then
+            if _s9_timeline_names_other_rule "$f"; then echo RULE_MISMATCH; else echo RULE_MISSING; fi
         elif _s9_rule_line_has_timestamp "$f"; then echo TIMESTAMP_NOT_MATCHED
         else echo TIMESTAMP_MISSING
         fi

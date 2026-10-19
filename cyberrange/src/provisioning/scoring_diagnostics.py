@@ -154,8 +154,9 @@ def record(
 
 
 def record_safely(pod: dict, scenario_id: int, milestone_id: int, status: str, diag: Optional[dict]) -> None:
-    """record() on its own connection; logs and swallows DB errors so a
-    diagnostics problem (e.g. v14 not applied) can never affect scoring."""
+    """record() on its own connection; logs and swallows any error so a
+    diagnostics problem (e.g. v14 not applied, a malformed pod row) can never
+    affect scoring or the Verify response."""
     from db import get_db_connection
 
     try:
@@ -165,7 +166,7 @@ def record_safely(pod: dict, scenario_id: int, milestone_id: int, status: str, d
                 record(conn, pod, scenario_id, milestone_id, status, diag)
         finally:
             conn.close()
-    except sqlite3.Error as e:
+    except Exception as e:  # runs after the score commit; never raise into scoring
         logger.warning("scoring_diagnostics: not recorded (%s)", type(e).__name__)
 
 

@@ -181,6 +181,22 @@ def test_m2_failure_reasons(tmp_path, content, reason):
     check(tmp_path, 2, content, token="FAIL", reason=reason)
 
 
+def test_m2_uppercase_rule_line_is_not_read_by_the_scorer(tmp_path):
+    # The scorer only reads "rule"/"Rule" lines, so a correct time on a "RULE 5710"
+    # line is never checked; the reason must not blame the timestamp.
+    check(tmp_path, 2, TIMELINE_OK.replace("rule:", "RULE:"), token="FAIL", reason="RULE_MISSING")
+
+
+# The scorer's `while read` loops (M1 agent, M2 timeline) skip a last line with no
+# trailing newline; the reason must match what the scorer saw, not the file.
+@pytest.mark.parametrize("milestone,content,reason", [
+    (1, TRIAGE_OK, "AGENT_MISSING"),
+    (2, TIMELINE_OK, "RULE_MISSING"),
+])
+def test_last_line_without_newline_reports_what_the_scorer_saw(tmp_path, milestone, content, reason):
+    check(tmp_path, milestone, content.rstrip("\n"), token="FAIL", reason=reason)
+
+
 def test_m2_no_auth_log_is_check_error(tmp_path):
     check(tmp_path, 2, TIMELINE_OK, token="FAIL", reason="CHECK_ERROR", authlog=None)
 
