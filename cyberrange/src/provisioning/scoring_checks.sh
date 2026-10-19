@@ -122,12 +122,17 @@ check_msf_history() {
 #
 # Direct-bash tests use replace-only fixture files. The verifier never sets
 # SCORING_TEST_MODE, and test mode fails closed unless every fixture is named.
+#
+# On failure S1_SESSION_REASON names the step that failed (Scenario 1
+# diagnostics). It never decides PASS/FAIL.
 check_live_tomcat_msf_session() {
     local prefix="$1"
+    S1_SESSION_REASON=NO_POD_ADDRESS
     [[ -n "$prefix" ]] || return 1
     local target="${prefix}.20"
     local pane_info pane_output socket_output pane_pid pane_cmd msf_pid msf_cmdline session_peer
 
+    S1_SESSION_REASON=CHECK_ERROR
     if [[ "${SCORING_TEST_MODE:-0}" == "1" ]]; then
         [[ -n "${SCORING_TEST_PANE_INFO_FILE:-}" && -f "$SCORING_TEST_PANE_INFO_FILE" ]] || return 1
         [[ -n "${SCORING_TEST_PANE_OUTPUT_FILE:-}" && -f "$SCORING_TEST_PANE_OUTPUT_FILE" ]] || return 1
@@ -145,15 +150,19 @@ check_live_tomcat_msf_session() {
     fi
 
     # Exactly one active lab pane is expected. Reject ambiguous/malformed data.
+    S1_SESSION_REASON=MSF_NOT_RUNNING
     [[ $(printf '%s\n' "$pane_info" | grep -c .) -eq 1 ]] || return 1
     IFS='|' read -r pane_pid pane_cmd <<< "$pane_info"
+    S1_SESSION_REASON=CHECK_ERROR
     [[ "$pane_pid" =~ ^[0-9]+$ ]] || return 1
+    S1_SESSION_REASON=MSF_NOT_RUNNING
     [[ "$pane_cmd" =~ ^(ruby|msfconsole)$ ]] || return 1
 
     # Arm only on an explicit run/exploit at the Tomcat module prompt. Any other
     # Metasploit prompt clears arming, so an echo entered after module selection
     # cannot forge the session-open event. Pane text itself remains untrusted;
     # the strict full-prompt spoof regression tracks the RPC provenance gap.
+    S1_SESSION_REASON=SESSION_NOT_OPENED
     session_peer=$(printf '%s\n' "$pane_output" | awk -v target="$target" '
         /(^|[[:space:]])msf[0-9]* .* >[[:space:]]/ {
             armed = ($0 ~ /exploit\(multi\/http\/tomcat_mgr_deploy\)[[:space:]]*>[[:space:]]*(run|exploit)([[:space:]]|$)/)
@@ -175,6 +184,7 @@ check_live_tomcat_msf_session() {
     # tmux pane_pid is normally the shell; msfconsole's Ruby process is its
     # child. Accept the pane PID itself or a direct child, then require ss to
     # attribute the target-bound established connection to that PID.
+    S1_SESSION_REASON=SESSION_NOT_LIVE
     local candidate_pids="$pane_pid"
     if [[ "${SCORING_TEST_MODE:-0}" == "1" ]]; then
         candidate_pids+=" ${SCORING_TEST_MSF_PID:-}"
@@ -192,6 +202,7 @@ check_live_tomcat_msf_session() {
         [[ "$msf_cmdline" =~ (^|[[:space:]/])msfconsole([[:space:]]|$) ]] || continue
         if printf '%s\n' "$socket_output" | grep -F "$session_peer" | grep -qE "pid=${msf_pid}([,\)])"; then
             log "PASS: live tomcat_mgr_deploy Metasploit session to $target (pid=$msf_pid)"
+            S1_SESSION_REASON=NONE
             return 0
         fi
     done
@@ -207,9 +218,67 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 # === VERIFICATION FUNCTIONS ===
 
 # Scenario 1: Network Reconnaissance (Kali attacker perspective)
+#
+# Diagnostics (instructor-only): before the PASS/FAIL token each milestone prints
+#   DIAG reason=<CODE> location=NONE copies=0
+# Callers read only the last stdout line, so the token contract is unchanged.
+# CODE is from the fixed set below -- never a command, an address, or pane
+# text. NONE = passed.
+#   NO_POD_ADDRESS NO_SUBNET_ROUTE COMMAND_NOT_FOUND COMMAND_NOT_MATCHED
+#   MSF_NOT_RUNNING SESSION_NOT_OPENED SESSION_NOT_LIVE CHECK_ERROR
+# Each milestone runs the same predicates in the same order as before and
+# names the first one that fails. PASS is printed only for NONE.
+
+# Which part of an nmap check failed: no nmap run at all, or none that matched.
+# Only nmap where a command starts, with an argument: the start of the line,
+# after ; & | (zsh's ": ts:0;" prefix), or after snoopy's "]: ", optionally
+# behind sudo and/or a path. So `man nmap | less`, `sudo apt install nmap -y`,
+# `history | grep nmap -i` or `zenmap` count as not found, not as a wrong scan.
+# []] is a literal ] (no stray-backslash warning from grep).
+_S1_NMAP_RUN='(^|[;&|]|[]]:)[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?nmap[[:space:]]+[^[:space:]]'
+_s1_command_reason() {
+    if check_behavior "$_S1_NMAP_RUN"; then echo COMMAND_NOT_MATCHED; else echo COMMAND_NOT_FOUND; fi
+}
+
+# M1/M3: [[ prefix ]] && check_behavior PATTERN && has_subnet_route.
+_s1_scan_reason() {
+    local prefix="$1" pattern="$2"
+    # Without ip, own_subnet_prefix and has_subnet_route fail for a missing tool,
+    # not a network fault.
+    command -v ip >/dev/null 2>&1 || { echo CHECK_ERROR; return 0; }
+    [[ -n "$prefix" ]] || { echo NO_POD_ADDRESS; return 0; }
+    check_behavior "$pattern" || { _s1_command_reason; return 0; }
+    has_subnet_route || { echo NO_SUBNET_ROUTE; return 0; }
+    echo NONE
+}
+
+# M2 checks the address and the route first, then the command.
+_s1_route_first_reason() {
+    local prefix="$1" pattern="$2"
+    command -v ip >/dev/null 2>&1 || { echo CHECK_ERROR; return 0; }
+    [[ -n "$prefix" ]] || { echo NO_POD_ADDRESS; return 0; }
+    has_subnet_route || { echo NO_SUBNET_ROUTE; return 0; }
+    check_behavior "$pattern" || { _s1_command_reason; return 0; }
+    echo NONE
+}
+
+# The session check's return code decides PASS; S1_SESSION_REASON only labels
+# a failure, and a failure that claims NONE is reported as CHECK_ERROR.
+_s1_m4_reason() {
+    command -v ip >/dev/null 2>&1 || { echo CHECK_ERROR; return 0; }
+    S1_SESSION_REASON=CHECK_ERROR
+    if check_live_tomcat_msf_session "$1"; then
+        echo NONE
+    else
+        local r="${S1_SESSION_REASON:-CHECK_ERROR}"
+        [[ "$r" == NONE ]] && r=CHECK_ERROR
+        echo "$r"
+    fi
+}
+
 check_scenario_1() {
     local milestone=$1
-    local prefix esc
+    local prefix esc reason
     prefix=$(own_subnet_prefix)
     if [[ -z "$prefix" && "$milestone" != "4" ]]; then
         log "WARN: no IPv4 on eth0; scenario 1 M1-M3 will FAIL"
@@ -237,10 +306,7 @@ check_scenario_1() {
             # eth0 was down at the time (see provisioning's
             # ensure_guest_nic_up / R7e) -- checked at verify time, not
             # history time, so it reflects current reality.
-            if [[ -n "$prefix" ]] && check_behavior "nmap.*${esc}\.0/24" && has_subnet_route; then
-              echo "PASS"; return
-            fi
-            echo "FAIL"
+            reason=$(_s1_scan_reason "$prefix" "nmap.*${esc}\.0/24") || reason=CHECK_ERROR
             ;;
         2)
             # M2: Port Enumeration — prefer -p / -F / port list against this
@@ -249,11 +315,7 @@ check_scenario_1() {
             # -p/-F scan of anything passed) -- dropped rather than tightened,
             # since a port scan of the wrong host isn't port enumeration of
             # the target.
-            if [[ -z "$prefix" ]] || ! has_subnet_route; then echo "FAIL"; return; fi
-            if check_behavior "nmap.*(-p|-F).*${esc}\.(20|30)|nmap.*${esc}\.(20|30).*(-p|-F)"; then
-              echo "PASS"; return
-            fi
-            echo "FAIL"
+            reason=$(_s1_route_first_reason "$prefix" "nmap.*(-p|-F).*${esc}\.(20|30)|nmap.*${esc}\.(20|30).*(-p|-F)") || reason=CHECK_ERROR
             ;;
         3)
             # M3: Service Version Detection (nmap -sV against this pod's real
@@ -263,18 +325,18 @@ check_scenario_1() {
             # pod's subnet still credited full points despite nmap itself
             # reporting 0 hosts up. Anchor to THIS pod's actual victim IPs,
             # in either flag/IP order a student might type.
-            if [[ -n "$prefix" ]] && check_behavior "nmap.*-sV.*${esc}\.(20|30)|nmap.*${esc}\.(20|30).*-sV" && has_subnet_route; then
-              echo "PASS"; return
-            fi
-            echo "FAIL"
+            reason=$(_s1_scan_reason "$prefix" "nmap.*-sV.*${esc}\.(20|30)|nmap.*${esc}\.(20|30).*-sV") || reason=CHECK_ERROR
             ;;
         4)
             # M4: Exploit Tomcat manager on the meta target (merged from scenario 3;
             # require a live target-correlated Metasploit session on Kali.)
-            if check_live_tomcat_msf_session "$prefix"; then echo "PASS"; return; fi
-            echo "FAIL"
+            reason=$(_s1_m4_reason "$prefix") || reason=CHECK_ERROR
             ;;
+        *) return ;;
     esac
+    [[ -n "$reason" ]] || reason=CHECK_ERROR
+    printf 'DIAG reason=%s location=NONE copies=0\n' "$reason"
+    if [[ "$reason" == NONE ]]; then echo "PASS"; else echo "FAIL"; fi
 }
 
 # Scenario 2: SSH Brute Force (Kali attacker perspective; meta = msfadmin)
@@ -1136,8 +1198,34 @@ check_scenario_10() {
 }
 
 # Scenario 11: Vulnerability Hardening (meta target; defender perspective)
+#
+# Diagnostics (instructor-only): before the PASS/FAIL token each milestone prints
+#   DIAG reason=<CODE> location=NONE copies=0
+# Callers read only the last stdout line, so the token contract is unchanged.
+# CODE is from the fixed set below -- never a command, a password, or file
+# contents. NONE = passed.
+#   COMMAND_NOT_FOUND COMMAND_NOT_MATCHED DEFAULT_PASSWORD_PRESENT CONFIG_MISSING
+#   OLD_CREDS_ACCEPTED MANAGER_UNREACHABLE MANAGER_UNEXPECTED_STATUS CHECK_ERROR
+# Each milestone runs the same predicates in the same order as before and
+# names the first one that fails. PASS is printed only for NONE.
+
+# A behavior check failed: was there a related command (pattern $1) at all?
+_s11_command_reason() {
+    if check_behavior "$1"; then echo COMMAND_NOT_MATCHED; else echo COMMAND_NOT_FOUND; fi
+}
+
+# M3 state: why the manager did not reject the old credentials.
+_s11_status_reason() {
+    local code="$1"
+    if [[ "$code" == "200" ]]; then echo OLD_CREDS_ACCEPTED
+    elif [[ "$code" == 000* ]]; then
+        if command -v curl >/dev/null 2>&1; then echo MANAGER_UNREACHABLE; else echo CHECK_ERROR; fi
+    else echo MANAGER_UNEXPECTED_STATUS
+    fi
+}
+
 check_scenario_11() {
-    local milestone=$1
+    local milestone=$1 reason
     case $milestone in
         1)
             # M1: Identify the weakness (default Tomcat manager credential).
@@ -1147,8 +1235,9 @@ check_scenario_11() {
             # `cat` returns "Permission denied" and never shows the credential.
             # Require sudo so the credited command actually reveals the weakness
             # (previously a denied `cat` still passed -- false positive).
-            if check_behavior "sudo[^|]*tomcat-users"; then echo "PASS"; return; fi
-            echo "FAIL"
+            if check_behavior "sudo[^|]*tomcat-users"; then reason=NONE
+            else reason=$(_s11_command_reason "tomcat-users") || reason=CHECK_ERROR
+            fi
             ;;
         2)
             # M2: Apply the remediation. nano/vim deliberately NOT in behavior
@@ -1162,15 +1251,14 @@ check_scenario_11() {
                 # The file's state decides. Previously a `sed -i` on the file
                 # passed even when the default password was still there.
                 if ! grep -qE "password=[\"']tomcat[\"']" "$users_file" 2>/dev/null; then
-                    echo "PASS"
+                    reason=NONE
                 else
-                    echo "FAIL"
+                    reason=DEFAULT_PASSWORD_PRESENT
                 fi
-                return
-            fi
             # No file to inspect (moved/renamed): fall back to the behavior trail.
-            if check_behavior "sed -i.*tomcat-users"; then echo "PASS"; return; fi
-            echo "FAIL"
+            elif check_behavior "sed -i.*tomcat-users"; then reason=NONE
+            else reason=CONFIG_MISSING
+            fi
             ;;
         3)
             # M3: Confirm the exploit path is closed. This is the "confirm" step,
@@ -1184,14 +1272,19 @@ check_scenario_11() {
             # requiring the curl in history fixes that false auto-pass.
             local code
             code=$(curl -s -o /dev/null -w '%{http_code}' -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list 2>/dev/null || echo "000")
-            if { [[ "$code" == "401" || "$code" == "403" ]]; } \
-                && check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
-                echo "PASS"
+            if [[ "$code" != "401" && "$code" != "403" ]]; then
+                reason=$(_s11_status_reason "$code") || reason=CHECK_ERROR
+            elif check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
+                reason=NONE
             else
-                echo "FAIL"
+                reason=$(_s11_command_reason "curl.*(8180|manager)") || reason=CHECK_ERROR
             fi
             ;;
+        *) return ;;
     esac
+    [[ -n "$reason" ]] || reason=CHECK_ERROR
+    printf 'DIAG reason=%s location=NONE copies=0\n' "$reason"
+    if [[ "$reason" == NONE ]]; then echo "PASS"; else echo "FAIL"; fi
 }
 
 # Default fallback (should not be reached for defined scenarios)

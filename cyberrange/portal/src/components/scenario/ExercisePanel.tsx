@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, FileDown, Info, Keyboard, ShieldAlert } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronUp, FileDown, Flag, Info, Keyboard, ShieldAlert, X } from 'lucide-react'
 import { Pod } from '@/lib/api'
 import { Milestone, Scenario, getLabSurface } from '@/hooks/useScenarios'
 import { GuideView } from '@/components/scenario/GuideView'
@@ -27,6 +27,11 @@ interface ExercisePanelProps {
   latestReviewStatus?: string
   hasLatestReview?: boolean
   onOpenScoringInfo?: () => void
+  /** First task of a fresh attempt: mark it as the obvious starting point. */
+  startHere?: boolean
+  /** A step the scorer just passed (the panel has usually advanced past it). */
+  justScored?: Milestone | null
+  onDismissJustScored?: () => void
 }
 
 export function ExercisePanel({
@@ -47,6 +52,9 @@ export function ExercisePanel({
   latestReviewStatus,
   hasLatestReview,
   onOpenScoringInfo,
+  startHere = false,
+  justScored = null,
+  onDismissJustScored,
 }: ExercisePanelProps) {
   const [guideOpen, setGuideOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -58,6 +66,9 @@ export function ExercisePanel({
 
   // Fallback to description if concise goal string is not defined
   const goalText = currentTask.goal || currentTask.description
+  // The current task's own Status already shows its tick; only confirm a step
+  // the panel has moved past.
+  const showJustScored = !!justScored && justScored.id !== currentTask.id
 
   const renderInstructorReview = () => {
     if (expired) {
@@ -99,12 +110,21 @@ export function ExercisePanel({
   return (
     <div
       data-testid="lab-exercise-panel"
-      className="card-surface p-4 sm:p-5 flex flex-col h-full min-h-0 overflow-hidden"
+      className={`card-surface p-4 sm:p-5 flex flex-col h-full min-h-0 overflow-hidden${startHere ? ' ring-2 ring-brand/50' : ''}`}
     >
       {/* Exercise Brief & Header */}
       <div className="border-b border-border pb-3 mb-3 shrink-0">
         <div className="flex items-center justify-between gap-2 mb-1.5">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-brand">
+          <span className="inline-flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-brand">
+            {startHere && (
+              <span
+                data-testid="start-here-badge"
+                className="inline-flex items-center gap-1 rounded-full bg-brand px-2 py-0.5 text-[10px] text-white normal-case tracking-normal"
+              >
+                <Flag size={11} aria-hidden="true" />
+                Start here
+              </span>
+            )}
             {isSiem ? `Task ${taskNumber} · ${currentTask.unscored ? 'Preparation' : `${taskNumber} of ${scenario.milestones.length} milestones`}` : `Task ${taskIndex + 1} of ${totalTasks}`}
           </span>
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-muted text-text-main border border-border">
@@ -114,10 +134,40 @@ export function ExercisePanel({
         <h2 className="text-lg font-bold text-text-main leading-snug">
           {currentTask.name}
         </h2>
+        {startHere && (
+          <p className="mt-1 text-xs text-text-muted leading-relaxed">
+            This is your first task. Read the instructions below, then do the work in the lab.
+            Each step is confirmed here as soon as it scores.
+          </p>
+        )}
       </div>
 
       {/* Scrollable exercise instructions & status */}
       <div ref={scrollRef} data-testid="lab-exercise-scroll" className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0">
+        {showJustScored && justScored && (
+          <div
+            role="status"
+            data-testid="step-complete-banner"
+            className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800"
+          >
+            <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" aria-hidden="true" />
+            <p className="flex-1 leading-relaxed">
+              <strong>✓ Step complete:</strong> {justScored.name} scored
+              {justScored.points > 0 ? ` +${justScored.points} pts` : ''}.
+              {!completed && <> Next up: {currentTask.name}.</>}
+            </p>
+            {onDismissJustScored && (
+              <button
+                type="button"
+                onClick={onDismissJustScored}
+                aria-label="Dismiss step complete message"
+                className="shrink-0 rounded text-emerald-700 hover:text-emerald-900 focus-ring"
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        )}
         {isSiem && scenario.brief && (
           <div className="space-y-2 text-sm text-text-muted leading-relaxed">
             {scenario.brief.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
@@ -157,7 +207,7 @@ export function ExercisePanel({
         </div>
 
         {/* Task Auto-Score or Flag Status */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5" data-tour="task-status">
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
               Status

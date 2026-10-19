@@ -113,6 +113,80 @@ export const LOCATION_LABELS: Record<string, string> = {
   NONE: "—",
 };
 
+export const SCENARIO1_REASON_COPY: Record<string, ReasonCopy> = {
+  NO_POD_ADDRESS: {
+    label: "Kali has no lab address",
+    detail: "Kali's eth0 had no IPv4 address when scoring ran, so the check could not tell which subnet is this pod's. Not the student's fault.",
+  },
+  NO_SUBNET_ROUTE: {
+    label: "No route to the lab network",
+    detail: "Kali had no route to a 10.0.N.0/24 pod subnet when scoring ran. This is checked at scoring time, not when the scan ran. Check the lab network, then re-run the check.",
+  },
+  COMMAND_NOT_FOUND: {
+    label: "No nmap scan found",
+    detail: "No nmap command with arguments in Kali's shell history or command log (man nmap or installing nmap doesn't count).",
+  },
+  COMMAND_NOT_MATCHED: {
+    label: "nmap didn't match this task",
+    detail:
+      "An nmap command was run, but none matched this task against this pod: 1 scans this pod's .0/24 network; 2 uses -p or -F on .20 or .30; 3 uses -sV on .20 or .30.",
+  },
+  MSF_NOT_RUNNING: {
+    label: "Metasploit not running",
+    detail: "The lab terminal is not a single pane running msfconsole (it was closed, exited to the shell, or split).",
+  },
+  SESSION_NOT_OPENED: {
+    label: "No Tomcat session opened",
+    detail: "msfconsole is running, but its output shows no tomcat_mgr_deploy run that opened a session to this pod's meta (.20).",
+  },
+  SESSION_NOT_LIVE: {
+    label: "Session no longer live",
+    detail: "A session to meta was opened, but msfconsole no longer holds a connection to it. The session was closed or dropped.",
+  },
+  CHECK_ERROR: {
+    label: "Check error",
+    detail: "The check could not run or read the lab state (a missing tool such as ip, or unexpected pane output). Not the student's fault.",
+  },
+};
+
+// Scorer id 11 is catalog Scenario 4.
+export const SCENARIO4_REASON_COPY: Record<string, ReasonCopy> = {
+  COMMAND_NOT_FOUND: {
+    label: "Command not found",
+    detail:
+      "No related command in meta's shell history or command log. 1: nothing naming tomcat-users. 3: no curl to the Tomcat manager (port 8180).",
+  },
+  COMMAND_NOT_MATCHED: {
+    label: "Command didn't match this task",
+    detail:
+      "1: a command mentions tomcat-users, but none ran it with sudo (as msfadmin the file can only be read with sudo). 3: a curl to the manager was run, but not with the old tomcat:tomcat credentials.",
+  },
+  DEFAULT_PASSWORD_PRESENT: {
+    label: "Default password still set",
+    detail: "tomcat-users.xml still has password=\"tomcat\" (either quote style).",
+  },
+  CONFIG_MISSING: {
+    label: "tomcat-users.xml missing",
+    detail: "The Tomcat users file is not at its usual path and there is no sed -i edit of it in history to fall back on.",
+  },
+  OLD_CREDS_ACCEPTED: {
+    label: "Old credentials still work",
+    detail: "The Tomcat manager still accepts tomcat:tomcat (HTTP 200), so the change is not in effect.",
+  },
+  MANAGER_UNREACHABLE: {
+    label: "Tomcat not answering",
+    detail: "Nothing answered on port 8180 on meta (the connection failed).",
+  },
+  MANAGER_UNEXPECTED_STATUS: {
+    label: "Unexpected manager response",
+    detail: "The manager answered, but with neither 401/403 (closed) nor 200 (open), e.g. 404 or 500.",
+  },
+  CHECK_ERROR: {
+    label: "Check error",
+    detail: "The check could not run (curl missing on meta) or the verifier returned an error. Not the student's fault.",
+  },
+};
+
 /** Fallback for an unmapped scenario, or a code missing from a scenario's copy.
  *  Scenario-neutral: each scenario's `reasons` carries its own CHECK_ERROR wording. */
 export const CHECK_ERROR_COPY: ReasonCopy = {
@@ -126,6 +200,17 @@ export const CATALOG_ORDER: readonly number[] = [1, 6, 9, 11];
 
 /** Keyed by scorer scenario id (scoring_checks.sh). */
 export const DIAGNOSTIC_SCENARIOS: Record<number, ScenarioDiagnostics> = {
+  1: {
+    title: "Scenario 1 — Network Reconnaissance & Exploitation",
+    milestones: {
+      1: "1: Host discovery",
+      2: "2: Port enumeration",
+      3: "3: Service versions",
+      4: "4: Tomcat manager exploit",
+    },
+    reasons: SCENARIO1_REASON_COPY,
+    showsLocation: false,
+  },
   6: {
     title: "Scenario 2 — Web Application Attack / SQL Injection",
     milestones: {
@@ -146,6 +231,16 @@ export const DIAGNOSTIC_SCENARIOS: Record<number, ScenarioDiagnostics> = {
     },
     reasons: SCENARIO3_REASON_COPY,
     showsLocation: true,
+  },
+  11: {
+    title: "Scenario 4 — Vulnerability Hardening",
+    milestones: {
+      1: "1: Identify the weakness",
+      2: "2: Apply the remediation",
+      3: "3: Confirm the path is closed",
+    },
+    reasons: SCENARIO4_REASON_COPY,
+    showsLocation: false,
   },
 };
 

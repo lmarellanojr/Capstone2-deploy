@@ -19,6 +19,12 @@ test("keeps a reset password transiently for reconciliation after an ambiguous f
   render(<ResetPasswordModal user={user} onClose={onClose} onReset={onReset} />);
   const input = screen.getByLabelText(/^New password/);
   fireEvent.change(input, { target: { value: "Tmp!pass-1234" } });
+  expect(screen.getByTestId("password-strength-meter")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(/Password strength:/);
+  expect(screen.getByTestId("password-common-hint")).toBeInTheDocument();
+  expect(screen.getByTestId("password-history-hint")).toHaveTextContent(/The user's last 3 passwords/);
+  expect(input.getAttribute("aria-describedby") || "").toMatch(/common-hint/);
+  expect(input.getAttribute("aria-describedby") || "").toMatch(/history-hint/);
   fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
   const warning = await screen.findByRole("alert");
   expect(warning).toHaveTextContent(/verify whether the reset completed before sharing/i);
@@ -27,4 +33,9 @@ test("keeps a reset password transiently for reconciliation after an ambiguous f
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(onClose).toHaveBeenCalled();
   await waitFor(() => expect(input).toHaveValue(""));
+});
+
+test("asks the browser not to fill the admin's saved password into the reset field", () => {
+  render(<ResetPasswordModal user={user} onClose={jest.fn()} onReset={jest.fn()} />);
+  expect(screen.getByLabelText(/^New password/)).toHaveAttribute("autocomplete", "new-password");
 });

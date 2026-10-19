@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import React from 'react'
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import ScenarioDetailPage from './page'
 import { SCENARIOS, getLabSurface } from '@/hooks/useScenarios'
 
@@ -30,9 +30,11 @@ jest.mock('@/context/ToastContext', () => ({
   useToastContext: () => ({ success: jest.fn(), warning: jest.fn(), error: jest.fn() }),
 }))
 
+let mockPodPhase: 'active' | 'expired' = 'active'
+
 jest.mock('@/hooks/useScenarioPod', () => ({
   useScenarioPod: (id: string) => ({
-    phase: 'active',
+    phase: mockPodPhase,
     pod: {
       pod_id: 1,
       student_id: 'student',
@@ -72,6 +74,8 @@ jest.mock('@/hooks/useScenarioMilestones', () => ({
     doneCount: 0,
     progressPct: 0,
     nextMilestoneId: 1,
+    lastScoredId: null,
+    clearLastScored: jest.fn(),
     handleVerify: jest.fn(),
     onFlagPassed: jest.fn(),
   })),
@@ -105,8 +109,15 @@ jest.mock('@/components/scenario/DvwaView', () => ({
 }))
 
 jest.mock('@/components/scenario/ExercisePanel', () => ({
-  ExercisePanel: ({ currentTask }: { currentTask: { id: number } }) => (
-    <div data-testid="mock-exercise-panel" data-task-id={currentTask.id}>Exercise Panel</div>
+  ExercisePanel: ({ currentTask, startHere, justScored }: { currentTask: { id: number }; startHere?: boolean; justScored?: { id: number } | null }) => (
+    <div
+      data-testid="mock-exercise-panel"
+      data-task-id={currentTask.id}
+      data-start-here={String(!!startHere)}
+      data-just-scored={justScored?.id ?? ''}
+    >
+      Exercise Panel
+    </div>
   ),
 }))
 
@@ -128,6 +139,70 @@ jest.mock('@/components/scenario/BigPictureModal', () => ({
 jest.mock('@/components/scenario/GuideExtraModal', () => ({
   GuideExtraModal: () => null,
 }))
+
+describe('ScenarioDetailPage first-run walkthrough', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    jest.useFakeTimers()
+  })
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('auto-starts once per user, then only reopens from the ? button', () => {
+    const first = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    expect(screen.queryByTestId('lab-tour-card')).toBeNull()
+    act(() => {
+      jest.advanceTimersByTime(600)
+    })
+    expect(screen.getByTestId('lab-tour-card')).toHaveAttribute('data-step-target', 'task-panel')
+    expect(document.querySelector('[data-tour="task-panel"]')).not.toBeNull()
+    expect(document.querySelector('[data-tour="lab-surface"]')).not.toBeNull()
+    expect(document.querySelector('[data-tour="lab-help"]')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Close walkthrough/i }))
+    expect(screen.queryByTestId('lab-tour-card')).toBeNull()
+    expect(window.localStorage.getItem('cr.labTourSeen.student')).toBe('1')
+    first.unmount()
+
+    render(<ScenarioDetailPage params={{ id: '06' }} />)
+    act(() => {
+      jest.advanceTimersByTime(2000)
+    })
+    expect(screen.queryByTestId('lab-tour-card')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Show lab walkthrough/i }))
+    expect(screen.getByTestId('lab-tour-card')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('DVWA is already signed in')).toBeInTheDocument()
+  })
+
+  it('replays from step 1 when ? is pressed mid-tour', () => {
+    render(<ScenarioDetailPage params={{ id: '01' }} />)
+    act(() => {
+      jest.advanceTimersByTime(600)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByTestId('lab-tour-card')).toHaveAttribute('data-step-target', 'task-status')
+
+    fireEvent.click(screen.getByRole('button', { name: /Show lab walkthrough/i }))
+    expect(screen.getByTestId('lab-tour-card')).toHaveAttribute('data-step-target', 'task-panel')
+  })
+
+  it('still auto-starts when the pod re-renders inside the start delay', () => {
+    const { rerender } = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    act(() => {
+      jest.advanceTimersByTime(300)
+    })
+    // useScenarioPod hands back a new pod object on every poll.
+    rerender(<ScenarioDetailPage params={{ id: '01' }} />)
+    act(() => {
+      jest.advanceTimersByTime(300)
+    })
+    expect(screen.getByTestId('lab-tour-card')).toBeInTheDocument()
+  })
+})
 
 describe('ScenarioDetailPage right-pane surface selection', () => {
   it('correctly maps labSurface metadata across scenarios', () => {
@@ -179,5 +254,42 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
       requiredMilestoneIds: [1, 2, 3],
     }))
     expect(screen.getByTestId('mock-siem-view')).toBeInTheDocument()
+  })
+
+  it('marks the first task "Start here" on a fresh attempt and passes the just-scored step', () => {
+    const useMilestonesMock = jest.requireMock('@/hooks/useScenarioMilestones').useScenarioMilestones as jest.Mock
+    const base = useMilestonesMock.getMockImplementation()!()
+
+    const { unmount } = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'true')
+    expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-just-scored', '')
+    unmount()
+
+    const original = useMilestonesMock.getMockImplementation()!
+    useMilestonesMock.mockImplementation(() => ({
+      ...base,
+      completed: new Set([1]),
+      doneCount: 1,
+      nextMilestoneId: 2,
+      lastScoredId: 1,
+    }))
+    try {
+      render(<ScenarioDetailPage params={{ id: '01' }} />)
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-task-id', '2')
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'false')
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-just-scored', '1')
+    } finally {
+      useMilestonesMock.mockImplementation(original)
+    }
+  })
+
+  it('does not mark "Start here" on an expired lab', () => {
+    mockPodPhase = 'expired'
+    try {
+      render(<ScenarioDetailPage params={{ id: '01' }} />)
+      expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'false')
+    } finally {
+      mockPodPhase = 'active'
+    }
   })
 })

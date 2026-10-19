@@ -20,11 +20,10 @@ const TIPS: Record<string, { title: string; body: ReactNode }> = {
     body: (
       <>
         Once your lab opens, the practice site loads <strong>right inside the lab page</strong>{" "}
-        (no terminal needed), already connected to your session. Prefer a full window? Use{" "}
-        <strong>Open in new tab</strong> at the top-right. Log in with{" "}
-        <code className="bg-white/70 px-1 rounded">admin</code> /{" "}
-        <code className="bg-white/70 px-1 rounded">password</code> and set Security to{" "}
-        <strong>Low</strong>. Tasks 1–4 score automatically from DVWA responses; submit the
+        (no terminal needed), already signed in with Security set to <strong>Low</strong>. Prefer a
+        full window? Use <strong>Open in new tab</strong> at the top-right. If DVWA ever shows its
+        login page, use <code className="bg-white/70 px-1 rounded">admin</code> /{" "}
+        <code className="bg-white/70 px-1 rounded">password</code>. Tasks 1–4 score automatically from DVWA responses; submit the
         Task 5 flag yourself in the portal.
       </>
     ),
