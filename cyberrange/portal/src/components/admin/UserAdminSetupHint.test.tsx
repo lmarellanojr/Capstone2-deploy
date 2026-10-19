@@ -30,10 +30,24 @@ describe("UserAdminSetupHint", () => {
 })
 
 describe("CreateUserModal on a host without the user-admin client", () => {
-  it("explains that dictionary checks allow the single-letter words a, i, and o", () => {
+  it("generates a compliant initial password and submits it", async () => {
+    const onCreate = jest.fn().mockRejectedValue(new Error("Password does not meet the Keycloak password policy"))
+    render(<CreateUserModal isOpen onClose={jest.fn()} onCreate={onCreate} onCreated={jest.fn()} />)
+    fireEvent.change(screen.getByLabelText(/^Username/), { target: { value: "new_student" } })
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }))
+    const password = (screen.getByLabelText(/^Initial password/) as HTMLInputElement).value
+    expect(password).toHaveLength(24)
+    expect(password).toMatch(/^[2-9!@#$%*\-_=+]+$/)
+    fireEvent.click(screen.getByRole("button", { name: "Create user" }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ password })))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose your own unique")
+    expect(screen.getByLabelText(/^Initial password/)).toHaveValue(password)
+  })
+
+  it("explains that users can choose a passphrase and generation is optional", () => {
     render(<CreateUserModal isOpen onClose={jest.fn()} onCreate={jest.fn()} onCreated={jest.fn()} />)
-    expect(screen.getByText(/No English words of two or more letters/)).toBeInTheDocument()
-    expect(screen.queryByText(/including a, i and o/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Choose your own unique password or passphrase/)).toBeInTheDocument()
+    expect(screen.getByText(/Generate is optional/)).toBeInTheDocument()
   })
 
   it("shows the setup hint under the error when creation answers not configured", async () => {

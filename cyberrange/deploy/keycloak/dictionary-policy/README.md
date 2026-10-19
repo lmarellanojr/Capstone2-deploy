@@ -1,8 +1,12 @@
-# Dictionary substring password policy
+# Retired dictionary substring password provider
 
-Issue #174, parent #169. The `dictionaryWords(scowl-en-v1)` Keycloak policy rejects passwords containing English dictionary words of two or more letters, including words embedded within longer values or multi-word passphrases. The single-letter words `a`, `i`, and `o` are allowed. Matching applies Unicode NFKC and locale-independent lowercase normalization. Punctuation does not join separate letters into a word. Leetspeak, arbitrary homoglyphs and other languages are not covered by this English dictionary.
+The active Cyber Range realm no longer uses `dictionaryWords(scowl-en-v1)`. Users can choose a unique password or passphrase containing ordinary English words. The realm continues to enforce 8–128 characters (with mandatory TOTP), a whole-password common-password blocklist, username/email checks, three-password history, and temporary brute-force lockout. `enable_keycloak_password_policy.sh` removes the substring rule; run it, verify the policy, and re-export the realm before a container recreate. `push_keycloak_realm.sh` rejects old exports that still include the rule.
 
-This is an additional project rule requested for Cyber Range. It goes beyond the existing standards-based whole-password blocklist. The meter remains advisory and cannot guarantee policy acceptance. Generated credentials use 24 random digits/symbols (Web Crypto), avoiding English dictionary substrings while retaining roughly 100 bits of alphabet entropy. Keycloak still enforces length, blocklist, username/email and password history.
+The source and installer below are retained for historical compatibility with old realm snapshots and isolated provider tests. The provider may remain installed but is inert unless a realm explicitly enables it.
+
+Issue #174, parent #169, originally introduced the `dictionaryWords(scowl-en-v1)` policy. When enabled, that provider rejects English dictionary words of two or more letters anywhere in a password, including longer values and multi-word passphrases. The single-letter words `a`, `i`, and `o` are allowed. Matching applies Unicode NFKC and locale-independent lowercase normalization. Punctuation does not join separate letters into a word. Leetspeak, arbitrary homoglyphs and other languages are not covered by this English dictionary.
+
+That additional project rule went beyond the standards-based whole-password blocklist and proved too restrictive for user-chosen passwords. The meter remains advisory and cannot guarantee policy acceptance. Generated credentials use 24 random digits/symbols (Web Crypto) and remain optional. Keycloak still enforces length, blocklist, username/email and password history.
 
 ## Build and install
 
@@ -14,7 +18,7 @@ mvn clean verify
 
 The host installer uses the prebuilt `deploy/keycloak/providers/cyberrange-dictionary-policy-1.0.0.jar`. After `mvn clean verify`, copy `target/cyberrange-dictionary-policy-1.0.0.jar` there, or set `DICTIONARY_POLICY_JAR`. The artifact includes its SPI service registration, dictionary, metadata and English error message. Do not commit `target/`.
 
-On the LXD host:
+To apply the current policy on the LXD host:
 
 ```sh
 bash ~/cyberrange/deploy/host/enable_keycloak_password_policy.sh
@@ -22,7 +26,7 @@ bash ~/cyberrange/deploy/host/install_keycloak_theme.sh
 bash ~/cyberrange/deploy/host/verify_password_policy.sh
 ```
 
-The policy-enabling script installs the provider, restarts Keycloak when the artifact changes, waits for readiness, confirms provider registration, sets the realm policy and verifies readback. The unit-install and realm-import paths install the provider too, before the imported realm is consumed. The policy identifier and resource path remain `scowl-en-v1`, so existing realm settings and imported snapshots continue to work without a policy migration. Missing artifacts, a mismatched dictionary checksum, incompatible Keycloak versions and startup failures stop installation. Existing passwords are checked only when set or changed.
+The policy-enabling script installs the whole-password blocklist, sets the realm policy and verifies readback. The unit-install and realm-import paths still install the provider for compatibility, but a new export must omit `dictionaryWords` before import. Existing passwords are checked only when set or changed.
 
 ## Pinned dictionary and reproduction
 

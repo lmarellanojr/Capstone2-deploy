@@ -10,10 +10,10 @@
 # applies the same realm policy as Keycloak's own UPDATE_PASSWORD page:
 #   1. too short (7 chars)                  -> rejected: minimum length
 #   2. a common numeric password             -> rejected: blacklisted
-#   3. a common word password                -> rejected: dictionary or blocklist
+#   3. a common word password                -> rejected: whole-password blocklist
 #   4. the username itself                  -> rejected: equal to the username
 #   5. the email address                    -> rejected: equal to the email
-#   6. isolated a, i, or o                  -> accepted
+#   6. hand-chosen words and passphrase     -> accepted
 #   7. a strong random password             -> accepted
 #   8. re-using that same password          -> rejected: recent passwords
 #   9. 129 characters                       -> rejected: maximum length
@@ -93,18 +93,18 @@ expect() {
 STRONG="$(python3 -c 'import secrets; alphabet="0123456789!@#$%^&*()-_=+[]{}:,.?"; print("".join(secrets.choice(alphabet) for _ in range(24)))')"
 expect reject "7 characters"                  "Xk9#qv2"           'MinLength|minimum length'
 expect reject "common numeric password (blocklist)" "12345678"      'Blacklist'
-expect reject "common word password"          "PassWord123"       'Blacklist|invalidPasswordDictionaryWordMessage|dictionary word'
+expect reject "common word password"          "PassWord123"       'Blacklist'
 expect reject "same as username"              "$PROBE"            'NotUsername|equal to the username'
 expect reject "same as email"                 "$EMAIL"            'NotEmail|equal to the email'
 for letter in a i o; do
   expect accept "single letter $letter allowed" "${STRONG:0:11}${letter}${STRONG:11}"
 done
-expect reject "embedded dictionary word"     "982!sunshine#731" 'invalidPasswordDictionaryWordMessage|dictionary word'
-expect reject "mixed-case dictionary word"   "982!SuNsHiNe#731" 'invalidPasswordDictionaryWordMessage|dictionary word'
-expect reject "multi-word passphrase"        "sunshine mountain river 982!" 'invalidPasswordDictionaryWordMessage|dictionary word'
+expect accept "embedded ordinary word"       "982!sunshine#731"
+expect accept "mixed-case ordinary word"     "982!SuNsHiNe#731"
+expect accept "multi-word passphrase"        "sunshine mountain river 982!"
 expect accept "strong random password"        "$STRONG"
 expect reject "re-use of current password"    "$STRONG"           'History|last [0-9]+ passwords'
-expect reject "129 characters"                "$(printf 'k%.0s' $(seq 1 129))" 'MaxLength|maximum length|invalidPasswordDictionaryWordMessage|dictionary word'
+expect reject "129 characters"                "$(printf 'k%.0s' $(seq 1 129))" 'MaxLength|maximum length'
 
 if [[ $FAIL -eq 0 ]]; then echo "PASSWORD_POLICY_VERIFIED"; else echo "PASSWORD_POLICY_FAILED"; fi
 exit $FAIL

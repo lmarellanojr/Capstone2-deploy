@@ -8,6 +8,15 @@ SRC="${SRC:-$HOME/cyberrange/keycloak-import/cyber-range-realm.json}"
 DST=/opt/keycloak/data/import/cyber-range-realm.json
 
 [[ -f "$SRC" ]] || { echo "missing host-canonical realm JSON: $SRC"; exit 1; }
+# An old export would restore the substring rule on a container recreate.
+python3 - "$SRC" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    realm = json.load(source)
+policy = realm.get("passwordPolicy") or ""
+if "dictionaryWords(" in policy:
+    sys.exit("stale realm export contains dictionaryWords; re-export after applying the user-chosen password policy")
+PY
 lxc info guacamole &>/dev/null || { echo "guacamole not found"; exit 1; }
 lxc exec guacamole -- id keycloak &>/dev/null || {
   echo "in-container 'keycloak' user missing -- run install_keycloak_unit.sh first"

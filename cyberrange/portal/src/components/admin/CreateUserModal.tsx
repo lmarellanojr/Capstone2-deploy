@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Wand2 } from "lucide-react";
 import { Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import type { AdminUser, AppRole, CreateUserInput } from "@/lib/api";
 import {
@@ -12,6 +12,7 @@ import {
   type CreateUserForm,
 } from "@/lib/adminUserValidation";
 import { UserAdminSetupHint } from "./UserAdminSetupHint";
+import { generatePassword } from "@/lib/generatePassword";
 
 const EMPTY: CreateUserForm = {
   username: "",
@@ -69,7 +70,10 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
       closeModal();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Couldn't create the user.";
-      setServerError(`${message} Verify whether the account was created before sharing credentials. The password stays here until you close this form.`);
+      const guidance = message.includes("Password does not meet the Keycloak password policy")
+        ? " Choose your own unique 8–128 character password or longer passphrase. Avoid common passwords, your username, and your email. Generate is optional."
+        : "";
+      setServerError(`${message}${guidance} Verify whether the account was created before sharing credentials. The password stays here until you close this form.`);
       setSaving(false);
     }
   };
@@ -200,27 +204,40 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
 
           <div>
             {field("password", "Initial password", { required: true })}
-            <div className="relative">
-              <input
-                id={`${uid}-password`}
-                type={showPassword ? "text" : "password"}
-                autoComplete="off"
-                value={form.password}
-                onChange={(e) => set("password", e.target.value)}
-                aria-invalid={!!errors.password}
-                aria-describedby={`${uid}-password-msg`}
-                className={`${input(errors.password)} pr-10`}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-main focus-ring"
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  id={`${uid}-password`}
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="off"
+                  value={form.password}
+                  onChange={(e) => set("password", e.target.value)}
+                  aria-invalid={!!errors.password}
+                  aria-describedby={`${uid}-password-msg`}
+                  className={`${input(errors.password)} pr-10`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-main focus-ring"
+                >
+                  {showPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+                </button>
+              </div>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  set("password", generatePassword());
+                  setShowPassword(true);
+                }}
+                disabled={saving}
               >
-                {showPassword ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
-              </button>
+                <Wand2 size={15} aria-hidden="true" />
+                Generate
+              </Button>
             </div>
-            {errorText("password", "8–128 characters. No English words of two or more letters anywhere in the password. Not a common password, the username or the email.")}
+            {errorText("password", "Choose your own unique password or passphrase (8–128 characters). Avoid common passwords, your username, and your email. Generate is optional.")}
           </div>
 
           <label className="flex items-start gap-2 text-sm text-text-secondary cursor-pointer">
