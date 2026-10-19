@@ -33,7 +33,8 @@ const ITEMS: TroubleshootingItem[] = [
     problem: "DVWA sent me back to the login page",
     fix: (
       <>
-        Log in again with <code className="px-1 rounded bg-muted">admin</code> /{" "}
+        Select <strong>Home</strong> above the DVWA panel; the lab signs you back in with Security
+        Low. Still on the login page? Log in with <code className="px-1 rounded bg-muted">admin</code> /{" "}
         <code className="px-1 rounded bg-muted">password</code>, set <strong>DVWA Security</strong> to{" "}
         <strong>Low</strong>, then submit your payload again.
       </>

@@ -124,7 +124,7 @@ export const SCENARIOS: Scenario[] = [
         id: 1,
         name: 'Injection Point',
         goal: 'Compare a normal ID result with an always-true payload returning multiple user rows',
-        cue: '⚠ Set DVWA Security to Low first — higher levels block these payloads and nothing will score.',
+        cue: '⚠ DVWA Security must read Low (the lab sets it for you) — higher levels block these payloads and nothing will score.',
         description: 'Identify the SQL injection vulnerability in the DVWA application (set security to Low).',
         points: 50,
       },

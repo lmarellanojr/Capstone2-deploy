@@ -341,7 +341,8 @@ export function TerminalView({
                 session. Use <strong className="text-text-main">Open in new tab</strong> if you prefer a full window.
               </li>
               <li>
-                Log in with <code className="bg-muted px-1 rounded">admin</code> /{' '}
+                You&apos;re signed in automatically with Security set to <strong>Low</strong>. If DVWA shows its
+                login page, use <code className="bg-muted px-1 rounded">admin</code> /{' '}
                 <code className="bg-muted px-1 rounded">password</code>, then set Security to <strong>Low</strong>.
               </li>
               <li>Each task is scored automatically as you work in DVWA.</li>
