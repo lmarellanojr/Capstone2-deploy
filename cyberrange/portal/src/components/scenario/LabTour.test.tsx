@@ -79,12 +79,42 @@ describe('labTourSteps', () => {
 
 describe('unplaced card', () => {
   // Real browsers refuse focus inside visibility:hidden / display:none, and the
-  // heading is focused before the first measure lands. jsdom can't show that,
-  // so pin the style instead.
-  it('stays focusable while it is being placed', () => {
+  // heading is focused in the same layout pass as the first measure, before
+  // the card is placed. jsdom won't refuse that focus, so record the card's
+  // inline style at the moment focus is moved instead.
+  it('never moves focus into the card while it is hidden', () => {
+    document.body.innerHTML = ''
+    for (const t of ['task-panel', 'lab-surface', 'task-status', 'lab-help']) {
+      const el = document.createElement('div')
+      el.setAttribute('data-tour', t)
+      el.getBoundingClientRect = () => ({ top: 100, left: 40, width: 200, height: 40 }) as DOMRect
+      document.body.appendChild(el)
+    }
+    const original = HTMLElement.prototype.focus
+    const stylesAtFocus: { visibility: string; display: string }[] = []
+    const spy = jest.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, opts?: FocusOptions) {
+      if (this.id === 'lab-tour-title') {
+        const card = this.closest('[data-testid="lab-tour-card"]') as HTMLElement
+        stylesAtFocus.push({ visibility: card.style.visibility, display: card.style.display })
+      }
+      return original.call(this, opts)
+    })
+    try {
+      render(<LabTour open onClose={jest.fn()} surface="terminal" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    } finally {
+      spy.mockRestore()
+    }
+    // Opened from ? (focusOnOpen) and after Next: both focus the heading.
+    expect(stylesAtFocus.length).toBeGreaterThanOrEqual(2)
+    for (const s of stylesAtFocus) {
+      expect(s.visibility).not.toBe('hidden')
+      expect(s.display).not.toBe('none')
+    }
+  })
+
+  it('keeps the unplaced style invisible and unclickable', () => {
     expect(UNPLACED_STYLE).toEqual({ opacity: 0, pointerEvents: 'none' })
-    expect(UNPLACED_STYLE).not.toHaveProperty('visibility')
-    expect(UNPLACED_STYLE).not.toHaveProperty('display')
   })
 })
 
