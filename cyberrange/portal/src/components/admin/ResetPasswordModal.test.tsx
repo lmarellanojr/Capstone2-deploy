@@ -19,6 +19,8 @@ test("keeps a reset password transiently for reconciliation after an ambiguous f
   render(<ResetPasswordModal user={user} onClose={onClose} onReset={onReset} />);
   const input = screen.getByLabelText(/^New password/);
   fireEvent.change(input, { target: { value: "Tmp!pass-1234" } });
+  expect(screen.getByTestId("password-strength-meter")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(/Password strength:/);
   fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
   const warning = await screen.findByRole("alert");
   expect(warning).toHaveTextContent(/verify whether the reset completed before sharing/i);

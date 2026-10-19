@@ -34,7 +34,9 @@ test('mounts only on new-password form, preserves errors and controls, updates a
     input.value = 'orchid river copper moon';
     input.dispatchEvent(new dom.window.Event('input'));
     assert.equal(doc.querySelector('.cr-strength').dataset.score, '2');
-    assert.equal(doc.querySelector('[role=status]').textContent, 'Password strength: Fair');
+    assert.equal(doc.querySelector('[role=status]').textContent, 'Password strength: Medium');
+    assert.ok(doc.querySelector('.cr-strength__fill'));
+    assert.equal(doc.querySelectorAll('.cr-strength__bar span').length, 0);
     input.value = 'short'; input.dispatchEvent(new dom.window.Event('change'));
     assert.equal(doc.querySelector('.cr-strength').dataset.score, '1');
     input.type = 'text';

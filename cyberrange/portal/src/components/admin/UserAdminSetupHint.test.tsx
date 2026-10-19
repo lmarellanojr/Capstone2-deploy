@@ -48,6 +48,7 @@ describe("CreateUserModal on a host without the user-admin client", () => {
     render(<CreateUserModal isOpen onClose={jest.fn()} onCreate={jest.fn()} onCreated={jest.fn()} />)
     expect(screen.getByText(/Choose your own unique password or passphrase/)).toBeInTheDocument()
     expect(screen.getByText(/Generate is optional/)).toBeInTheDocument()
+    expect(screen.getByTestId("password-strength-meter")).toBeInTheDocument()
   })
 
   it("shows the setup hint under the error when creation answers not configured", async () => {
