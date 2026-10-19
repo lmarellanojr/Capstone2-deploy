@@ -3,14 +3,16 @@
     "use strict";
     function estimate(value) {
         if (!value) return 0;
-        // Dictionary checks are server-side; single letters a, i, and o are allowed.
+        // An estimate only: the server checks the entire value against its blocklist.
         const nfkc = value.normalize("NFKC").toLowerCase();
         const normalized = nfkc.replace(/[0@]/g, "a").replace(/[1!]/g, "i").replace(/3/g, "e").replace(/\$/g, "s");
         if (value.length < 8 || /(.+)\1{2,}/u.test(normalized) ||
-            /password|passw|qwerty|letmein|welcome|cyberrange|capstone|123456|abcdef/i.test(normalized) ||
+            /password|passw|qwerty|letmein|welcome|cyberrange|capstone|123456|abcdef|abcdefghijkl/i.test(normalized) ||
             new Set(normalized).size < 5) return 1;
         const score = value.length < 12 ? 2 : value.length < 16 ? 3 : 4;
-        return /[a-z]{2,}/.test(nfkc) ? Math.min(score, 2) : score;
+        // Plain letter strings and simple all-word phrases are easy to guess.
+        if (/^[a-z\s]+$/.test(nfkc)) return Math.min(score, 2);
+        return score;
     }
     function passwordToggle(input) {
         const group = input.closest(".pf-c-input-group, .pf-v5-c-input-group");
@@ -44,7 +46,7 @@
         const hint = doc.createElement("p");
         hint.id = "cr-password-strength-hint";
         hint.className = "cr-strength__hint";
-        hint.textContent = "Estimate only; dictionary and history checks happen when you save. English words of two or more letters anywhere in the password are refused. Use Generate password for a word-free option.";
+        hint.textContent = "Choose your own 8–128 character password or a longer unique passphrase. Common passwords, your username or email, and recent passwords are checked when you save. Generate password is optional; strength is an estimate.";
         container.appendChild(bar);
         container.appendChild(label);
         container.appendChild(hint);

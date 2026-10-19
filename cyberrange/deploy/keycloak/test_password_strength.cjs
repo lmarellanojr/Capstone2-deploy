@@ -9,7 +9,8 @@ const { estimate, mount } = require(script);
 test('conservative estimates including long predictable passwords', () => {
     for (const [value, score] of [['', 0], ['short', 1], ['password123456789', 1],
         ['P@ssw0rd123456789', 1], ['abcabcabcabcabcabc', 1], ['aaaaaaaaaaaaaaaa', 1],
-        ['orchid river copper moon', 2], ['ｏｒｃｈｉｄ ｒｉｖｅｒ ｃｏｐｐｅｒ ｍｏｏｎ', 2], ['#!@#%^23456789!@#%^2a', 4],
+        ['orchid river copper moon', 2], ['ｏｒｃｈｉｄ ｒｉｖｅｒ ｃｏｐｐｅｒ ｍｏｏｎ', 2], ['abcdefghijklmnopqrstu', 1],
+        ['982!sunshine#731', 4], ['#!@#%^23456789!@#%^2a', 4],
         ['#!@#%^23456789!@#%^2i', 4], ['#!@#%^23456789!@#%^2o', 4],
         ['r7#k9z2$m', 2], ['r7#k9z2$m8%N4', 3],
         ['#!@#%^23456789!@#%^2', 4]]) {
@@ -89,7 +90,7 @@ test('generation fills both fields securely after a click and never submits', ()
     assert.equal(generatedInput.type, 'text', 'Generated password is visible to the user');
     assert.deepEqual(events.slice(0, 4), ['password-new:input', 'password-new:change', 'password-confirm:input', 'password-confirm:change']);
     assert.equal(submitted, false);
-    assert.match(doc.querySelector('.cr-strength__hint').textContent, /dictionary.*save/);
+    assert.match(doc.querySelector('.cr-strength__hint').textContent, /Choose your own.*Generate password is optional/);
     const saveHint = doc.querySelector('.cr-strength__save-hint');
     assert.equal(saveHint.hidden, false);
     assert.match(saveHint.textContent, /password manager/);

@@ -20,8 +20,7 @@ const realm = 'dictionary-test-' + crypto.randomBytes(6).toString('hex');
 const callback = 'http://127.0.0.1:18084/callback';
 const blocklist = process.env.LOCAL_KEYCLOAK_BLOCKLIST_NAME || 'cyberrange-common-passwords.txt';
 assert.match(blocklist, /^[A-Za-z0-9._-]+$/, 'Blocklist must be a local filename');
-// Keep the existing policy id so imported realms stay compatible after replacement.
-const policy = `length(8) and maxLength(128) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3) and passwordBlacklist(${blocklist}) and dictionaryWords(scowl-en-v1)`;
+const policy = `length(8) and maxLength(128) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3) and passwordBlacklist(${blocklist})`;
 const alphabet = '0123456789!@#$%^&*()-_=+[]{}:,.?';
 const strong = () => Array.from({ length: 24 }, () => alphabet[crypto.randomInt(alphabet.length)]).join('');
 const word = '982!SuNsHiNe#731';
@@ -86,33 +85,29 @@ async function browserFlow(javaScriptEnabled) {
       }
       await page.locator('#password-new').fill('');
     }
-    for (const candidate of [word, passphrase]) {
-      await page.locator('#password-new').fill(candidate);
-      await page.locator('#password-confirm').fill(candidate);
-      await page.locator('input[type=submit], button[type=submit]').click();
-      await page.getByText(/dictionary word/i).first().waitFor();
-      assert(new URL(page.url()).pathname.includes('/login-actions/'), 'Dictionary candidate must remain in required action');
-      await page.locator('#password-new').fill('');
-      await page.locator('#password-confirm').fill('');
-      if (javaScriptEnabled && candidate === word) await page.screenshot({ path: path.join(shots, 'update-password-dictionary-error.png'), fullPage: true });
-    }
-    let generated;
+    await page.locator('#password-new').fill('password123');
+    await page.locator('#password-confirm').fill('password123');
+    await page.locator('input[type=submit], button[type=submit]').click();
+    await page.getByText(/blacklist|common password/i).first().waitFor();
+    assert(new URL(page.url()).pathname.includes('/login-actions/'), 'Blocked candidate must remain in required action');
+    await page.locator('#password-new').fill('');
+    await page.locator('#password-confirm').fill('');
+    let chosen;
     if (javaScriptEnabled) {
       await page.getByRole('button', { name: 'Generate password', exact: true }).click();
-      generated = await page.locator('#password-new').inputValue();
+      const generated = await page.locator('#password-new').inputValue();
       assert.equal(generated.length, 24);
       assert(!/[A-Za-z]/.test(generated));
       assert.equal(await page.locator('#password-confirm').inputValue(), generated);
-    } else {
-      generated = strong();
-      await page.locator('#password-new').fill(generated);
-      await page.locator('#password-confirm').fill(generated);
     }
+    chosen = javaScriptEnabled ? passphrase : word;
+    await page.locator('#password-new').fill(chosen);
+    await page.locator('#password-confirm').fill(chosen);
     await page.locator('input[type=submit], button[type=submit]').click();
     await page.waitForURL(callback + '?**');
     await page.getByText('LOCAL_AUTH_SUCCESS', { exact: true }).waitFor();
-    assert.equal((await authenticate(name, generated)).status, 200);
-    console.log('PASS forced UPDATE_PASSWORD (' + (javaScriptEnabled ? 'JavaScript enabled' : 'JavaScript disabled') + ')');
+    assert.equal((await authenticate(name, chosen)).status, 200);
+    console.log('PASS user-chosen forced UPDATE_PASSWORD (' + (javaScriptEnabled ? 'JavaScript enabled' : 'JavaScript disabled') + ')');
   } finally { await context.close(); }
 }
 
@@ -127,19 +122,21 @@ async function browserFlow(javaScriptEnabled) {
     const serverInfo = await admin('serverinfo');
     assert.equal(serverInfo.status, 200, 'Local serverinfo is unavailable');
     const info = await serverInfo.json();
-    const passwordProviders = info.providers?.['password-policy']?.providers || {};
-    assert(passwordProviders.dictionaryWords, 'dictionaryWords provider is not registered in local Keycloak');
+    assert(info.providers?.['password-policy'], 'password-policy providers are unavailable');
     const response = await admin('realms', 'POST', { realm, enabled: true, loginTheme: 'cyberrange', passwordPolicy: policy });
     assert.equal(response.status, 201, 'Disposable realm creation failed');
     madeRealm = true;
     const realmReadback = await (await admin('realms/' + realm)).json();
     assert(realmReadback.passwordPolicy.includes(`passwordBlacklist(${blocklist})`), 'Realm blacklist policy was not saved');
-    assert(realmReadback.passwordPolicy.includes('dictionaryWords(scowl-en-v1)'), 'Existing realm policy must remain loadable');
+    assert(!realmReadback.passwordPolicy.includes('dictionaryWords('), 'Substring rule must be inactive');
     assert.equal((await admin('realms/' + realm + '/clients', 'POST', { clientId: 'local-probe', enabled: true, publicClient: true, standardFlowEnabled: true, directAccessGrantsEnabled: true, redirectUris: [callback] })).status, 201);
-    const rejected = await admin('realms/' + realm + '/users', 'POST', { username: 'bad-create', enabled: true, credentials: [{ type: 'password', value: word }] });
-    assert.equal(rejected.status, 400, 'Create with dictionary credential must fail');
+    const rejected = await admin('realms/' + realm + '/users', 'POST', { username: 'bad-create', enabled: true, credentials: [{ type: 'password', value: 'password123' }] });
+    assert.equal(rejected.status, 400, 'Create with blocklisted credential must fail');
     assert.equal((await (await admin('realms/' + realm + '/users?username=bad-create&exact=true')).json()).length, 0, 'Failed create must not leave a user');
-    console.log('PASS create-user dictionary rejection and rollback');
+    console.log('PASS create-user blocklist rejection and rollback');
+    await user('chosen-create', word);
+    assert.equal((await authenticate('chosen-create', word)).status, 200);
+    console.log('PASS user-chosen create password with embedded word');
     for (const letter of ['a', 'i', 'o']) {
       const candidate = '928!' + letter + '#728';
       await user('single-letter-' + letter, candidate);
@@ -149,13 +146,15 @@ async function browserFlow(javaScriptEnabled) {
     }
     const old = strong();
     const id = await user('reset-probe', old);
-    assert.equal((await admin('realms/' + realm + '/users/' + id + '/reset-password', 'PUT', { type: 'password', value: word, temporary: false })).status, 400);
+    assert.equal((await admin('realms/' + realm + '/users/' + id + '/reset-password', 'PUT', { type: 'password', value: 'password123', temporary: false })).status, 400);
     assert.equal((await authenticate('reset-probe', old)).status, 200, 'Rejected reset must retain old credential');
-    console.log('PASS reset-password dictionary rejection and credential preservation');
+    assert.equal((await admin('realms/' + realm + '/users/' + id + '/reset-password', 'PUT', { type: 'password', value: word, temporary: false })).status, 204);
+    assert.equal((await authenticate('reset-probe', word)).status, 200);
+    console.log('PASS reset-password blocklist rejection and user-chosen acceptance');
     browser = await chromium.launch({ channel: 'chrome', headless: true });
     await browserFlow(true);
     await browserFlow(false);
-    console.log('LOCAL_KEYCLOAK_DICTIONARY_VERIFIED');
+    console.log('LOCAL_KEYCLOAK_USER_CHOSEN_PASSWORD_VERIFIED');
   } finally {
     if (browser) await browser.close();
     try {

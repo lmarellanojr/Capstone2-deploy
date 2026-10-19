@@ -61,20 +61,21 @@ def verify(r: dict) -> subprocess.CompletedProcess:
 
 
 def test_script_embeds_one_verifier():
-    assert len(_BLOCKS) == 2
+    assert len(_BLOCKS) == 1
 
 
 @pytest.mark.parametrize("path", [SCRIPT, VERIFY, INSTALL, PUSH_REALM])
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not installed")
 def test_scripts_are_valid_bash(path):
     subprocess.run(["bash", "-n", str(path)], check=True)
 
 
-def test_policy_retains_baseline_and_requested_dictionary_rule():
+def test_policy_retains_baseline_without_substring_rule():
     clauses = dict(re.findall(r"(\w+)\(([^)]*)\)", script_policy()))
     assert int(clauses["length"]) >= 8  # MFA is mandatory (SEC-03); 15 without it
     assert int(clauses["maxLength"]) >= 64
     assert {"notUsername", "notEmail", "passwordHistory", "passwordBlacklist"} <= set(clauses)
-    assert clauses["dictionaryWords"] == "scowl-en-v1"
+    assert "dictionaryWords" not in clauses
     # No composition rules and no forced expiry.
     assert not {"upperCase", "lowerCase", "digits", "specialChars", "forceExpiredPasswordChange"} & set(clauses)
 
@@ -86,6 +87,13 @@ def test_policy_min_length_matches_portal_and_api():
     assert f"PASSWORD_MIN = {clauses['length']}" in portal
     assert f"PASSWORD_MAX = {clauses['maxLength']}" in portal
     assert f"min_length={clauses['length']}, max_length={clauses['maxLength']}" in api
+
+
+def test_local_keycloak_harness_uses_same_active_policy():
+    harness = (HERE.parent / "keycloak" / "dictionary-policy" / "test_local_keycloak.cjs").read_text()
+    match = re.search(r"^const policy = `([^`]+)`;", harness, re.M)
+    assert match
+    assert match.group(1).replace("${blocklist}", "cyberrange-common-passwords.txt") == script_policy()
 
 
 def test_verifier_passes_on_the_scripted_policy():
@@ -107,8 +115,7 @@ def test_verifier_passes_on_the_scripted_policy():
     (script_policy().replace("passwordHistory(3)", "passwordHistory(0)"), "passwordHistory(>=1) missing"),
     (script_policy("x.txt"), "passwordBlacklist is not cyberrange-common-passwords.txt"),
     (script_policy(""), "passwordBlacklist is not"),
-    (script_policy().replace(" and dictionaryWords(scowl-en-v1)", ""), "dictionaryWords is not"),
-    (script_policy().replace("scowl-en-v1", "wrong"), "dictionaryWords is not"),
+    (script_policy() + " and dictionaryWords(scowl-en-v1)", "dictionaryWords must be absent"),
 ])
 def test_verifier_fails_closed_on_weak_policy(policy, problem):
     r = verify(realm(policy))
@@ -150,7 +157,7 @@ def test_verify_script_probes_reject_known_weak_passwords():
     # or below the length floor, otherwise it would test nothing.
     text = VERIFY.read_text()
     lines = set(BLOCKLIST.read_text().splitlines())
-    assert re.search(r'expect reject "common password \(blocklist\)"\s+"password1"', text)
+    assert re.search(r'expect reject "common numeric password \(blocklist\)"\s+"12345678"', text)
     assert "password1" in lines and "password123" in lines  # PassWord123 lower-cased
     assert len("Xk9#qv2") < 8
 
@@ -166,7 +173,7 @@ def test_every_reject_probe_names_the_policy_rule():
     # A bare non-zero exit must never count as "rejected by the policy".
     probes = re.findall(r"^expect (reject|accept) .*$", VERIFY.read_text(), re.M)
     rejects = re.findall(r"^expect reject (.*)$", VERIFY.read_text(), re.M)
-    assert len(probes) == 11 and len(rejects) == 10
+    assert len(probes) == 11 and len(rejects) == 7
     for line in rejects:
         assert re.search(r"'[^']+'\s*$", line), f"no expected-error regex: {line}"
 
@@ -239,9 +246,17 @@ def test_enable_restarts_keycloak_only_when_blocklist_changed():
     assert re.search(r'BLOCKLIST_CHANGED.*\n\s*echo "blocklist changed.*\n\s*lxc exec guacamole -- systemctl restart keycloak', TEXT)
 
 
-@pytest.mark.parametrize("providers,accepted", [({}, False), ({"dictionaryWords": {}}, True)])
-def test_running_provider_is_required(providers, accepted):
-    info = {"providers": {"password-policy": {"providers": providers}}}
-    result = subprocess.run([sys.executable, "-c", _BLOCKS[0]], input=json.dumps(info), capture_output=True, text=True)
-    assert (result.returncode == 0) is accepted
-    assert TEXT.index("kcadm.sh get serverinfo") < TEXT.index('kcadm.sh update "realms/$REALM"')
+def test_provider_is_not_required_for_new_policy():
+    assert "install_keycloak_dictionary_policy.sh" not in TEXT
+    assert "kcadm.sh get serverinfo" not in TEXT
+
+
+def test_old_realm_export_cannot_restore_dictionary_rule(tmp_path):
+    source = PUSH_REALM.read_text()
+    guard = re.search(r"python3 - \"\$SRC\" <<'PY'\n(.*?)\nPY", source, re.S)
+    assert guard
+    for policy, accepted in [(script_policy(), True), (script_policy() + " and dictionaryWords(scowl-en-v1)", False)]:
+        realm_file = tmp_path / "realm.json"
+        realm_file.write_text(json.dumps({"passwordPolicy": policy}))
+        result = subprocess.run([sys.executable, "-c", guard.group(1), str(realm_file)], capture_output=True, text=True)
+        assert (result.returncode == 0) is accepted

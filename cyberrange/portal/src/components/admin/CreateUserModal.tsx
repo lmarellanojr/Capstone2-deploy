@@ -71,7 +71,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
     } catch (err) {
       const message = err instanceof Error ? err.message : "Couldn't create the user.";
       const guidance = message.includes("Password does not meet the Keycloak password policy")
-        ? " Try Generate, or use 8–128 characters without English words of two or more letters, common passwords, your username, or your email."
+        ? " Choose your own unique 8–128 character password or longer passphrase. Avoid common passwords, your username, and your email. Generate is optional."
         : "";
       setServerError(`${message}${guidance} Verify whether the account was created before sharing credentials. The password stays here until you close this form.`);
       setSaving(false);
@@ -237,7 +237,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, onCreated }: Create
                 Generate
               </Button>
             </div>
-            {errorText("password", "8–128 characters. No English words of two or more letters anywhere in the password. Not a common password, the username or the email.")}
+            {errorText("password", "Choose your own unique password or passphrase (8–128 characters). Avoid common passwords, your username, and your email. Generate is optional.")}
           </div>
 
           <label className="flex items-start gap-2 text-sm text-text-secondary cursor-pointer">

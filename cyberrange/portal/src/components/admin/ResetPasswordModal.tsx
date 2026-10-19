@@ -117,7 +117,7 @@ export function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModa
                 </Button>
               </div>
               <p id={`${uid}-pw-msg`} className={`mt-1 text-xs ${touched && lengthError ? "text-danger" : "text-text-muted"}`}>
-                {touched && lengthError ? lengthError : "8–128 characters. No English words of two or more letters anywhere in the password. Not a common password, the username, the email, or one of the last 3 passwords."}
+                {touched && lengthError ? lengthError : "Choose your own unique password or passphrase (8–128 characters). Avoid common passwords, the username, the email, and the last 3 passwords. Generate is optional."}
               </p>
             </div>
 

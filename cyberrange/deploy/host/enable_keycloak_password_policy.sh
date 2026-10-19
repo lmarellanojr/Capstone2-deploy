@@ -9,9 +9,7 @@
 # password (UPDATE_PASSWORD), where a student could pick a common password or username.
 # The portal/API only enforce 8-128 characters on passwords an Admin types.
 #
-# Baseline rules follow NIST SP 800-63B-4 and OWASP ASVS. The additional
-# user-requested dictionary substring rule is stricter than that guidance.
-# Baseline: length, a blocklist of
+# Baseline rules follow NIST SP 800-63B-4 and OWASP ASVS: length, a blocklist of
 # common passwords, no reuse of the username/email or recent passwords, and NO
 # composition rules (upper/digit/symbol) or periodic expiry, which both
 # standards advise against. 8 is the floor because SEC-03 makes TOTP mandatory
@@ -45,8 +43,6 @@ BLOCKLIST_NAME=cyberrange-common-passwords.txt
 [[ -f "$ADMIN_ENV" ]] || { echo "missing $ADMIN_ENV"; exit 1; }
 lxc info guacamole &>/dev/null || { echo "guacamole container not found"; exit 1; }
 
-bash "$(dirname "$0")/install_keycloak_dictionary_policy.sh"
-
 # --- 1. blocklist file (Keycloak checks it exists when the policy is saved) ---
 BLOCKLIST_STATE=$(bash "$(dirname "$0")/install_keycloak_blocklist.sh" | tee /dev/stderr | tail -1)
 if [[ "$BLOCKLIST_STATE" == BLOCKLIST_CHANGED ]] && lxc exec guacamole -- systemctl is-active --quiet keycloak.service; then
@@ -79,19 +75,10 @@ set +a
 export PATH=/opt/keycloak/bin:/usr/bin:/bin
 trap 'rm -f /tmp/admin.env' EXIT
 REALM=cyber-range
-POLICY="length(8) and maxLength(128) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3) and passwordBlacklist(${BLOCKLIST_NAME}) and dictionaryWords(scowl-en-v1)"
+POLICY="length(8) and maxLength(128) and notUsername(undefined) and notEmail(undefined) and passwordHistory(3) and passwordBlacklist(${BLOCKLIST_NAME})"
 # Exported so the verifier below checks exactly what was set.
 export FAILURE_FACTOR=10 WAIT_INCREMENT_SECONDS=60 MAX_FAILURE_WAIT_SECONDS=900
 kcadm.sh config credentials --server http://127.0.0.1:8083/auth --realm master --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
-
-# Refuse a realm update when the running server did not load the provider.
-kcadm.sh get serverinfo | python3 -c '
-import json, sys
-info = json.load(sys.stdin)
-providers = info.get("providers", {}).get("password-policy", {}).get("providers", {})
-if "dictionaryWords" not in providers:
-    sys.exit("dictionaryWords provider missing from running Keycloak")
-'
 
 # --- 2. password policy + brute-force protection ---
 kcadm.sh update "realms/$REALM" \
@@ -134,8 +121,8 @@ for name in ("notUsername", "notEmail"):
 blocklist = os.environ["BLOCKLIST_NAME"]
 if clauses.get("passwordBlacklist") != blocklist:
     problems.append(f"passwordBlacklist is not {blocklist}")
-if clauses.get("dictionaryWords") != "scowl-en-v1":
-    problems.append("dictionaryWords is not scowl-en-v1")
+if "dictionaryWords" in clauses:
+    problems.append("dictionaryWords must be absent")
 # NIST 800-63B-4 / ASVS: no composition rules, no forced expiry.
 for name in ("upperCase", "lowerCase", "digits", "specialChars", "forceExpiredPasswordChange"):
     if name in clauses:
