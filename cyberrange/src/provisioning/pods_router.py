@@ -41,6 +41,7 @@ from rubrics import CATALOG_SCENARIO_IDS, list_rubrics
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
 import lab_history
 import evidence_images
+import scoring_diagnostics
 from scoring import record_browser_milestone, verify_milestone
 from ttl import ttl_payload
 
@@ -1010,6 +1011,34 @@ def instructor_get_student_progress(student_id: str, claims: dict = Depends(veri
         "active_pod": active_pod,
         "milestones": [dict(m) for m in milestone_rows],
         "reviews": [dict(r) for r in review_rows],
+    }
+
+
+@router.get("/instructor/students/{student_id}/diagnostics")
+def instructor_get_student_diagnostics(
+    student_id: str,
+    pod_id: Optional[int] = Query(None, ge=1),
+    pod_created_at: Optional[str] = Query(None, max_length=40),
+    claims: dict = Depends(verify_token),
+):
+    """Scenario 3 failure reason codes for one student (instructor/admin only).
+
+    Role is checked first and rows are always scoped to the path's student_id,
+    so a Student can neither read their own reasons nor another student's.
+    pod_id / pod_created_at narrow to one lab. Values are allowlisted codes
+    only -- see scoring_diagnostics.REASON_CODES.
+    """
+    auth.require_role(["instructor", "admin"], claims)
+    conn = get_db_connection()
+    try:
+        rows = scoring_diagnostics.list_for_student(conn, student_id, pod_id, pod_created_at)
+    finally:
+        conn.close()
+    return {
+        "student_id": student_id,
+        "enabled": scoring_diagnostics.enabled(),
+        "retention_days": scoring_diagnostics.retention_days(),
+        "diagnostics": rows,
     }
 
 

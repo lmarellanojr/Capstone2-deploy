@@ -41,6 +41,7 @@ INSTRUCTOR_OR_ADMIN_GET_ROUTES = [
     "/instructor/pods",
     "/instructor/students",
     "/instructor/students/placeholder-student-id",
+    "/instructor/students/placeholder-student-id/diagnostics",
     "/instructor/reviews",
     "/instructor/reviews/999999",
 ]

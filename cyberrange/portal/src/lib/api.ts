@@ -444,7 +444,39 @@ export interface ReviewAlertSnapshot {
   captured_at: string
 }
 
+// Scenario 3 check failure reasons (GET /instructor/students/{id}/diagnostics).
+// Instructor/admin only; reason_code is from a fixed backend allowlist.
+export interface ScoringDiagnostic {
+  pod_id: number
+  pod_created_at: string
+  lab_session_id: number | null
+  scenario_id: number
+  milestone_id: number
+  status: 'PASS' | 'FAIL' | 'ERROR' | 'UNKNOWN'
+  /** null once the milestone passed */
+  reason_code: string | null
+  /** where the artifact was read: HOME_MSFADMIN | HOME_STUDENT | TMP | NONE */
+  location: string | null
+  /** how many supported locations held the file */
+  copies: number
+  check_count: number
+  first_seen_at: string
+  last_seen_at: string
+}
+
+export interface StudentDiagnostics {
+  student_id: string
+  enabled: boolean
+  retention_days: number
+  diagnostics: ScoringDiagnostic[]
+}
+
 export const instructor = {
+  getStudentDiagnostics: async (studentId: string): Promise<StudentDiagnostics> => {
+    const response = await apiClient.get(`/instructor/students/${encodeURIComponent(studentId)}/diagnostics`)
+    return response.data
+  },
+
   listStudentLabs: async (studentId: string): Promise<{ student_id: string; labs: InstructorLab[] }> => {
     const response = await apiClient.get(`/instructor/students/${encodeURIComponent(studentId)}/labs`)
     return response.data

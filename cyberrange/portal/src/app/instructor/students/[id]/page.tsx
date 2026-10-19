@@ -13,6 +13,7 @@ import { SCENARIOS } from "@/hooks/useScenarios";
 import { earnedPointsForAttempt } from "@/lib/scenarioProgress";
 import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
 import { StudentProgressDownload } from "@/components/instructor/StudentProgressDownload";
+import { ScoringDiagnostics } from "@/components/instructor/ScoringDiagnostics";
 
 interface PageProps {
   params: { id: string };
@@ -119,6 +120,8 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
               milestones={student.milestones}
             />
           </div>
+
+          <ScoringDiagnostics studentId={student.student_id} />
 
           <div className="card-surface overflow-hidden mb-6">
             <h2 className="text-lg font-bold text-text-main p-6 pb-4">Milestones (attempt history)</h2>
