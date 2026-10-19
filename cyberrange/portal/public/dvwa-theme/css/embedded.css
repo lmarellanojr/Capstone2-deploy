@@ -26,6 +26,15 @@
 		max-width: 100%;
 	}
 
+	/* login.php only: stock login.css pins #footer absolute over the form. */
+	#wrapper div#footer {
+		position: static;
+		width: 100%;
+		height: auto;
+		margin-top: 1rem;
+		padding: 0 12px 12px;
+	}
+
 	div#main_menu {
 		width: 140px;
 		max-width: 36%;
