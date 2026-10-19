@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { KeyRound, RefreshCw, Search, ShieldOff, UserPlus, Users } from "lucide-react";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
@@ -15,7 +15,8 @@ import { useToastContext } from "@/context/ToastContext";
 import { formatSqliteDate } from "@/lib/sqliteTime";
 import { APP_ROLES } from "@/lib/adminUserValidation";
 import { createCredentialFeedback, resetCredentialFeedback } from "@/lib/adminCredentialFeedback";
-import type { AdminUser, AppRole } from "@/lib/api";
+import { filterAdminUsers, type RoleFilter, type StatusFilter } from "@/lib/adminUserFilter";
+import { ADMIN_USERS_MAX, type AdminUser, type AppRole } from "@/lib/api";
 
 const ROLE_BADGE: Record<AppRole, "brand" | "info" | "default"> = {
   admin: "brand",
@@ -23,6 +24,8 @@ const ROLE_BADGE: Record<AppRole, "brand" | "info" | "default"> = {
   student: "default",
 };
 const ROLE_LABEL: Record<AppRole, string> = { student: "Student", instructor: "Instructor", admin: "Admin" };
+const FILTER_SELECT =
+  "rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40";
 
 type PendingChange =
   | { kind: "disable"; user: AdminUser }
@@ -44,12 +47,32 @@ export default function AdminUsersPage() {
   const { users, loading, error, forbidden, pending, search, refresh, setEnabled, setRole, resetPassword, resetMfa, createUser } =
     useAdminUsers();
   const [query, setQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [creating, setCreating] = useState(false);
   const [resetting, setResetting] = useState<AdminUser | null>(null);
   const [confirm, setConfirm] = useState<PendingChange | null>(null);
   const [credentialHandoff, setCredentialHandoff] = useState<CredentialHandoff | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const firstRun = useRef(true);
+  // Rows created or changed under the current search + filters stay visible
+  // even if they no longer match; changing the search or a filter drops them
+  // for good (state is reset during render, so returning to a view starts empty).
+  const viewKey = JSON.stringify([query, roleFilter, statusFilter]);
+  const [kept, setKept] = useState<{ key: string; ids: ReadonlySet<string> }>({ key: viewKey, ids: new Set() });
+  if (kept.key !== viewKey) setKept({ key: viewKey, ids: new Set() });
+  const keptIds = kept.key === viewKey ? kept.ids : undefined;
+  // `startKey` is the view the action began in; a request that finishes after
+  // the Admin moved to another view is ignored rather than clobbering its pins.
+  const keepVisible = (id: string, startKey: string) =>
+    setKept((prev) => (prev.key === startKey ? { key: prev.key, ids: new Set(Array.from(prev.ids).concat(id)) } : prev));
+  const visibleUsers = useMemo(
+    () => filterAdminUsers(users, roleFilter, statusFilter, keptIds),
+    [users, roleFilter, statusFilter, keptIds],
+  );
+  const filtered = roleFilter !== "all" || statusFilter !== "all";
+  // The API only returns the first page, so filters/count cover loaded accounts only.
+  const capped = users.length >= ADMIN_USERS_MAX;
 
   // Debounced server-side search (Keycloak matches username/name/email).
   useEffect(() => {
@@ -62,16 +85,19 @@ export default function AdminUsersPage() {
   }, [query, search]);
 
   const runChange = async (change: PendingChange) => {
+    const startKey = viewKey;
     setConfirmBusy(true);
     try {
       if (change.kind === "disable") {
         await setEnabled(change.user.id, false);
+        keepVisible(change.user.id, startKey);
         success(`${change.user.username} is disabled and signed out.`);
       } else if (change.kind === "mfa") {
         await resetMfa(change.user.id);
         success(`${change.user.username}'s authenticator was reset. They'll set up a new one at next sign-in.`);
       } else {
         await setRole(change.user.id, change.role);
+        keepVisible(change.user.id, startKey);
         success(`${change.user.username} is now ${ROLE_LABEL[change.role]}. It applies at their next sign-in.`);
       }
       setConfirm(null);
@@ -83,8 +109,10 @@ export default function AdminUsersPage() {
   };
 
   const enable = async (u: AdminUser) => {
+    const startKey = viewKey;
     try {
       await setEnabled(u.id, true);
+      keepVisible(u.id, startKey);
       success(`${u.username} can sign in again.`);
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Couldn't enable the user.");
@@ -124,13 +152,50 @@ export default function AdminUsersPage() {
             className="w-full bg-secondary border border-border rounded-lg pl-9 pr-4 py-2 text-sm text-text-main placeholder:text-text-faint focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand/40"
           />
         </div>
+        <select
+          aria-label="Filter by role"
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value as RoleFilter)}
+          className={FILTER_SELECT}
+        >
+          <option value="all">All roles</option>
+          {APP_ROLES.map((r) => (
+            <option key={r} value={r}>
+              {ROLE_LABEL[r]}
+            </option>
+          ))}
+          <option value="none">No role</option>
+        </select>
+        <select
+          aria-label="Filter by status"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+          className={FILTER_SELECT}
+        >
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        {filtered && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setRoleFilter("all");
+              setStatusFilter("all");
+            }}
+          >
+            Clear filters
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={loading}>
           <RefreshCw size={14} aria-hidden="true" className={loading ? "animate-spin" : ""} />
           Refresh
         </Button>
         {!loading && !error && (
           <span className="text-sm text-text-muted" aria-live="polite">
-            {users.length} {users.length === 1 ? "user" : "users"}
+            {filtered ? `${visibleUsers.length} of ${users.length}` : users.length} {users.length === 1 ? "user" : "users"}
+            {capped && ` (first ${ADMIN_USERS_MAX} loaded; search to narrow)`}
           </span>
         )}
       </div>
@@ -151,6 +216,16 @@ export default function AdminUsersPage() {
         {loading && users.length === 0 ? (
           <div className="flex justify-center py-12">
             <LoadingSpinner message="Loading users…" />
+          </div>
+        ) : users.length > 0 && visibleUsers.length === 0 ? (
+          <div className="py-12 px-6 text-center">
+            <Users size={28} className="mx-auto mb-3 text-text-faint" aria-hidden="true" />
+            <p className="font-semibold text-text-main">No users match these filters</p>
+            <p className="text-sm text-text-muted mt-1">
+              {capped
+                ? `Only the first ${ADMIN_USERS_MAX} accounts are loaded. Search by name to find others, or clear the filters.`
+                : "Try another role or status, or clear the filters."}
+            </p>
           </div>
         ) : users.length === 0 && !error ? (
           <div className="py-12 px-6 text-center">
@@ -176,7 +251,7 @@ export default function AdminUsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((u) => {
+                {visibleUsers.map((u) => {
                   const isSelf = !!actor && u.username === actor;
                   const busy = pending[u.id];
                   return (
@@ -292,6 +367,7 @@ export default function AdminUsersPage() {
         onClose={() => setCreating(false)}
         onCreate={createUser}
         onCreated={(u, password, temporary) => {
+          keepVisible(u.id, viewKey);
           setCredentialHandoff({ username: u.username ?? "", password, temporary });
           const feedback = createCredentialFeedback(u, u.role ? ROLE_LABEL[u.role] : "no role");
           success(feedback.message);
