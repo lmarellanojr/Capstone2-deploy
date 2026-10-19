@@ -408,4 +408,56 @@ describe('ExercisePanel', () => {
     expect(screen.getByText(/Lab session expired — instructor review unavailable\./i)).toBeTruthy()
     expect(screen.getByText(/Lab session expired\. Scoring is unavailable\./i)).toBeTruthy()
   })
+
+  describe('start here and step confirmation', () => {
+    const base = {
+      pod: mockPod,
+      scenario: mockScenario,
+      currentTask: mockTask,
+      taskIndex: 0,
+      totalTasks: 2,
+      completed: false,
+      isFlag: false,
+      lockedReview: false,
+      verifying: false,
+      milestonesLoading: false,
+      onVerify: jest.fn(),
+      onFlagPass: jest.fn(),
+      onRequestReview: jest.fn(),
+    }
+    const scoredTask = { id: 7, name: 'Port Scan', goal: 'Scan ports', description: '', points: 25 }
+
+    it('marks the first task as the starting point only when asked', () => {
+      const { rerender } = render(<ExercisePanel {...base} startHere />)
+      expect(screen.getByTestId('start-here-badge')).toHaveTextContent('Start here')
+      expect(screen.getByText(/This is your first task/i)).toBeInTheDocument()
+
+      rerender(<ExercisePanel {...base} />)
+      expect(screen.queryByTestId('start-here-badge')).toBeNull()
+    })
+
+    it('confirms a step the panel has moved past, with its points and the next task', () => {
+      const onDismiss = jest.fn()
+      render(<ExercisePanel {...base} justScored={scoredTask} onDismissJustScored={onDismiss} />)
+
+      const banner = screen.getByTestId('step-complete-banner')
+      expect(banner).toHaveTextContent('Step complete: Port Scan scored +25 pts.')
+      expect(banner).toHaveTextContent('Next up: Host Discovery.')
+      expect(banner).toHaveAttribute('role', 'status')
+
+      fireEvent.click(screen.getByRole('button', { name: /Dismiss step complete/i }))
+      expect(onDismiss).toHaveBeenCalledTimes(1)
+    })
+
+    it('leaves the confirmation to Status when the scored step is still on screen', () => {
+      render(<ExercisePanel {...base} completed justScored={mockTask} />)
+      expect(screen.queryByTestId('step-complete-banner')).toBeNull()
+      expect(screen.getByText(/Milestone scored/i)).toBeInTheDocument()
+    })
+
+    it('drops "Next up" once the current task is already complete', () => {
+      render(<ExercisePanel {...base} completed justScored={scoredTask} />)
+      expect(screen.getByTestId('step-complete-banner')).not.toHaveTextContent('Next up')
+    })
+  })
 })
