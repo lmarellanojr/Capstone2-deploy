@@ -16,4 +16,7 @@ test("asks the browser not to fill the admin's saved login into the new user's p
   );
   expect(screen.getByLabelText(/^Initial password/)).toHaveAttribute("autocomplete", "new-password");
   expect(screen.getByLabelText(/^Username/)).toHaveAttribute("autocomplete", "off");
+  for (const label of [/^First name/, /^Last name/, /^Email/]) {
+    expect(screen.getByLabelText(label)).toHaveAttribute("autocomplete", "off");
+  }
 });
