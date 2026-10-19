@@ -2,7 +2,7 @@
 import React from 'react'
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { LabTour, labTourSteps, placeCard, visibleBox } from './LabTour'
+import { LabTour, UNPLACED_STYLE, labTourSteps, placeCard, visibleBox } from './LabTour'
 
 const viewport = { width: 1200, height: 800 }
 const card = { width: 320, height: 160 }
@@ -61,8 +61,60 @@ describe('placeCard', () => {
 describe('labTourSteps', () => {
   it('walks task → lab → status → help, with DVWA login guidance only for DVWA', () => {
     expect(labTourSteps('terminal').map((s) => s.target)).toEqual(['task-panel', 'lab-surface', 'task-status', 'lab-help'])
-    expect(labTourSteps('dvwa')[1].title).toMatch(/DVWA/)
+    expect(labTourSteps('dvwa')[1].title).toMatch(/DVWA is already signed in/)
     expect(labTourSteps('terminal')[1].title).toMatch(/already connected/)
+  })
+
+  it('calls the first stop the current task, since the tour also runs on a resumed lab', () => {
+    expect(labTourSteps('terminal')[0].title).toBe('Your current task is here')
+  })
+
+  it('tells DVWA students they are signed in at Low, with the login only as a fallback', () => {
+    render(<>{labTourSteps('dvwa')[1].body}</>)
+    expect(document.body.textContent).toMatch(/signs you in with DVWA Security set to Low/)
+    expect(document.body.textContent).toMatch(/Only if DVWA shows its login page: use admin \/ password/)
+    expect(document.body.textContent).not.toMatch(/then set DVWA Security/)
+  })
+})
+
+describe('unplaced card', () => {
+  // Real browsers refuse focus inside visibility:hidden / display:none, and the
+  // heading is focused in the same layout pass as the first measure, before
+  // the card is placed. jsdom won't refuse that focus, so record the card's
+  // inline style at the moment focus is moved instead.
+  it('never moves focus into the card while it is hidden', () => {
+    document.body.innerHTML = ''
+    for (const t of ['task-panel', 'lab-surface', 'task-status', 'lab-help']) {
+      const el = document.createElement('div')
+      el.setAttribute('data-tour', t)
+      el.getBoundingClientRect = () => ({ top: 100, left: 40, width: 200, height: 40 }) as DOMRect
+      document.body.appendChild(el)
+    }
+    const original = HTMLElement.prototype.focus
+    const stylesAtFocus: { visibility: string; display: string }[] = []
+    const spy = jest.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, opts?: FocusOptions) {
+      if (this.id === 'lab-tour-title') {
+        const card = this.closest('[data-testid="lab-tour-card"]') as HTMLElement
+        stylesAtFocus.push({ visibility: card.style.visibility, display: card.style.display })
+      }
+      return original.call(this, opts)
+    })
+    try {
+      render(<LabTour open onClose={jest.fn()} surface="terminal" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    } finally {
+      spy.mockRestore()
+    }
+    // Opened from ? (focusOnOpen) and after Next: both focus the heading.
+    expect(stylesAtFocus.length).toBeGreaterThanOrEqual(2)
+    for (const s of stylesAtFocus) {
+      expect(s.visibility).not.toBe('hidden')
+      expect(s.display).not.toBe('none')
+    }
+  })
+
+  it('keeps the unplaced style invisible and unclickable', () => {
+    expect(UNPLACED_STYLE).toEqual({ opacity: 0, pointerEvents: 'none' })
   })
 })
 
@@ -164,7 +216,7 @@ describe('LabTour', () => {
 
   it('focuses the card heading when opened from the ? button', () => {
     render(<LabTour open onClose={jest.fn()} surface="terminal" />)
-    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /first task/i }))
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /current task/i }))
   })
 
   it('still shows the card (without a ring) if an anchor is missing', () => {
