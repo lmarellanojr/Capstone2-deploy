@@ -374,6 +374,22 @@ def test_create_rolls_back_when_role_assignment_fails(client, kc):
     assert "rolled_back" in audit_rows("ADMIN_USER_CREATE")[-1]["detail"]
 
 
+def test_create_role_rejection_is_not_reported_as_password_policy(client, kc, monkeypatch):
+    as_caller(ADMIN)
+
+    def reject_role(user_id, role):
+        raise KeycloakRejected("role mapping rejected")
+
+    monkeypatch.setattr(kc, "set_app_role", reject_role)
+    r = client.post("/admin/users", json=NEW_USER)
+    assert r.status_code == 503
+    assert r.json()["detail"] == "User management service unavailable"
+    assert kc.usernames() == {"admin_demo"}
+    detail = audit_rows("ADMIN_USER_CREATE")[-1]["detail"]
+    assert "reason=keycloak step=role rolled_back" in detail
+    assert NEW_USER["password"] not in detail
+
+
 def test_create_password_policy_rejection_is_422_and_rolled_back(client, kc):
     as_caller(ADMIN)
     kc.reject_password = True

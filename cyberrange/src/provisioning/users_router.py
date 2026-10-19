@@ -234,9 +234,12 @@ def _create_user_locked(body: CreateUserRequest, actor: str, detail: str, kc: Ke
         _audit("ADMIN_USER_CREATE", body.username, "FAILED", actor, f"{detail} reason=keycloak")
         raise _unavailable(e)
 
+    step = "password"
     try:
         kc.set_password(user_id, body.password, body.temporary_password)
+        step = "role"
         kc.set_app_role(user_id, body.role)
+        step = "readback"
         user = kc.get_user(user_id)
     except KeycloakAdminError as e:
         # Never leave a half-built account (no password / no role) behind.
@@ -246,11 +249,11 @@ def _create_user_locked(body: CreateUserRequest, actor: str, detail: str, kc: Ke
         except KeycloakAdminError:
             logger.critical("ADM-USER: rollback of partially created user %s FAILED", body.username)
             rollback = "rollback_failed"
-        if isinstance(e, KeycloakRejected):
+        if step == "password" and isinstance(e, KeycloakRejected):
             # 400 from reset-password = the realm password policy said no.
             _audit("ADMIN_USER_CREATE", body.username, "FAILED", actor, f"{detail} reason=password_policy {rollback}")
             raise HTTPException(status_code=422, detail="Password does not meet the Keycloak password policy")
-        _audit("ADMIN_USER_CREATE", body.username, "FAILED", actor, f"{detail} reason=keycloak {rollback}")
+        _audit("ADMIN_USER_CREATE", body.username, "FAILED", actor, f"{detail} reason=keycloak step={step} {rollback}")
         raise _unavailable(e)
 
     _audit("ADMIN_USER_CREATE", body.username, "OK", actor, f"{detail} temporary_password={body.temporary_password}")
