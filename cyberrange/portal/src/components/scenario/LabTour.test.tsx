@@ -2,7 +2,7 @@
 import React from 'react'
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { LabTour, labTourSteps, placeCard, visibleBox } from './LabTour'
+import { LabTour, UNPLACED_STYLE, labTourSteps, placeCard, visibleBox } from './LabTour'
 
 const viewport = { width: 1200, height: 800 }
 const card = { width: 320, height: 160 }
@@ -61,8 +61,30 @@ describe('placeCard', () => {
 describe('labTourSteps', () => {
   it('walks task → lab → status → help, with DVWA login guidance only for DVWA', () => {
     expect(labTourSteps('terminal').map((s) => s.target)).toEqual(['task-panel', 'lab-surface', 'task-status', 'lab-help'])
-    expect(labTourSteps('dvwa')[1].title).toMatch(/DVWA/)
+    expect(labTourSteps('dvwa')[1].title).toMatch(/DVWA is already signed in/)
     expect(labTourSteps('terminal')[1].title).toMatch(/already connected/)
+  })
+
+  it('calls the first stop the current task, since the tour also runs on a resumed lab', () => {
+    expect(labTourSteps('terminal')[0].title).toBe('Your current task is here')
+  })
+
+  it('tells DVWA students they are signed in at Low, with the login only as a fallback', () => {
+    render(<>{labTourSteps('dvwa')[1].body}</>)
+    expect(document.body.textContent).toMatch(/signs you in with DVWA Security set to Low/)
+    expect(document.body.textContent).toMatch(/Only if DVWA shows its login page: use admin \/ password/)
+    expect(document.body.textContent).not.toMatch(/then set DVWA Security/)
+  })
+})
+
+describe('unplaced card', () => {
+  // Real browsers refuse focus inside visibility:hidden / display:none, and the
+  // heading is focused before the first measure lands. jsdom can't show that,
+  // so pin the style instead.
+  it('stays focusable while it is being placed', () => {
+    expect(UNPLACED_STYLE).toEqual({ opacity: 0, pointerEvents: 'none' })
+    expect(UNPLACED_STYLE).not.toHaveProperty('visibility')
+    expect(UNPLACED_STYLE).not.toHaveProperty('display')
   })
 })
 
@@ -164,7 +186,7 @@ describe('LabTour', () => {
 
   it('focuses the card heading when opened from the ? button', () => {
     render(<LabTour open onClose={jest.fn()} surface="terminal" />)
-    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /first task/i }))
+    expect(document.activeElement).toBe(screen.getByRole('heading', { name: /current task/i }))
   })
 
   it('still shows the card (without a ring) if an anchor is missing', () => {

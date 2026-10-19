@@ -174,7 +174,7 @@ describe('ScenarioDetailPage first-run walkthrough', () => {
     fireEvent.click(screen.getByRole('button', { name: /Show lab walkthrough/i }))
     expect(screen.getByTestId('lab-tour-card')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-    expect(screen.getByText('DVWA opens here')).toBeInTheDocument()
+    expect(screen.getByText('DVWA is already signed in')).toBeInTheDocument()
   })
 
   it('replays from step 1 when ? is pressed mid-tour', () => {

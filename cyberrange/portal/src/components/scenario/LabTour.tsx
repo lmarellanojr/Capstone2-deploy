@@ -19,12 +19,13 @@ export function labTourSteps(surface: Surface): LabTourStep[] {
     surface === "dvwa"
       ? {
           target: "lab-surface",
-          title: "DVWA opens here",
+          title: "DVWA is already signed in",
           body: (
             <>
-              Log in with <code className="px-1 rounded bg-muted">admin</code> /{" "}
-              <code className="px-1 rounded bg-muted">password</code>, then set{" "}
-              <strong>DVWA Security</strong> to <strong>Low</strong> before your first payload.
+              The lab signs you in with <strong>DVWA Security</strong> set to <strong>Low</strong>,
+              so you can go straight to the task. Only if DVWA shows its login page: use{" "}
+              <code className="px-1 rounded bg-muted">admin</code> /{" "}
+              <code className="px-1 rounded bg-muted">password</code>.
             </>
           ),
         }
@@ -42,7 +43,8 @@ export function labTourSteps(surface: Surface): LabTourStep[] {
   return [
     {
       target: "task-panel",
-      title: "Your first task is here",
+      // "Current", not "first": the tour also runs on a resumed lab (and on replay).
+      title: "Your current task is here",
       body: (
         <>
           Read the instructions, then do the work in the lab. Hints and the full walkthrough are
@@ -80,6 +82,9 @@ interface Box {
   width: number;
   height: number;
 }
+
+/** Card style until it has been measured: invisible but still focusable. */
+export const UNPLACED_STYLE: React.CSSProperties = { opacity: 0, pointerEvents: "none" };
 
 const GAP = 12;
 const MARGIN = 16;
@@ -265,7 +270,10 @@ export function LabTour({ open, onClose, surface, focusOnOpen = true }: LabTourP
         data-testid="lab-tour-card"
         data-step-target={step.target}
         className="fixed z-40 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-border bg-secondary p-4 shadow-card"
-        style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}
+        // Before the first measure the card is transparent, not visibility:hidden:
+        // the layout effect focuses the heading in that same pass, and browsers
+        // refuse focus inside a visibility:hidden element (jsdom doesn't).
+        style={pos ? { top: pos.top, left: pos.left } : UNPLACED_STYLE}
       >
         <div className="flex items-start justify-between gap-2 mb-1.5">
           <h2
