@@ -49,7 +49,7 @@ The guide's `/home/msfadmin` is checked first, then `/home/student`, then `/tmp`
 
 ## What is stored
 
-Each row holds the reason code, location name, copy count, student id, pod id, `pod_created_at`, the open `lab_sessions.id`, scenario, milestone, status, check count, and first/last seen time. Artifact contents, shell output, exception text and student-chosen paths are never stored. There is one row per student + pod slot + `pod_created_at` + milestone, so repeated polls update a single row. A reused pod slot gets a new row.
+Each row holds the reason code, location name, copy count, student id, pod id, `pod_created_at`, the open `lab_sessions.id`, scenario, milestone, status, check count, and first/last seen time. Artifact contents, shell output, exception text and student-chosen paths are never stored. Nothing is written on the lab VM either: the script runs on the student's meta container, where the student has sudo, so the reason leaves only on stdout to this host-side, role-gated table and is never logged there. There is one row per student + pod slot + `pod_created_at` + milestone, so repeated polls update a single row. A reused pod slot gets a new row.
 
 ## Access
 

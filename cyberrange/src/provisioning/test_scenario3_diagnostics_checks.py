@@ -197,6 +197,20 @@ def test_last_line_without_newline_reports_what_the_scorer_saw(tmp_path, milesto
     check(tmp_path, milestone, content.rstrip("\n"), token="FAIL", reason=reason)
 
 
+# Far bigger than a pipe buffer: a grep -q that stops at the first match must not
+# turn into "no match" (SIGPIPE + pipefail) on a long file.
+PADDING = "padding line for a long student file\n" * 6000
+
+
+@pytest.mark.parametrize("milestone,content,reason", [
+    (1, TRIAGE_OK.replace(AGENT, "pod-bob-meta") + PADDING, "AGENT_MISMATCH"),
+    (2, "rule: 5710, timestamp: 2026-10-01T15:00:00Z\n" + PADDING, "TIMESTAMP_NOT_MATCHED"),
+    (2, "rule: 5715, timestamp: 2026-10-01T14:33:05Z\n" + PADDING, "RULE_MISMATCH"),
+], ids=["m1-agent-mismatch", "m2-timestamp-not-matched", "m2-rule-mismatch"])
+def test_large_file_keeps_the_right_reason(tmp_path, milestone, content, reason):
+    check(tmp_path, milestone, content, token="FAIL", reason=reason)
+
+
 def test_m2_no_auth_log_is_check_error(tmp_path):
     check(tmp_path, 2, TIMELINE_OK, token="FAIL", reason="CHECK_ERROR", authlog=None)
 
@@ -292,6 +306,18 @@ def test_diag_line_never_echoes_artifact_text(tmp_path):
     _place(tmp_path / "root", 3, f"system {secret} " + "a" * 250 + "\n")
     _, _, lines = run(tmp_path, 3)
     assert all(secret not in ln and "/home" not in ln and "/tmp" not in ln for ln in lines)
+
+
+@pytest.mark.parametrize("milestone", [1, 2, 3])
+def test_reason_is_never_written_to_the_container_log(tmp_path, milestone):
+    # The script runs on the student's meta VM, where the student has sudo; the
+    # reason may only leave on stdout to the host-side, role-gated store.
+    _place(tmp_path / "root", milestone, "rule: 5715 pod-bob-meta\n")
+    _, diag, _ = run(tmp_path, milestone)
+    assert diag is not None and diag["reason"] is not None
+    log = tmp_path / "scoring.log"
+    text = log.read_text(encoding="utf-8") if log.exists() else ""
+    assert diag["reason"] not in text and "reason=" not in text and "DIAG" not in text
 
 
 def test_every_reason_the_script_can_print_is_allowlisted():

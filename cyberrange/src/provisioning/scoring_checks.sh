@@ -949,13 +949,21 @@ _s9_authlog_path() {
 # and report what the scorer saw, not what the file holds.
 _s9_scorer_lines() {
     local line
-    while IFS= read -r line; do printf '%s
-' "$line"; done < "$1"
+    while IFS= read -r line; do printf '%s\n' "$line"; done < "$1"
+}
+
+# Does any line the scorer sees match ERE $2? No pipe into grep -q: under
+# pipefail, grep -q exiting on the first match SIGPIPEs the writer on a large
+# file (status 141) and the pipeline would report "no match".
+_s9_scorer_lines_match() {
+    local lines
+    lines=$(_s9_scorer_lines "$1" 2>/dev/null) || return 1
+    grep -qE "$2" <<< "$lines"
 }
 
 # Diagnostic only: names some pod-…-meta agent (M1 field form), even a wrong one.
 _s9_names_any_meta_agent_field() {
-    _s9_scorer_lines "$1" 2>/dev/null | grep -qE '[Aa]gent[^[:alnum:]]+"?pod-[A-Za-z0-9][A-Za-z0-9-]*-meta'
+    _s9_scorer_lines_match "$1" '[Aa]gent[^[:alnum:]]+"?pod-[A-Za-z0-9][A-Za-z0-9-]*-meta'
 }
 
 # Diagnostic only: names some pod-…-meta host anywhere (M3 prose form).
@@ -977,16 +985,19 @@ _s9_has_any_timestamp() {
 _S9_TIMELINE_RULE_RE='[Rr]ule[^0-9]{0,15}5710([^0-9]|$)'
 
 _s9_timeline_has_rule_line() {
-    _s9_scorer_lines "$1" 2>/dev/null | grep -qE "$_S9_TIMELINE_RULE_RE"
+    _s9_scorer_lines_match "$1" "$_S9_TIMELINE_RULE_RE"
 }
 
 _s9_timeline_names_other_rule() {
-    _s9_scorer_lines "$1" 2>/dev/null | grep -qE '[Rr]ule[^0-9]{0,15}[0-9]{3,6}'
+    _s9_scorer_lines_match "$1" '[Rr]ule[^0-9]{0,15}[0-9]{3,6}'
 }
 
 # Diagnostic only: some rule-5710 line in the timeline carries an ISO …Z stamp.
 _s9_rule_line_has_timestamp() {
-    _s9_scorer_lines "$1" 2>/dev/null | grep -E "$_S9_TIMELINE_RULE_RE" | grep -qE "$_S9_TIMESTAMP_RE"
+    local lines
+    lines=$(_s9_scorer_lines "$1" 2>/dev/null) || return 1
+    lines=$(grep -E "$_S9_TIMELINE_RULE_RE" <<< "$lines") || return 1
+    grep -qE "$_S9_TIMESTAMP_RE" <<< "$lines"
 }
 
 _s9_m1_reason() {
@@ -1073,7 +1084,6 @@ check_scenario_9() {
     _s9_select_artifact "$name"
     reason=$("_s9_m${milestone}_reason" "$S9_SEL_PATH") || reason=CHECK_ERROR
     [[ -n "$reason" ]] || reason=CHECK_ERROR
-    log "Scenario 9 M${milestone}: reason=${reason} location=${S9_SEL_LOC} copies=${S9_SEL_COPIES}"
     printf 'DIAG reason=%s location=%s copies=%s\n' "$reason" "$S9_SEL_LOC" "$S9_SEL_COPIES"
     if [[ "$reason" == NONE ]]; then echo "PASS"; else echo "FAIL"; fi
 }
