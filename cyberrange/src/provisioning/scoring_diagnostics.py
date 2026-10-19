@@ -73,7 +73,9 @@ def enabled_scenarios() -> list[int]:
     ids: set[int] = set()
     for part in os.getenv("SCORING_DIAGNOSTICS_SCENARIOS", "").split(","):
         part = part.strip()
-        if part.isdigit():
+        # isascii: isdigit() also accepts e.g. "²", which int() rejects, and an
+        # env typo must never turn every Verify into a 500.
+        if part.isascii() and part.isdigit():
             ids.add(int(part))
     if _truthy("S3_DIAGNOSTICS_ENABLED"):
         ids.add(9)

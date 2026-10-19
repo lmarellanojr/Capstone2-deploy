@@ -118,9 +118,18 @@ export const SCENARIO4_REASON_COPY: Record<string, ReasonCopy> = {
   },
 };
 
-const CHECK_ERROR_COPY: ReasonCopy = SCENARIO3_REASON_COPY.CHECK_ERROR;
+/** Fallback for an unmapped scenario, or a code missing from a scenario's copy.
+ *  Scenario-neutral: each scenario's `reasons` carries its own CHECK_ERROR wording. */
+export const CHECK_ERROR_COPY: ReasonCopy = {
+  label: "Check error",
+  detail: "The check could not run or verify. Not the student's fault.",
+};
 
-/** Keyed by scorer scenario id (scoring_checks.sh), in display order. */
+/** Scorer ids in catalog order (Scenario 1, 2, 3, 4). The panel sorts by this,
+ *  not by object key order, which for integer keys is ascending by id. */
+export const CATALOG_ORDER: readonly number[] = [1, 6, 9, 11];
+
+/** Keyed by scorer scenario id (scoring_checks.sh). */
 export const DIAGNOSTIC_SCENARIOS: Record<number, ScenarioDiagnostics> = {
   9: {
     title: "Scenario 3 — SIEM Alert Triage",
