@@ -20,6 +20,8 @@ const EVENTS: Record<string, EventInfo> = {
   ADMIN_USER_ROLE_SET: { label: "Role changed", description: "An admin changed a user's role.", category: "admin" },
   ADMIN_USER_PASSWORD_RESET: { label: "Password reset", description: "An admin set a new password and signed the user out everywhere.", category: "admin" },
   ADMIN_USER_MFA_RESET: { label: "Authenticator reset", description: "An admin removed the user's authenticator app (MFA), so they set it up again at next sign-in.", category: "admin" },
+  ADMIN_USER_RESEARCH_EXCLUDE: { label: "Left out of research data", description: "An admin left the account out of the knowledge-gain export (for example a test account). Its scores are kept.", category: "admin" },
+  ADMIN_USER_RESEARCH_INCLUDE: { label: "Included in research data", description: "An admin put the account back into the knowledge-gain export.", category: "admin" },
   ADMIN_POD_FORCE_DESTROY: { label: "Lab force-destroyed", description: "An admin removed a student's lab machines.", category: "admin" },
 
   // Lab start-up and clean-up (provision.py, wazuh_client.py, reaper.py)
@@ -234,6 +236,10 @@ const REASONS: Record<string, string> = {
   not_found: "the lab no longer exists",
   state: "the lab wasn't in a state that can be destroyed",
   provisioner_not_configured: "the Wazuh provisioner user isn't set up on this host",
+  // ADMIN_USER_RESEARCH_EXCLUDE: why the account is left out of research data.
+  test_account: "test account",
+  team_member: "team member",
+  other: "other",
 }
 
 // WAZUH_CLEANUP_SKIPPED source= values (wazuh_client._audit_cleanup_skipped).

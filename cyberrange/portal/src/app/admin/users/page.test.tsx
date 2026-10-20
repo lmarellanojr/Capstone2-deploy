@@ -36,6 +36,7 @@ const mockInitialUsers: AdminUser[] = [
 // Per-id gates so a test can hold a request in flight and resolve it later.
 const mockGates: Record<string, Promise<void>> = {}
 const mockSearch = jest.fn()
+const mockResearchCalls: { id: string; excluded: boolean; reason?: string }[] = []
 
 jest.mock("@/hooks/useAdminUsers", () => ({
   useAdminUsers: () => {
@@ -50,6 +51,16 @@ jest.mock("@/hooks/useAdminUsers", () => ({
         setUsers((us) => us.map((u) => (u.id === id ? { ...u, enabled } : u)))
       },
       setRole: jest.fn(), resetPassword: jest.fn(), resetMfa: jest.fn(), createUser: jest.fn(),
+      setResearchExclusion: async (id: string, excluded: boolean, reason?: string) => {
+        mockResearchCalls.push({ id, excluded, reason })
+        setUsers((us) =>
+          us.map((u) =>
+            u.id === id
+              ? { ...u, research_excluded: excluded, research_exclusion_reason: excluded ? (reason as AdminUser["research_exclusion_reason"]) : null }
+              : u,
+          ),
+        )
+      },
     }
   },
 }))
@@ -77,6 +88,30 @@ function rowButton(username: string, label: string) {
 
 beforeEach(() => {
   for (const id of Object.keys(mockGates)) delete mockGates[id]
+  mockResearchCalls.length = 0
+})
+
+it("marks a student as a test account and can include them again (PAPER-16)", async () => {
+  render(<AdminUsersPage />)
+  fireEvent.click(rowButton("bob", "Exclude"))
+  fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "team_member" } })
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Leave out of research data" }))
+  })
+  expect(mockResearchCalls).toEqual([{ id: "b", excluded: true, reason: "team_member" }])
+  expect(screen.getByText(/Excluded ·\s*Team member/)).toBeInTheDocument()
+
+  await act(async () => {
+    fireEvent.click(rowButton("bob", "Include"))
+  })
+  expect(mockResearchCalls[1]).toEqual({ id: "b", excluded: false, reason: undefined })
+})
+
+it("shows staff as always excluded, with no toggle", () => {
+  render(<AdminUsersPage />)
+  const row = screen.getByText("carol", { selector: "p.font-mono" }).closest("tr") as HTMLElement
+  expect(row).toHaveTextContent("Excluded (staff)")
+  expect(rowButton("carol", "Exclude")).toBeUndefined()
 })
 
 it("keeps a just-disabled user visible under Active, then drops it once the view changes", async () => {

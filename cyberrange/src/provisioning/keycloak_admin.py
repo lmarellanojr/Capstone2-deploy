@@ -206,6 +206,17 @@ class KeycloakAdminClient:
                 members.setdefault(u["id"], []).append(role)
         return members
 
+    def staff_usernames(self) -> set[str]:
+        """Usernames holding instructor or admin (enabled or not). The
+        knowledge-gain export leaves these out of research data."""
+        names: set[str] = set()
+        for role in ("instructor", "admin"):
+            users = self._request(
+                "GET", f"/roles/{role}/users", params={"first": 0, "max": ROLE_MEMBER_LIMIT}
+            ).json()
+            names.update(u["username"] for u in users if u.get("username"))
+        return names
+
     def enabled_admins(self) -> list[dict]:
         """Enabled users holding the `admin` realm role, read fresh from Keycloak
         (never from the introspection cache). Direct role members only -- this

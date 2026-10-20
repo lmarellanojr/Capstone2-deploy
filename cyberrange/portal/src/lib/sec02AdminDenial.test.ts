@@ -21,6 +21,7 @@ import { PATCH as setEnabled } from "@/app/api/admin/users/[id]/enabled/route"
 import { PUT as setRole } from "@/app/api/admin/users/[id]/role/route"
 import { PUT as resetPassword } from "@/app/api/admin/users/[id]/password/route"
 import { DELETE as resetMfa } from "@/app/api/admin/users/[id]/mfa/route"
+import { PUT as setResearchExclusion } from "@/app/api/admin/users/[id]/research-exclusion/route"
 import { GET as auditLog } from "@/app/api/admin/audit-log/route"
 import { adminNavItems, instructorNavItems } from "./navigation"
 import { hasRequiredRole, requiredRolesForPath } from "./routeRoles"
@@ -149,6 +150,16 @@ describe("user-management proxy routes with an Instructor session", () => {
         }),
     },
     {
+      name: "PUT /api/admin/users/{id}/research-exclusion",
+      upstream: new RegExp(`/admin/users/${USER_ID}/research-exclusion$`),
+      method: "PUT",
+      call: () =>
+        setResearchExclusion(
+          jsonRequest(`/api/admin/users/${USER_ID}/research-exclusion`, "PUT", { excluded: true, reason: "test_account" }, FORGED),
+          { params: Promise.resolve({ id: USER_ID }) }
+        ),
+    },
+    {
       name: "GET /api/admin/audit-log",
       upstream: /\/admin\/audit-log\?event_type=ADMIN_USER_ROLE_SET$/,
       method: "GET",
@@ -217,6 +228,7 @@ describe("/api/admin surface", () => {
       "users/[id]/enabled",
       "users/[id]/mfa",
       "users/[id]/password",
+      "users/[id]/research-exclusion",
       "users/[id]/role",
     ])
   })

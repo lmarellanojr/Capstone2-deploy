@@ -41,6 +41,8 @@ from rubrics import CATALOG_SCENARIO_IDS, list_rubrics
 from provision import get_lxd_free_mb, perform_destruction, perform_provisioning, vmids_for_pod
 import lab_history
 import evidence_images
+import keycloak_admin
+import research_exclusions
 import scoring_diagnostics
 from scoring import (
     SOURCE_MANUAL,
@@ -1133,6 +1135,23 @@ def _audit_knowledge_gain_export(result: str, detail: str) -> None:
         logger.exception("knowledge-gain export audit write failed: %s", result)
 
 
+def _research_excluded_usernames(conn, kc) -> tuple[set[str], str]:
+    """Usernames left out of research data, and whether staff were resolved.
+
+    Admin-marked accounts (v16) always apply. Staff (instructor/admin) come from
+    Keycloak; if it can't be reached the export still runs, and says so
+    ("unavailable") instead of silently counting staff as students.
+    """
+    excluded = set(research_exclusions.list_exclusions(conn))
+    try:
+        excluded |= kc.staff_usernames()
+        staff = "applied"
+    except Exception as e:
+        logger.warning("knowledge-gain export: staff roles unavailable: %s", e)
+        staff = "unavailable"
+    return excluded, staff
+
+
 @router.get(
     "/instructor/export/knowledge-gain",
     responses={
@@ -1156,12 +1175,18 @@ def export_knowledge_gain(
     scenario_id: Optional[int] = Query(None, ge=1),
     status_filter: Optional[str] = Query(None),
     anonymize: bool = Query(True),
+    include_excluded: bool = Query(False),
+    *,
+    response: Response,
     claims: dict = Depends(verify_token),
+    kc=Depends(keycloak_admin.get_client),
 ):
     """Export Section D.5 / PAPER-16 knowledge-gain scoring records.
 
     Defaults to anonymized student IDs (requires TELEMETRY_ANONYMIZATION_SALT).
     Instructor/Admin only; anonymize=false (real usernames) is Admin only (#271).
+    Test accounts marked in Admin -> Users and staff accounts are left out unless
+    an Admin passes include_excluded=true (for checking only).
     """
     auth.require_role(["instructor", "admin"], claims)
     actor = caller_identity(claims, None) or "unknown"
@@ -1177,6 +1202,17 @@ def export_knowledge_gain(
             raise HTTPException(
                 status_code=403,
                 detail="Identified export requires the admin role. Instructors can download anonymized data.",
+            )
+    if include_excluded:
+        try:
+            auth.require_role(["admin"], claims)
+        except HTTPException:
+            _audit_knowledge_gain_export(
+                "DENIED", f"actor={actor} {scope} include_excluded=yes reason=actor_not_admin"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Including excluded accounts requires the admin role.",
             )
 
     fmt = (format or "json").strip().lower()
@@ -1195,12 +1231,25 @@ def export_knowledge_gain(
 
     conn = get_db_connection()
     try:
+        if include_excluded:
+            excluded, staff = set(), "off"
+        else:
+            excluded, staff = _research_excluded_usernames(conn, kc)
+        # Excluded accounts that actually have rows in this export's scope.
+        scoped = "SELECT DISTINCT student_id FROM milestone_verification"
+        scoped_rows = (
+            conn.execute(scoped + " WHERE scenario_id = ?", (scenario_id,))
+            if scenario_id is not None
+            else conn.execute(scoped)
+        ).fetchall()
+        excluded_accounts = sum(1 for r in scoped_rows if r[0] in excluded)
         try:
             all_records = extract_knowledge_gain_records(
                 conn,
                 scenario_id=scenario_id,
                 status_filter=None,
                 anonymize=anonymize,
+                exclude_student_ids=excluded,
             )
         except TelemetrySaltConfigError:
             raise HTTPException(
@@ -1211,6 +1260,8 @@ def export_knowledge_gain(
         conn.close()
 
     summary = compute_knowledge_gain_summary(all_records)
+    summary["excluded_accounts"] = excluded_accounts
+    summary["staff_exclusion"] = staff
     if clean_status:
         records = [r for r in all_records if r.get("status") == clean_status]
     else:
@@ -1219,7 +1270,7 @@ def export_knowledge_gain(
     _audit_knowledge_gain_export(
         "OK",
         f"actor={actor} format={fmt} {scope} anonymized={'yes' if anonymize else 'no'} "
-        f"records={len(records)}",
+        f"records={len(records)} excluded_accounts={excluded_accounts} staff_exclusion={staff}",
     )
 
     if fmt == "csv":
@@ -1227,9 +1278,16 @@ def export_knowledge_gain(
         return Response(
             content=csv_text,
             media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": "attachment; filename=knowledge_gain_metrics.csv"},
+            headers={
+                "Content-Disposition": "attachment; filename=knowledge_gain_metrics.csv",
+                # CSV has no summary block; the portal reads these instead.
+                "X-Excluded-Accounts": str(excluded_accounts),
+                "X-Staff-Exclusion": staff,
+            },
         )
 
+    response.headers["X-Excluded-Accounts"] = str(excluded_accounts)
+    response.headers["X-Staff-Exclusion"] = staff
     return {
         "summary": summary,
         "records": records,

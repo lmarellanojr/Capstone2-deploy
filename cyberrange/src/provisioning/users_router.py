@@ -7,17 +7,19 @@ self-service route: accounts are created by an Admin, never by signup.
 Contract for the portal Admin UI: docs/ADM-USER-contract.md.
 """
 import logging
+import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 import auth
 import introspect_cache
+import research_exclusions
 from auth import caller_identity, verify_token
-from db import log_event
+from db import get_db_connection, log_event
 from keycloak_admin import (
     KeycloakAdminClient,
     KeycloakAdminError,
@@ -71,6 +73,13 @@ class SetRoleRequest(BaseModel):
     role: AppRole
 
 
+class SetResearchExclusionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    excluded: bool
+    # Required when excluding; ignored when including again.
+    reason: Optional[Literal["test_account", "team_member", "other"]] = None
+
+
 class SetPasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     password: str = Field(..., min_length=8, max_length=128)
@@ -84,8 +93,27 @@ def _iso(ms: Optional[int]) -> Optional[str]:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def serialize_user(user: dict, roles: list[str]) -> dict:
+_LOOKUP = object()
+
+
+def _research_exclusion(username: Optional[str]) -> Optional[dict]:
+    # Best effort: a DB hiccup must not break user management.
+    try:
+        conn = get_db_connection()
+        try:
+            return research_exclusions.get_exclusion(conn, username)
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("ADM-USER: research exclusion lookup failed for %s", username)
+        return None
+
+
+def serialize_user(user: dict, roles: list[str], exclusion: Any = _LOOKUP) -> dict:
+    """`exclusion`: the user's research_exclusions row (or None); looked up when omitted."""
     app_roles = sorted(roles)
+    if exclusion is _LOOKUP:
+        exclusion = _research_exclusion(user.get("username"))
     return {
         "id": user["id"],
         "username": user.get("username"),
@@ -98,6 +126,10 @@ def serialize_user(user: dict, roles: list[str]) -> dict:
         "role": primary_role(app_roles),
         "roles": app_roles,
         "created_at": _iso(user.get("createdTimestamp")),
+        # Marked by an Admin as left out of research data (v16). Staff roles are
+        # left out of the export automatically and don't need marking.
+        "research_excluded": exclusion is not None,
+        "research_exclusion_reason": exclusion["reason"] if exclusion else None,
     }
 
 
@@ -199,7 +231,66 @@ def admin_list_users(
         members = kc.app_role_members()
     except KeycloakAdminError as e:
         raise _unavailable(e)
-    return {"users": [serialize_user(u, members.get(u["id"], [])) for u in users]}
+    try:
+        conn = get_db_connection()
+        try:
+            excluded = research_exclusions.list_exclusions(conn)
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("ADM-USER: research exclusion list failed")
+        excluded = {}
+    return {
+        "users": [
+            serialize_user(u, members.get(u["id"], []), excluded.get(u.get("username")))
+            for u in users
+        ]
+    }
+
+
+@router.put("/admin/users/{user_id}/research-exclusion")
+def admin_set_research_exclusion(
+    body: SetResearchExclusionRequest,
+    user_id: str = Path(..., pattern=USER_ID_PATTERN),
+    claims: dict = Depends(verify_token),
+    kc: KeycloakAdminClient = Depends(get_client),
+):
+    """Leave an account out of (or put it back into) the knowledge-gain export.
+
+    PAPER-16 / D.5: system owners' test accounts scored milestones during UAT
+    like real students. Only the export is filtered; no scores are deleted.
+    Allowed on any account, including the caller's own.
+    """
+    actor = _require_admin(claims)
+    if body.excluded and body.reason is None:
+        raise HTTPException(status_code=422, detail="Choose a reason to exclude this account")
+    event = "ADMIN_USER_RESEARCH_EXCLUDE" if body.excluded else "ADMIN_USER_RESEARCH_INCLUDE"
+    detail = f"reason={body.reason}" if body.excluded else ""
+    with _write_lock:
+        target = _load_target(kc, user_id)
+        username = target.get("username")
+        _confirm_actor_still_admin(kc, actor, event, username, detail)
+        try:
+            roles = kc.user_app_roles(user_id)
+        except KeycloakAdminError as e:
+            _audit(event, username, "FAILED", actor, f"{detail} reason=keycloak".strip())
+            raise _unavailable(e)
+        conn = get_db_connection()
+        try:
+            with conn:
+                if body.excluded:
+                    research_exclusions.set_exclusion(conn, username, body.reason, actor)
+                else:
+                    research_exclusions.clear_exclusion(conn, username)
+            exclusion = research_exclusions.get_exclusion(conn, username)
+        except sqlite3.Error:
+            logger.exception("ADM-USER: research exclusion write failed")
+            _audit(event, username, "FAILED", actor, f"{detail} reason=db".strip())
+            raise HTTPException(status_code=503, detail="Research data setting could not be saved")
+        finally:
+            conn.close()
+    _audit(event, username, "OK", actor, detail)
+    return serialize_user(target, roles, exclusion)
 
 
 @router.post("/admin/users", status_code=status.HTTP_201_CREATED)

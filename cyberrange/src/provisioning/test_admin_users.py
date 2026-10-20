@@ -108,6 +108,13 @@ class FakeKeycloak:
     def app_role_members(self):
         return {uid: [r for r in APP_ROLES if r in rs] for uid, rs in self.roles.items()}
 
+    def staff_usernames(self):
+        self._maybe_fail("staff_usernames")
+        return {
+            self.users[uid]["username"] for uid, rs in self.roles.items()
+            if rs & {"instructor", "admin"}
+        }
+
     def user_app_roles(self, user_id):
         return [r for r in APP_ROLES if r in self.roles[user_id]]
 
@@ -678,6 +685,8 @@ def test_no_unauthenticated_route_can_create_users():
         ("/admin/users/{user_id}/role", "PUT"),
         ("/admin/users/{user_id}/password", "PUT"),
         ("/admin/users/{user_id}/mfa", "DELETE"),
+        # Local research-data flag (v16); no Keycloak write, but Admin-only and audited.
+        ("/admin/users/{user_id}/research-exclusion", "PUT"),
     }
 
 
