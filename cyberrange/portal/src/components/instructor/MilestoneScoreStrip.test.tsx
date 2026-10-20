@@ -4,7 +4,7 @@ import "@testing-library/jest-dom"
 import { render, screen } from "@testing-library/react"
 import { MilestoneScoreStrip } from "./MilestoneScoreStrip"
 import type { InstructorMilestone } from "@/lib/api"
-import { isBackgroundAutoFail } from "@/lib/instructorStudentProgress"
+import { isBackgroundNonPass } from "@/lib/instructorStudentProgress"
 
 function row(
   partial: Partial<InstructorMilestone> & Pick<InstructorMilestone, "status">,
@@ -38,7 +38,7 @@ describe("MilestoneScoreStrip", () => {
       }),
     ]
     // Page contract: filter, then pass into the strip (strip still slices to 8).
-    const visible = raw.filter((m) => !isBackgroundAutoFail(m))
+    const visible = raw.filter((m) => !isBackgroundNonPass(m))
     render(<MilestoneScoreStrip milestones={visible} />)
     expect(screen.getByText("PASS")).toBeInTheDocument()
     expect(screen.queryByText("FAIL")).not.toBeInTheDocument()

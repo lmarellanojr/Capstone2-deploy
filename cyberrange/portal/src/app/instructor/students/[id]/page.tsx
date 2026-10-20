@@ -13,7 +13,7 @@ import { describeSiemDetection } from "@/lib/siemDetection";
 import { SCENARIOS } from "@/hooks/useScenarios";
 import { earnedPointsForAttempt } from "@/lib/scenarioProgress";
 import {
-  isBackgroundAutoFail,
+  isBackgroundNonPass,
   verificationSourceLabel,
 } from "@/lib/instructorStudentProgress";
 import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
@@ -44,12 +44,12 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
 
   const milestones = student?.milestones ?? [];
   const hiddenCount = useMemo(
-    () => milestones.filter(isBackgroundAutoFail).length,
+    () => milestones.filter(isBackgroundNonPass).length,
     [milestones],
   );
   const visibleMilestones = useMemo(
     () =>
-      showBackground ? milestones : milestones.filter((m) => !isBackgroundAutoFail(m)),
+      showBackground ? milestones : milestones.filter((m) => !isBackgroundNonPass(m)),
     [milestones, showBackground],
   );
   // Omit the Recent-attempts strip when the default filter hides everything;
@@ -165,7 +165,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
               {" "}SIEM detection is the plain-language label for that detection score.
               {" "}Not configured means no detection rule is currently configured for that milestone.
               {" "}Not detected means no matching alert was recorded, or the check did not run.
-              {" "}Background auto-check FAILs are hidden by default.
+              {" "}Background auto-check non-pass results are hidden by default.
             </p>
             {milestones.length === 0 ? (
               <p className="text-text-muted text-sm px-6 pb-6">No milestone activity yet.</p>
