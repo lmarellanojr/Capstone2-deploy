@@ -259,6 +259,10 @@ def extract_knowledge_gain_records(
             for start_dt, end_dt, started_at in sessions_by_slot.get((p_id, s_id), ()):
                 if start_dt <= v_utc and (end_dt is None or v_utc <= end_dt):
                     return started_at
+        # Sessions are authoritative when the slot has any; the pods
+        # fallbacks below only serve pre-v8 labs without lab_sessions.
+        if (p_id, s_id) in sessions_by_slot:
+            return None
 
         # 2. Match slot and student (ONLY IF pod was created <= verified_at)
         if (p_id, s_id) in pod_by_slot_and_student:

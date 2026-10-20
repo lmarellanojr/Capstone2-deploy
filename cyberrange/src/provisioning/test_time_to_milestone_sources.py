@@ -177,6 +177,8 @@ def test_lab_sessions_pick_the_window_containing_the_pass():
 
 def test_pass_outside_every_session_stays_untimed():
     _session("ttm_gap", 7, "06", "2026-10-15 01:00:00", "2026-10-15 01:30:00")
+    # A leftover pods row on the same slot must not re-time it via the fallbacks.
+    _pod("ttm_gap", 7, "06", created_at="2026-10-15 01:00:00", status="DESTROYED")
     _mv("ttm_gap", 7, 6, 1, "2026-10-15 02:00:00")
 
     rec = [r for r in _records() if r["student_id"] == "ttm_gap"]
