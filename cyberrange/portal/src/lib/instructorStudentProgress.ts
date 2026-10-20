@@ -2,6 +2,20 @@ import type { InstructorMilestone } from "@/lib/api"
 import { earnedByScenario, scenarioTotalPoints } from "@/lib/scenarioProgress"
 import { formatScenarioNumber } from "@/lib/scenarioLabels"
 
+/** Background poller FAIL rows that flood instructor attempt history (#266). */
+export function isBackgroundAutoFail(m: {
+  source?: string | null
+  status: string
+}): boolean {
+  return m.source === "auto" && m.status === "FAIL"
+}
+
+/** Short label for the Source column; legacy null → em dash. */
+export function verificationSourceLabel(source?: string | null): string {
+  if (source == null || source === "") return "—"
+  return source
+}
+
 export type ScenarioLike = {
   id: string
   displayNumber: number

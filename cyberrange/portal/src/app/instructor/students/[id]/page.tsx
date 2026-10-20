@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
 import { AccessDenied, Badge, LoadingSpinner } from "@/components/ui";
@@ -11,6 +12,10 @@ import { formatScenarioNumber } from "@/lib/scenarioLabels";
 import { describeSiemDetection } from "@/lib/siemDetection";
 import { SCENARIOS } from "@/hooks/useScenarios";
 import { earnedPointsForAttempt } from "@/lib/scenarioProgress";
+import {
+  isBackgroundAutoFail,
+  verificationSourceLabel,
+} from "@/lib/instructorStudentProgress";
 import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
 import { StudentProgressDownload } from "@/components/instructor/StudentProgressDownload";
 import { ScoringDiagnostics } from "@/components/instructor/ScoringDiagnostics";
@@ -35,6 +40,22 @@ function reviewBadgeVariant(status: string): "success" | "danger" | "warning" | 
 export default function InstructorStudentDetailPage({ params }: PageProps) {
   const { id: studentId } = params;
   const { student, loading, error, forbidden, notFound } = useStudentProgress(studentId);
+  const [showBackground, setShowBackground] = useState(false);
+
+  const milestones = student?.milestones ?? [];
+  const hiddenCount = useMemo(
+    () => milestones.filter(isBackgroundAutoFail).length,
+    [milestones],
+  );
+  const visibleMilestones = useMemo(
+    () =>
+      showBackground ? milestones : milestones.filter((m) => !isBackgroundAutoFail(m)),
+    [milestones, showBackground],
+  );
+  // Omit the Recent-attempts strip when the default filter hides everything;
+  // the table below owns the "Only background checks" empty copy.
+  const stripMilestones =
+    visibleMilestones.length > 0 ? visibleMilestones : undefined;
 
   if (forbidden) {
     return (
@@ -117,23 +138,41 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
             <StudentAlertsPanel
               studentId={student.student_id}
               activePod={student.active_pod}
-              milestones={student.milestones}
+              milestones={stripMilestones}
             />
           </div>
 
           <ScoringDiagnostics studentId={student.student_id} />
 
           <div className="card-surface overflow-hidden mb-6">
-            <h2 className="text-lg font-bold text-text-main p-6 pb-4">Milestones (attempt history)</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 p-6 pb-4">
+              <h2 className="text-lg font-bold text-text-main">Milestones (attempt history)</h2>
+              {(hiddenCount > 0 || showBackground) && (
+                <button
+                  type="button"
+                  className="text-sm font-semibold text-brand hover:underline"
+                  onClick={() => setShowBackground((v) => !v)}
+                >
+                  {showBackground
+                    ? "Hide background checks"
+                    : `Show background checks (${hiddenCount})`}
+                </button>
+              )}
+            </div>
             <p className="text-sm text-text-muted px-6 pb-4">
               Points are the same catalog values the student dashboard uses (awarded on PASS).
               {" "}Detection score is SIEM corroboration only (usually 0 or 1), separate from points.
               {" "}SIEM detection is the plain-language label for that detection score.
               {" "}Not configured means no detection rule is currently configured for that milestone.
               {" "}Not detected means no matching alert was recorded, or the check did not run.
+              {" "}Background auto-check FAILs are hidden by default.
             </p>
-            {student.milestones.length === 0 ? (
+            {milestones.length === 0 ? (
               <p className="text-text-muted text-sm px-6 pb-6">No milestone activity yet.</p>
+            ) : visibleMilestones.length === 0 ? (
+              <p className="text-text-muted text-sm px-6 pb-6">
+                Only background checks ({hiddenCount}). Use Show background checks.
+              </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -142,6 +181,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                       <th className="py-3 px-6 font-semibold">Scenario</th>
                       <th className="py-3 px-4 font-semibold">Milestone</th>
                       <th className="py-3 px-4 font-semibold">Status</th>
+                      <th className="py-3 px-4 font-semibold">Source</th>
                       <th className="py-3 px-4 font-semibold">Points</th>
                       <th className="py-3 px-4 font-semibold">Detection score</th>
                       <th className="py-3 px-4 font-semibold">SIEM detection</th>
@@ -151,7 +191,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                   <tbody>
                     {(() => {
                       const seenPoints = new Set<string>()
-                      return student.milestones.map((m, idx) => {
+                      return visibleMilestones.map((m, idx) => {
                         const points = earnedPointsForAttempt(m, SCENARIOS, seenPoints)
                         return (
                       <tr key={`${m.scenario_id}-${m.milestone_id}-${idx}`} className="border-b border-border last:border-0">
@@ -160,6 +200,7 @@ export default function InstructorStudentDetailPage({ params }: PageProps) {
                         <td className="py-3 px-4">
                           <Badge variant={milestoneBadgeVariant(m.status)}>{m.status}</Badge>
                         </td>
+                        <td className="py-3 px-4 text-text-muted">{verificationSourceLabel(m.source)}</td>
                         <td className="py-3 px-4 tabular-nums text-text-main">
                           {points == null ? "—" : points}
                         </td>

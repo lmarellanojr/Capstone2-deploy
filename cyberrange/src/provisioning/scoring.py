@@ -21,6 +21,77 @@ SOURCE_BROWSER = "browser"  # Scenario 2 DVWA browser scoring
 SOURCE_FLAG = "flag"        # hybrid flag capture
 SOURCE_REVIEW = "review"    # instructor approval of a review case
 
+_ALLOWED_SOURCES = frozenset(
+    {SOURCE_AUTO, SOURCE_MANUAL, SOURCE_BROWSER, SOURCE_FLAG, SOURCE_REVIEW}
+)
+
+
+def validate_source(source: Optional[str]) -> Optional[str]:
+    """Return source unchanged, or raise if a non-null value is not allowlisted."""
+    if source is None:
+        return None
+    if source not in _ALLOWED_SOURCES:
+        raise ValueError(
+            f"invalid milestone_verification.source {source!r}; "
+            f"allowed: {sorted(_ALLOWED_SOURCES)}"
+        )
+    return source
+
+
+def mv_column_names(conn: sqlite3.Connection) -> set:
+    return {r[1] for r in conn.execute("PRAGMA table_info(milestone_verification)").fetchall()}
+
+
+def insert_verification_row(
+    conn: sqlite3.Connection,
+    *,
+    pod_id: int,
+    student_id: str,
+    scenario_id: int,
+    milestone_id: int,
+    status: str,
+    detection_score: int = 0,
+    detection_data: Optional[str] = None,
+    source: Optional[str] = None,
+    pod_created_at: Optional[str] = None,
+) -> None:
+    """Insert one milestone_verification row; optional columns via PRAGMA.
+
+    Omitting source leaves NULL. Non-null source must be a SOURCE_* constant.
+    Caller owns the transaction.
+    """
+    source = validate_source(source)
+    cols = [
+        "pod_id",
+        "student_id",
+        "scenario_id",
+        "milestone_id",
+        "status",
+        "detection_score",
+        "detection_data",
+    ]
+    vals: list = [
+        pod_id,
+        student_id,
+        scenario_id,
+        milestone_id,
+        status,
+        detection_score,
+        detection_data,
+    ]
+    mv_cols = mv_column_names(conn)
+    if "pod_created_at" in mv_cols:
+        cols.append("pod_created_at")
+        vals.append(pod_created_at)
+    if "source" in mv_cols:
+        cols.append("source")
+        vals.append(source)
+    conn.execute(
+        f"INSERT INTO milestone_verification ({', '.join(cols)}) "
+        f"VALUES ({','.join('?' * len(cols))})",
+        vals,
+    )
+
 
 def has_browser_pass(
     conn: sqlite3.Connection,
@@ -46,28 +117,23 @@ def has_browser_pass(
 def record_browser_milestone(
     conn: sqlite3.Connection, pod: dict, milestone_id: int, label: str
 ) -> None:
-    """Insert one browser PASS on this conn. detection_score=0. detection_data=label."""
+    """Insert one browser PASS on this conn. detection_score=0. detection_data=label.
+
+    Idempotent: skips when a browser PASS already exists for this pod/student/milestone.
+    """
+    if has_browser_pass(conn, pod["pod_id"], pod["student_id"], 6, milestone_id):
+        return
     try:
-        conn.execute(
-            """
-            INSERT INTO milestone_verification
-            (pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data, source)
-            SELECT ?, ?, 6, ?, 'PASS', 0, ?, 'browser'
-            WHERE NOT EXISTS (
-                SELECT 1 FROM milestone_verification
-                WHERE pod_id=? AND student_id=? AND scenario_id=6 AND milestone_id=?
-                  AND status='PASS' AND detection_data LIKE 'browser:%'
-            )
-            """,
-            (
-                pod["pod_id"],
-                pod["student_id"],
-                milestone_id,
-                label,
-                pod["pod_id"],
-                pod["student_id"],
-                milestone_id,
-            ),
+        insert_verification_row(
+            conn,
+            pod_id=pod["pod_id"],
+            student_id=pod["student_id"],
+            scenario_id=6,
+            milestone_id=milestone_id,
+            status="PASS",
+            detection_score=0,
+            detection_data=label,
+            source=SOURCE_BROWSER,
         )
     except sqlite3.IntegrityError:
         return
@@ -137,20 +203,17 @@ async def verify_milestone(
         pod_created_at = pod.get("created_at")
         conn = get_db_connection()
         with conn:
-            mv_cols = {r[1] for r in conn.execute("PRAGMA table_info(milestone_verification)").fetchall()}
-            # Optional columns, so an older DB (pre-telemetry / pre-v15) still scores.
-            cols = ["pod_id", "student_id", "scenario_id", "milestone_id", "status", "detection_score", "detection_data"]
-            vals = [pod_id, pod["student_id"], scenario_id, milestone_id, status_result, detection_score, detection_data]
-            if "pod_created_at" in mv_cols:
-                cols.append("pod_created_at")
-                vals.append(pod_created_at)
-            if "source" in mv_cols:
-                cols.append("source")
-                vals.append(source)
-            conn.execute(
-                f"INSERT INTO milestone_verification ({', '.join(cols)}) "
-                f"VALUES ({','.join('?' * len(cols))})",
-                vals,
+            insert_verification_row(
+                conn,
+                pod_id=pod_id,
+                student_id=pod["student_id"],
+                scenario_id=scenario_id,
+                milestone_id=milestone_id,
+                status=status_result,
+                detection_score=detection_score,
+                detection_data=detection_data,
+                source=source,
+                pod_created_at=pod_created_at,
             )
         conn.close()
 

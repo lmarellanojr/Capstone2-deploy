@@ -1,8 +1,10 @@
 import {
+  isBackgroundAutoFail,
   overallPassedAttempted,
   scenarioProgressDetails,
   totalPointsEarned,
   touchedScenarioSummaries,
+  verificationSourceLabel,
 } from "./instructorStudentProgress"
 import type { InstructorMilestone } from "@/lib/api"
 
@@ -33,6 +35,23 @@ const rows: InstructorMilestone[] = [
   { scenario_id: 1, milestone_id: 2, status: "FAIL", detection_score: 0, verified_at: "2026-10-15 01:10:00" },
   { scenario_id: 6, milestone_id: 4, status: "PASS", detection_score: 0, verified_at: "2026-10-15 02:00:00" },
 ]
+
+describe("isBackgroundAutoFail", () => {
+  it("hides only exact auto + FAIL", () => {
+    expect(isBackgroundAutoFail({ source: "auto", status: "FAIL" })).toBe(true)
+    expect(isBackgroundAutoFail({ source: "auto", status: "PASS" })).toBe(false)
+    expect(isBackgroundAutoFail({ source: "manual", status: "FAIL" })).toBe(false)
+    expect(isBackgroundAutoFail({ source: null, status: "FAIL" })).toBe(false)
+    expect(isBackgroundAutoFail({ status: "FAIL" })).toBe(false)
+    expect(isBackgroundAutoFail({ source: "AUTO", status: "FAIL" })).toBe(false)
+  })
+
+  it("labels sources for the Source column", () => {
+    expect(verificationSourceLabel("auto")).toBe("auto")
+    expect(verificationSourceLabel(null)).toBe("—")
+    expect(verificationSourceLabel(undefined)).toBe("—")
+  })
+})
 
 describe("instructorStudentProgress", () => {
   it("counts distinct passed / attempted for catalog milestones only", () => {

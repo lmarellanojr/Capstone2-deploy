@@ -10,6 +10,7 @@ from typing import Any, Dict, Literal, Optional, Tuple
 
 from db import log_event
 from rubrics import get_rubric, validate_flag
+from scoring import SOURCE_FLAG, insert_verification_row
 import scoring_state
 
 logger = logging.getLogger("provision_api")
@@ -238,13 +239,16 @@ async def evaluate_hybrid_submission(
         if not already:
             target_pod_id = _resolve_pod_id_for_student(conn, student_id, scenario_id)
             with conn:
-                conn.execute(
-                    """
-                    INSERT INTO milestone_verification
-                    (pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data)
-                    VALUES (?, ?, ?, ?, 'PASS', 0, 'pure_flag_capture')
-                    """,
-                    (target_pod_id, student_id, scenario_id, milestone_id),
+                insert_verification_row(
+                    conn,
+                    pod_id=target_pod_id,
+                    student_id=student_id,
+                    scenario_id=scenario_id,
+                    milestone_id=milestone_id,
+                    status="PASS",
+                    detection_score=0,
+                    detection_data="pure_flag_capture",
+                    source=SOURCE_FLAG,
                 )
             log_event(
                 "HYBRID_SCORE_PASS",
@@ -313,13 +317,16 @@ async def evaluate_hybrid_submission(
                 (student_id, scenario_id, milestone_id),
             ).fetchone()
             if not exists:
-                conn.execute(
-                    """
-                    INSERT INTO milestone_verification
-                    (pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data)
-                    VALUES (?, ?, ?, ?, 'PASS', 0, 'corroborated_hybrid_flag_state')
-                    """,
-                    (target_pod_id, student_id, scenario_id, milestone_id),
+                insert_verification_row(
+                    conn,
+                    pod_id=target_pod_id,
+                    student_id=student_id,
+                    scenario_id=scenario_id,
+                    milestone_id=milestone_id,
+                    status="PASS",
+                    detection_score=0,
+                    detection_data="corroborated_hybrid_flag_state",
+                    source=SOURCE_FLAG,
                 )
 
             # Auto-resolve pending conflicts; RETURNING only IDs actually updated

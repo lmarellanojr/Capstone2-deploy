@@ -15,4 +15,5 @@
 -- Rows written before v15 stay NULL (legacy, source unknown). Additive only:
 -- nothing that reads status/scores changes, and rolling the code back leaves
 -- the column unused.
-ALTER TABLE milestone_verification ADD COLUMN source TEXT;
+ALTER TABLE milestone_verification ADD COLUMN source TEXT
+  CHECK(source IS NULL OR source IN ('auto','manual','browser','flag','review'));

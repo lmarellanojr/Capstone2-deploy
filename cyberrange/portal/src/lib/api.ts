@@ -158,6 +158,8 @@ export interface InstructorMilestone {
   /** What corroborated it: "rule 5710 on agent 012", "browser:sqli-m1", ... */
   detection_data?: string | null
   verified_at?: string
+  /** Writer provenance (#266). null/undefined = legacy pre-v15 row. */
+  source?: string | null
 }
 
 // Full review_cases row, as returned by GET /instructor/students/{id}
