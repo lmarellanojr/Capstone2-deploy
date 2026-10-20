@@ -42,7 +42,14 @@ from provision import get_lxd_free_mb, perform_destruction, perform_provisioning
 import lab_history
 import evidence_images
 import scoring_diagnostics
-from scoring import record_browser_milestone, verify_milestone
+from scoring import (
+    SOURCE_MANUAL,
+    SOURCE_REVIEW,
+    insert_verification_row,
+    mv_column_names,
+    record_browser_milestone,
+    verify_milestone,
+)
 from ttl import ttl_payload
 
 # SEC-01 (#36): every route here requires one of the three application roles,
@@ -712,7 +719,9 @@ async def verify_milestone_route(
         )
     conn.close()
 
-    resp = await verify_milestone(pod, scenario_id, milestone_id, **deps)
+    resp = await verify_milestone(
+        pod, scenario_id, milestone_id, source=SOURCE_MANUAL, **deps
+    )
 
     # Consume the one attempt on a definitive PASS/FAIL (an infra ERROR/UNKNOWN
     # does not burn it). A later auto-detect PASS still clears the locked state.
@@ -1054,8 +1063,13 @@ def instructor_get_student_progress(student_id: str, claims: dict = Depends(veri
     # pod_id + detection_data let the review page show which lab an attempt
     # ran on and what corroborated it (Wazuh rule/agent, browser label,
     # hybrid flag agreement, instructor approval) -- evidence, not just PASS/FAIL.
+    # source (#266) is instructor-only; always present in JSON (null when
+    # column absent or legacy row).
+    mv_cols = mv_column_names(conn)
+    source_select = ", source" if "source" in mv_cols else ""
     milestone_rows = conn.execute(
-        "SELECT pod_id, scenario_id, milestone_id, status, detection_score, detection_data, verified_at "
+        "SELECT pod_id, scenario_id, milestone_id, status, detection_score, "
+        f"detection_data, verified_at{source_select} "
         "FROM milestone_verification "
         "WHERE student_id = ? "
         "ORDER BY verified_at DESC",
@@ -1068,10 +1082,16 @@ def instructor_get_student_progress(student_id: str, claims: dict = Depends(veri
     ).fetchall()
     conn.close()
 
+    milestones = []
+    for m in milestone_rows:
+        row = dict(m)
+        row.setdefault("source", None)
+        milestones.append(row)
+
     return {
         "student_id": student_id,
         "active_pod": active_pod,
-        "milestones": [dict(m) for m in milestone_rows],
+        "milestones": milestones,
         "reviews": [dict(r) for r in review_rows],
     }
 
@@ -1458,11 +1478,16 @@ def resolve_student_review(
                         if case_type == "SCORING_CONFLICT"
                         else "instructor_approved_review"
                     )
-                    conn.execute(
-                        "INSERT INTO milestone_verification "
-                        "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
-                        "VALUES (?, ?, ?, ?, 'PASS', 0, ?)",
-                        (target_pod_id, student_id, scenario_id, milestone_id, detection_data),
+                    insert_verification_row(
+                        conn,
+                        pod_id=target_pod_id,
+                        student_id=student_id,
+                        scenario_id=scenario_id,
+                        milestone_id=milestone_id,
+                        status="PASS",
+                        detection_score=0,
+                        detection_data=detection_data,
+                        source=SOURCE_REVIEW,
                     )
             # Reversing an instructor decision (APPROVED -> REJECTED/RETRY) must also
             # undo the PASS that the earlier APPROVE inserted; otherwise the student

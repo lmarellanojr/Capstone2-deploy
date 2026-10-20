@@ -435,7 +435,7 @@ def test_v14_on_a_v13_database_keeps_scores(tmp_path, monkeypatch):
         )
     conn.close()
 
-    monkeypatch.setattr(migrate, "_migration_files", real)
+    monkeypatch.setattr(migrate, "_migration_files", lambda: [f for f in real() if f[0] <= 14])
     assert migrate.apply(path) == 14
     conn = sqlite3.connect(path)
     assert conn.execute("SELECT student_id, status, detection_score FROM milestone_verification").fetchall() == [
