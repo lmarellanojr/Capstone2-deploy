@@ -536,10 +536,50 @@ def test_api_endpoint_json_and_csv():
     assert reader[0][0] == "student_id"
     assert reader[1][0] == expected_anon
 
-    # 3. Explicit cleartext opt-out
+    # 3. Explicit cleartext opt-out is admin only (#271)
+    res_clear = client.get("/instructor/export/knowledge-gain?anonymize=false")
+    assert res_clear.status_code == 403
+    assert "admin" in res_clear.json()["detail"]
+
+    app.dependency_overrides[verify_token] = lambda: _admin_claims()
     res_clear = client.get("/instructor/export/knowledge-gain?anonymize=false")
     assert res_clear.status_code == 200
     assert res_clear.json()["records"][0]["student_id"] == "karen"
+
+
+def _export_audit_rows() -> list[dict]:
+    conn = db.get_db_connection()
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT student_id, result, detail FROM audit_log "
+            "WHERE event_type='KNOWLEDGE_GAIN_EXPORTED' ORDER BY id"
+        ).fetchall()
+    ]
+    conn.close()
+    return rows
+
+
+def test_api_export_is_audited_without_student_ids():
+    """#271: each export (and each refused identified export) writes one audit row."""
+    _insert_pod("quinn", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
+    _insert_verification("quinn", 1, scenario_id=1, milestone_id=1, status="PASS")
+    client = TestClient(app)
+
+    app.dependency_overrides[verify_token] = lambda: _instructor_claims("inst_audit")
+    assert client.get("/instructor/export/knowledge-gain?format=csv&scenario_id=1").status_code == 200
+    assert client.get("/instructor/export/knowledge-gain?anonymize=false").status_code == 403
+    app.dependency_overrides[verify_token] = lambda: _admin_claims("admin_audit")
+    assert client.get("/instructor/export/knowledge-gain?anonymize=false").status_code == 200
+
+    rows = _export_audit_rows()
+    assert [r["result"] for r in rows] == ["OK", "DENIED", "OK"]
+    assert rows[0]["detail"] == "actor=inst_audit format=csv scenario=1 anonymized=yes records=1"
+    assert rows[1]["detail"] == "actor=inst_audit scenario=all anonymized=no reason=actor_not_admin"
+    assert rows[2]["detail"].startswith("actor=admin_audit format=json scenario=all anonymized=no")
+    for r in rows:
+        assert r["student_id"] == ""
+        assert "quinn" not in r["detail"]
 
 
 def test_api_case_insensitivity_and_invalid_filters():
@@ -581,9 +621,9 @@ def test_api_missing_salt_returns_503(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_api_cleartext_works_without_salt(monkeypatch: pytest.MonkeyPatch):
-    """Explicit anonymize=false works even when salt is unset."""
+    """Explicit anonymize=false (admin) works even when salt is unset."""
     monkeypatch.delenv("TELEMETRY_ANONYMIZATION_SALT", raising=False)
-    app.dependency_overrides[verify_token] = lambda: _instructor_claims()
+    app.dependency_overrides[verify_token] = lambda: _admin_claims()
     _insert_pod("neo", 1, scenario_id=1, created_at="2026-09-24 00:00:00")
     _insert_verification("neo", 1, scenario_id=1, milestone_id=1, status="PASS")
     client = TestClient(app)

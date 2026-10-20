@@ -19,10 +19,12 @@ function saveBlob(blob: Blob, filename: string) {
 }
 
 /** SCORE-02 (#101) / PAPER-16: download knowledge-gain scoring records.
- *  Anonymized by default — cleartext student ids are an explicit opt-out. */
-export function KnowledgeGainExport() {
+ *  Always anonymized for instructors; only admins (allowIdentified) can opt
+ *  out and download real usernames (#271, enforced by the API). */
+export function KnowledgeGainExport({ allowIdentified = false }: { allowIdentified?: boolean }) {
   const [format, setFormat] = useState<"csv" | "json">("csv");
-  const [anonymize, setAnonymize] = useState(true);
+  const [anonymizeChoice, setAnonymize] = useState(true);
+  const anonymize = allowIdentified ? anonymizeChoice : true;
   const [scenarioId, setScenarioId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +47,9 @@ export function KnowledgeGainExport() {
       const msg = backendDetail(err);
       setError(
         msg.includes("TELEMETRY_ANONYMIZATION_SALT")
-          ? "Anonymized export isn't configured on this server (TELEMETRY_ANONYMIZATION_SALT is not set). Ask an admin to set it, or turn off anonymization."
+          ? allowIdentified
+            ? "Anonymized export isn't configured on this server (TELEMETRY_ANONYMIZATION_SALT is not set). Set it on the host, or turn off anonymization."
+            : "Anonymized export isn't configured on this server (TELEMETRY_ANONYMIZATION_SALT is not set). Ask an admin to set it."
           : msg
       );
     } finally {
@@ -82,21 +86,28 @@ export function KnowledgeGainExport() {
             <option value="json">JSON (with summary)</option>
           </select>
         </label>
-        <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer pb-2">
-          <input
-            type="checkbox"
-            checked={anonymize}
-            onChange={(e) => setAnonymize(e.target.checked)}
-            className="rounded border-border text-brand focus:ring-brand/30"
-          />
-          Anonymize student IDs
-        </label>
+        {allowIdentified && (
+          <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer pb-2">
+            <input
+              type="checkbox"
+              checked={anonymize}
+              onChange={(e) => setAnonymize(e.target.checked)}
+              className="rounded border-border text-brand focus:ring-brand/30"
+            />
+            Anonymize student IDs
+          </label>
+        )}
         <Button variant="primary" onClick={() => void run()} loading={busy}>
           {!busy && <Download size={16} aria-hidden="true" />}
           Download
         </Button>
       </div>
 
+      {!allowIdentified && (
+        <p className="mt-3 text-xs text-text-muted">
+          Student IDs are anonymized. Identified exports are admin-only.
+        </p>
+      )}
       {!anonymize && (
         <p className="mt-3 text-xs text-warning font-medium">
           This file will contain real student usernames. Handle it as personal data.
