@@ -1,12 +1,10 @@
 name: portal-typecheck
 # #258: `next build` type-checks the portal, but Jest's TypeScript transform does
 # not, so a type error (TS1501 from #250) passed review and broke every
-# ampere-release run until the hotfix. Run the same check on each portal PR.
+# ampere-release run until the hotfix. Run the same check on every PR
+# (no paths filter, so it can be a required status check).
 on:
   pull_request:
-    paths:
-      - "cyberrange/portal/**"
-      - ".github/workflows/portal-typecheck.yml"
 
 permissions:
   contents: read
