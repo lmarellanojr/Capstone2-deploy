@@ -129,7 +129,7 @@ export function KnowledgeGainExport({ allowIdentified = false }: { allowIdentifi
 
       <p className="mt-3 text-xs text-text-muted">
         {!allowIdentified && "Student IDs are anonymized. Identified exports are admin-only. "}
-        Test accounts marked in Admin → Users and all instructor and admin accounts are left out.
+        Accounts excluded from reports in Admin → Users, and all instructor and admin accounts, are left out.
       </p>
       {includeExcluded && (
         <p className="mt-3 text-xs text-warning font-medium">

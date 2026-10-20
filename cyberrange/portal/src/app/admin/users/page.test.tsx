@@ -91,27 +91,91 @@ beforeEach(() => {
   mockResearchCalls.length = 0
 })
 
-it("marks a student as a test account and can include them again (PAPER-16)", async () => {
+function openMenu(username: string) {
+  fireEvent.click(screen.getByRole("button", { name: `More actions for ${username}` }))
+}
+
+it("keeps the table narrow: no reports column, less-used actions in the ⋯ menu", () => {
   render(<AdminUsersPage />)
-  fireEvent.click(rowButton("bob", "Exclude"))
+  const headers = screen.getAllByRole("columnheader").map((h) => h.textContent?.trim())
+  expect(headers).not.toContain("Research data")
+  expect(rowButton("bob", "Reset password")).toBeUndefined()
+
+  openMenu("bob")
+  const items = screen.getAllByRole("menuitem").map((i) => i.textContent?.trim())
+  expect(items).toEqual(["Reset password", "Reset MFA", "Exclude from reports…"])
+})
+
+it("excludes a student from reports with a reason and can include them again (PAPER-16)", async () => {
+  render(<AdminUsersPage />)
+  openMenu("bob")
+  fireEvent.click(screen.getByRole("menuitem", { name: "Exclude from reports…" }))
   fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "team_member" } })
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Leave out of research data" }))
+    fireEvent.click(screen.getByRole("button", { name: "Exclude from reports" }))
   })
   expect(mockResearchCalls).toEqual([{ id: "b", excluded: true, reason: "team_member" }])
-  expect(screen.getByText(/Excluded ·\s*Team member/)).toBeInTheDocument()
+  expect(screen.getByText(/Not in reports ·\s*Team member/)).toBeInTheDocument()
 
+  openMenu("bob")
   await act(async () => {
-    fireEvent.click(rowButton("bob", "Include"))
+    fireEvent.click(screen.getByRole("menuitem", { name: "Include in reports" }))
   })
   expect(mockResearchCalls[1]).toEqual({ id: "b", excluded: false, reason: undefined })
 })
 
-it("shows staff as always excluded, with no toggle", () => {
+it("staff have no exclude option; the menu says why", () => {
   render(<AdminUsersPage />)
-  const row = screen.getByText("carol", { selector: "p.font-mono" }).closest("tr") as HTMLElement
-  expect(row).toHaveTextContent("Excluded (staff)")
-  expect(rowButton("carol", "Exclude")).toBeUndefined()
+  openMenu("carol")
+  const items = screen.getAllByRole("menuitem").map((i) => i.textContent?.trim())
+  expect(items).toEqual(["Reset password", "Reset MFA"])
+  expect(screen.getByText("Instructors and admins are always left out of reports.")).toBeInTheDocument()
+})
+
+it("the menu closes on Escape and returns focus to its button", () => {
+  render(<AdminUsersPage />)
+  openMenu("alice")
+  expect(screen.getByRole("menu")).toBeInTheDocument()
+  fireEvent.keyDown(document, { key: "Escape" })
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument()
+  expect(screen.getByRole("button", { name: "More actions for alice" })).toHaveFocus()
+})
+
+it("the menu is fixed-positioned from its first render and focuses without scrolling", () => {
+  const positions: string[] = []
+  const focus = jest.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement) {
+    const menu = this.closest('[role="menu"]') as HTMLElement | null
+    if (menu) positions.push(menu.style.position)
+  })
+  try {
+    render(<AdminUsersPage />)
+    openMenu("alice")
+    // Focus runs in the layout effect before the measured style commits, so this
+    // sees the initial render's style: it must already be fixed.
+    expect(positions).toEqual(["fixed"])
+    expect(screen.getByRole("menu").style.position).toBe("fixed")
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "ArrowDown" })
+    fireEvent.keyDown(document, { key: "Escape" })
+    expect(focus).toHaveBeenCalled()
+    for (const call of focus.mock.calls) expect(call[0]).toEqual({ preventScroll: true })
+  } finally {
+    focus.mockRestore()
+  }
+})
+
+it("returns focus to the ⋯ button after a dialog opened from the menu is cancelled", () => {
+  render(<AdminUsersPage />)
+  openMenu("alice")
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reset MFA" }))
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+  expect(screen.getByRole("button", { name: "More actions for alice" })).toHaveFocus()
+})
+
+it("Tab closes the menu", () => {
+  render(<AdminUsersPage />)
+  openMenu("alice")
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Tab" })
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument()
 })
 
 it("keeps a just-disabled user visible under Active, then drops it once the view changes", async () => {
