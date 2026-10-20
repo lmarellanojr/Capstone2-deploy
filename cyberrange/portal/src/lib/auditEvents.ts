@@ -55,6 +55,7 @@ const EVENTS: Record<string, EventInfo> = {
   REVIEW_CASE_RESOLVED: { label: "Review graded", description: "An instructor (or auto-grading) decided a review case.", category: "scoring" },
   REVIEW_CASE_RESUBMITTED: { label: "Review resubmitted", description: "The student resubmitted a rejected review.", category: "scoring" },
   SCENARIO_PROGRESS_RESET: { label: "Progress reset (Try Again)", description: "The student cleared their own progress on a scenario.", category: "scoring" },
+  KNOWLEDGE_GAIN_EXPORTED: { label: "Scoring data exported", description: "An instructor or admin downloaded knowledge-gain scoring data. The details say whether student IDs were anonymized; a refused identified export shows as Denied.", category: "scoring" },
 }
 
 export const AUDIT_CATEGORIES: { id: AuditCategory | "all"; label: string }[] = [

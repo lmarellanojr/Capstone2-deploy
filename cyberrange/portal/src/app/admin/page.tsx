@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
+import { KnowledgeGainExport } from "@/components/instructor/KnowledgeGainExport";
 import { Badge, Button, LoadingSpinner } from "@/components/ui";
 import { adminNavItems } from "@/lib/navigation";
 import { useAdminInfraHealth } from "@/hooks/useAdminInfraHealth";
@@ -117,6 +118,11 @@ export default function AdminDashboardPage() {
             <p className="text-sm text-text-muted">List, status, and lifecycle actions.</p>
           </Link>
         </div>
+      </div>
+
+      {/* Ch. III Admin Workflow: aggregate scoring for institutional reporting (#271). */}
+      <div className="mt-6">
+        <KnowledgeGainExport allowIdentified />
       </div>
     </LayoutWrapper>
   );

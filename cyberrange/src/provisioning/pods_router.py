@@ -1125,6 +1125,14 @@ def instructor_get_student_diagnostics(
     }
 
 
+def _audit_knowledge_gain_export(result: str, detail: str) -> None:
+    # Who exported what; never student ids or record contents (#271).
+    try:
+        log_event("KNOWLEDGE_GAIN_EXPORTED", student_id="", result=result, detail=detail)
+    except Exception:
+        logger.exception("knowledge-gain export audit write failed: %s", result)
+
+
 @router.get(
     "/instructor/export/knowledge-gain",
     responses={
@@ -1134,6 +1142,9 @@ def instructor_get_student_diagnostics(
                 "application/json": {"schema": {"$ref": "#/components/schemas/KnowledgeGainExportResponse"}},
                 "text/csv": {"schema": {"type": "string"}},
             },
+        },
+        403: {
+            "description": "Caller is not instructor/admin, or anonymize=false without the admin role",
         },
         503: {
             "description": "Anonymized export requested but TELEMETRY_ANONYMIZATION_SALT is not configured",
@@ -1150,9 +1161,23 @@ def export_knowledge_gain(
     """Export Section D.5 / PAPER-16 knowledge-gain scoring records.
 
     Defaults to anonymized student IDs (requires TELEMETRY_ANONYMIZATION_SALT).
-    Pass anonymize=false for cleartext instructor dumps. Instructor/Admin only.
+    Instructor/Admin only; anonymize=false (real usernames) is Admin only (#271).
     """
     auth.require_role(["instructor", "admin"], claims)
+    actor = caller_identity(claims, None) or "unknown"
+    scope = f"scenario={scenario_id if scenario_id is not None else 'all'}"
+
+    if not anonymize:
+        try:
+            auth.require_role(["admin"], claims)
+        except HTTPException:
+            _audit_knowledge_gain_export(
+                "DENIED", f"actor={actor} {scope} anonymized=no reason=not_admin"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Identified export requires the admin role. Instructors can download anonymized data.",
+            )
 
     fmt = (format or "json").strip().lower()
     if fmt not in ("json", "csv"):
@@ -1190,6 +1215,12 @@ def export_knowledge_gain(
         records = [r for r in all_records if r.get("status") == clean_status]
     else:
         records = all_records
+
+    _audit_knowledge_gain_export(
+        "OK",
+        f"actor={actor} format={fmt} {scope} anonymized={'yes' if anonymize else 'no'} "
+        f"records={len(records)}",
+    )
 
     if fmt == "csv":
         csv_text = format_records_csv(records)

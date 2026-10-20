@@ -136,9 +136,10 @@ ROUTE_POLICY = {
     ("GET", "/instructor/reviews"): (INSTRUCTOR, "/instructor/reviews", None),
     ("GET", "/instructor/reviews/{review_id}"): (INSTRUCTOR, "/instructor/reviews/1", None),
     ("POST", "/instructor/reviews/{review_id}/resolve"): (INSTRUCTOR, "/instructor/reviews/1/resolve", {"status": "APPROVED"}),
+    # Anonymized export is staff; anonymize=false is admin only (#271, tested below).
     ("GET", "/instructor/export/knowledge-gain"): (
         INSTRUCTOR,
-        "/instructor/export/knowledge-gain?anonymize=false",
+        "/instructor/export/knowledge-gain?anonymize=true",
         None,
     ),
     ("DELETE", "/admin/pods/{pod_id}/force-destroy"): (ADMIN, f"/admin/pods/{POD}/force-destroy", None),
@@ -163,6 +164,7 @@ def client(monkeypatch):
     monkeypatch.setattr("pods_router.perform_provisioning", lambda *a, **k: None)
     monkeypatch.setattr("pods_router.perform_destruction", lambda *a, **k: None)
     monkeypatch.setenv("BROWSER_SCORE_SECRET", "sec01-matrix-secret")
+    monkeypatch.setenv("TELEMETRY_ANONYMIZATION_SALT", "sec01-matrix-telemetry-salt")
     kc = FakeKeycloak()
     kc.add("admin_demo", "admin")
     app.dependency_overrides[keycloak_admin.get_client] = lambda: kc
@@ -239,6 +241,17 @@ def test_role_matrix(client, caller, route):
         assert r.status_code < 500, f"{caller} {route} crashed: {r.status_code} {r.text[:200]}"
     else:
         assert r.status_code == want, f"{caller} on {route}: got {r.status_code}, want {want} ({r.text[:200]})"
+
+
+@pytest.mark.parametrize(
+    "caller,want",
+    [("unauthenticated", 401), ("no_role", 403), ("student", 403), ("instructor", 403), ("admin", 200)],
+)
+def test_identified_knowledge_gain_export_is_admin_only(client, caller, want):
+    """#271: real usernames (anonymize=false) need the admin role."""
+    as_caller(caller)
+    r = client.get("/instructor/export/knowledge-gain?anonymize=false&format=csv")
+    assert r.status_code == want, r.text[:200]
 
 
 def test_no_role_account_cannot_provision_or_write(client, monkeypatch):
