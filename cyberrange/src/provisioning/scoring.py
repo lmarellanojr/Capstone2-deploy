@@ -14,6 +14,13 @@ from ttl import minutes_since_created, siem_window_minutes
 
 logger = logging.getLogger("provision_api")
 
+# milestone_verification.source values (schema v15, #266). NULL = pre-v15 row.
+SOURCE_AUTO = "auto"        # background score poller
+SOURCE_MANUAL = "manual"    # student-initiated Manual Check
+SOURCE_BROWSER = "browser"  # Scenario 2 DVWA browser scoring
+SOURCE_FLAG = "flag"        # hybrid flag capture
+SOURCE_REVIEW = "review"    # instructor approval of a review case
+
 
 def has_browser_pass(
     conn: sqlite3.Connection,
@@ -44,8 +51,8 @@ def record_browser_milestone(
         conn.execute(
             """
             INSERT INTO milestone_verification
-            (pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data)
-            SELECT ?, ?, 6, ?, 'PASS', 0, ?
+            (pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data, source)
+            SELECT ?, ?, 6, ?, 'PASS', 0, ?, 'browser'
             WHERE NOT EXISTS (
                 SELECT 1 FROM milestone_verification
                 WHERE pod_id=? AND student_id=? AND scenario_id=6 AND milestone_id=?
@@ -76,6 +83,7 @@ async def verify_milestone(
     detection_enabled: bool,
     detection_for: Optional[Callable],
     verify_siem_alert: Optional[Callable],
+    source: Optional[str] = None,
 ) -> VerificationResponse:
     if not scoring_enabled or ssh_verifier_cls is None:
         raise HTTPException(status_code=503, detail="Scoring engine not available")
@@ -130,37 +138,20 @@ async def verify_milestone(
         conn = get_db_connection()
         with conn:
             mv_cols = {r[1] for r in conn.execute("PRAGMA table_info(milestone_verification)").fetchall()}
+            # Optional columns, so an older DB (pre-telemetry / pre-v15) still scores.
+            cols = ["pod_id", "student_id", "scenario_id", "milestone_id", "status", "detection_score", "detection_data"]
+            vals = [pod_id, pod["student_id"], scenario_id, milestone_id, status_result, detection_score, detection_data]
             if "pod_created_at" in mv_cols:
-                conn.execute(
-                    "INSERT INTO milestone_verification "
-                    "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data, pod_created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?)",
-                    (
-                        pod_id,
-                        pod["student_id"],
-                        scenario_id,
-                        milestone_id,
-                        status_result,
-                        detection_score,
-                        detection_data,
-                        pod_created_at,
-                    ),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO milestone_verification "
-                    "(pod_id, student_id, scenario_id, milestone_id, status, detection_score, detection_data) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (
-                        pod_id,
-                        pod["student_id"],
-                        scenario_id,
-                        milestone_id,
-                        status_result,
-                        detection_score,
-                        detection_data,
-                    ),
-                )
+                cols.append("pod_created_at")
+                vals.append(pod_created_at)
+            if "source" in mv_cols:
+                cols.append("source")
+                vals.append(source)
+            conn.execute(
+                f"INSERT INTO milestone_verification ({', '.join(cols)}) "
+                f"VALUES ({','.join('?' * len(cols))})",
+                vals,
+            )
         conn.close()
 
         # Instructor-only reason code; after the score commit so it can't block it.

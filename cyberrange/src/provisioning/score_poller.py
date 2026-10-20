@@ -18,7 +18,7 @@ from config import SCORE_POLL_INTERVAL_SECONDS
 from db import get_db_connection
 import scoring_diagnostics
 import scoring_state
-from scoring import verify_milestone
+from scoring import SOURCE_AUTO, verify_milestone
 
 logger = logging.getLogger("provision_api")
 
@@ -113,6 +113,7 @@ async def score_poll_once() -> None:
                     detection_enabled=scoring_state.DETECTION_ENABLED,
                     detection_for=scoring_state.detection_for,
                     verify_siem_alert=scoring_state.verify_siem_alert,
+                    source=SOURCE_AUTO,
                 )
             except Exception as e:
                 # verify_milestone raises HTTPException on infra failure (bad
