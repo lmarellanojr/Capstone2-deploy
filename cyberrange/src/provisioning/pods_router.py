@@ -1172,7 +1172,7 @@ def export_knowledge_gain(
             auth.require_role(["admin"], claims)
         except HTTPException:
             _audit_knowledge_gain_export(
-                "DENIED", f"actor={actor} {scope} anonymized=no reason=not_admin"
+                "DENIED", f"actor={actor} {scope} anonymized=no reason=actor_not_admin"
             )
             raise HTTPException(
                 status_code=403,

@@ -575,7 +575,7 @@ def test_api_export_is_audited_without_student_ids():
     rows = _export_audit_rows()
     assert [r["result"] for r in rows] == ["OK", "DENIED", "OK"]
     assert rows[0]["detail"] == "actor=inst_audit format=csv scenario=1 anonymized=yes records=1"
-    assert rows[1]["detail"] == "actor=inst_audit scenario=all anonymized=no reason=not_admin"
+    assert rows[1]["detail"] == "actor=inst_audit scenario=all anonymized=no reason=actor_not_admin"
     assert rows[2]["detail"].startswith("actor=admin_audit format=json scenario=all anonymized=no")
     for r in rows:
         assert r["student_id"] == ""
