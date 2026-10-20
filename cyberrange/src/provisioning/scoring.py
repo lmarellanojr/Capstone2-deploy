@@ -117,16 +117,17 @@ def has_browser_pass(
 def pod_created_at_for(
     conn: sqlite3.Connection, pod_id: Optional[int], student_id: str
 ) -> Optional[str]:
-    """created_at of this student's current pods row on this slot, or None.
+    """created_at of this student's ACTIVE pods row on this slot, or None.
 
-    Flag and browser PASSes are scored while the lab is running, so this is the
-    lab they belong to. Recording it on the row keeps time-to-milestone after
-    the slot's pods row is replaced by the next provision.
+    Only a running lab counts (same gate as ``_browser_pod``): a flag submitted
+    after the lab ended is not timed against the DESTROYED pod and stores NULL.
+    Recording the start on the row keeps time-to-milestone after the slot's
+    pods row is replaced by the next provision.
     """
     if not pod_id:
         return None
     row = conn.execute(
-        "SELECT created_at FROM pods WHERE pod_id=? AND student_id=?",
+        "SELECT created_at FROM pods WHERE pod_id=? AND student_id=? AND status='ACTIVE'",
         (pod_id, student_id),
     ).fetchone()
     return row[0] if row and row[0] else None

@@ -19,13 +19,14 @@ from scoring import pod_created_at_for, record_browser_milestone
 START = "2026-10-15 01:00:00"
 
 
-def _pod(student_id: str, pod_id: int, scenario_id: str, created_at: str = START) -> dict:
+def _pod(student_id: str, pod_id: int, scenario_id: str, created_at: str = START,
+         status: str = "ACTIVE") -> dict:
     conn = db.get_db_connection()
     with conn:
         conn.execute(
             "INSERT INTO pods (student_id, pod_id, status, scenario_id, created_at) "
             "VALUES (?,?,?,?,?)",
-            (student_id, pod_id, "ACTIVE", scenario_id, created_at),
+            (student_id, pod_id, status, scenario_id, created_at),
         )
     row = dict(conn.execute("SELECT * FROM pods WHERE pod_id=?", (pod_id,)).fetchone())
     conn.close()
@@ -132,6 +133,24 @@ def test_pod_created_at_for_ignores_other_occupant():
     assert pod_created_at_for(conn, 24, "someone_else") is None
     assert pod_created_at_for(conn, 0, "occupant") is None
     conn.close()
+
+
+@pytest.mark.anyio
+async def test_flag_after_lab_ended_is_not_timed(monkeypatch):
+    """A DESTROYED pod is not a running lab: no start, and the PASS stores NULL."""
+    monkeypatch.setenv("COHORT_FLAG_SECRET", "test-cohort-secret-ttm3")
+    from flag_planting import generate_milestone_flag, save_pod_flags
+    from hybrid_scoring import evaluate_hybrid_submission
+
+    _pod("ttm_ended", 25, "01", status="DESTROYED")
+    conn = db.get_db_connection()
+    assert pod_created_at_for(conn, 25, "ttm_ended") is None
+    flag = generate_milestone_flag("ttm_ended", 1, 5)
+    save_pod_flags(conn, 25, "ttm_ended", 1, {5: flag})
+    result = await evaluate_hybrid_submission(conn, "ttm_ended", 1, 5, flag)
+    conn.close()
+    assert result.status == "PASS"
+    assert _pass_row("ttm_ended", 1, 5)["pod_created_at"] is None
 
 
 # --- export side -----------------------------------------------------------
