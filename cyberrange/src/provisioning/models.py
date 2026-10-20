@@ -111,6 +111,14 @@ class KnowledgeGainSummary(BaseModel):
         description="Raw verification-row pass ratio (total_passes / total_records), reflecting attempt frequency including poller ticks",
     )
     avg_time_to_milestone_seconds: Optional[float] = None
+    excluded_accounts: Optional[int] = Field(
+        None,
+        description="Accounts with rows in scope that were left out (Admin-marked test accounts and staff)",
+    )
+    staff_exclusion: Optional[Literal["applied", "unavailable", "off"]] = Field(
+        None,
+        description="applied = staff roles read from Keycloak and left out; unavailable = Keycloak unreachable, staff may be included; off = include_excluded=true",
+    )
     avg_detection_score: Optional[float] = Field(
         None,
         description="Mean detection score across distinct completed milestones, evaluated from each milestone's first PASS row",

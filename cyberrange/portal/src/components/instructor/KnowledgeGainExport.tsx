@@ -25,24 +25,37 @@ export function KnowledgeGainExport({ allowIdentified = false }: { allowIdentifi
   const [format, setFormat] = useState<"csv" | "json">("csv");
   const [anonymizeChoice, setAnonymize] = useState(true);
   const anonymize = allowIdentified ? anonymizeChoice : true;
+  const [includeExcludedChoice, setIncludeExcluded] = useState(false);
+  const includeExcluded = allowIdentified && includeExcludedChoice;
   const [scenarioId, setScenarioId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [staffWarning, setStaffWarning] = useState(false);
 
   const run = async () => {
     setBusy(true);
     setError(null);
     setDone(null);
+    setStaffWarning(false);
     try {
-      const blob = await instructor.exportKnowledgeGain({
+      const result = await instructor.exportKnowledgeGain({
         format,
         anonymize,
         scenarioId: scenarioId ? Number(scenarioId) : undefined,
+        includeExcluded,
       });
-      const name = `knowledge_gain_${anonymize ? "anonymized" : "identified"}${scenarioId ? `_s${Number(scenarioId)}` : ""}.${format}`;
-      saveBlob(blob, name);
-      setDone(`Downloaded ${name}`);
+      const name = `knowledge_gain_${anonymize ? "anonymized" : "identified"}${includeExcluded ? "_all_accounts" : ""}${scenarioId ? `_s${Number(scenarioId)}` : ""}.${format}`;
+      saveBlob(result.blob, name);
+      const n = result.excludedAccounts;
+      setDone(
+        includeExcluded
+          ? `Downloaded ${name}. Test and staff accounts are included.`
+          : n === null
+            ? `Downloaded ${name}`
+            : `Downloaded ${name}. Left out ${n} test or staff ${n === 1 ? "account" : "accounts"}.`
+      );
+      setStaffWarning(result.staffExclusion === "unavailable");
     } catch (err) {
       const msg = backendDetail(err);
       setError(
@@ -97,15 +110,38 @@ export function KnowledgeGainExport({ allowIdentified = false }: { allowIdentifi
             Anonymize student IDs
           </label>
         )}
+        {allowIdentified && (
+          <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer pb-2">
+            <input
+              type="checkbox"
+              checked={includeExcluded}
+              onChange={(e) => setIncludeExcluded(e.target.checked)}
+              className="rounded border-border text-brand focus:ring-brand/30"
+            />
+            Include test and staff accounts
+          </label>
+        )}
         <Button variant="primary" onClick={() => void run()} loading={busy}>
           {!busy && <Download size={16} aria-hidden="true" />}
           Download
         </Button>
       </div>
 
-      {!allowIdentified && (
-        <p className="mt-3 text-xs text-text-muted">
-          Student IDs are anonymized. Identified exports are admin-only.
+      <p className="mt-3 text-xs text-text-muted">
+        {!allowIdentified && "Student IDs are anonymized. Identified exports are admin-only. "}
+        Test accounts marked in Admin → Users and all instructor and admin accounts are left out.
+      </p>
+      {includeExcluded && (
+        <p className="mt-3 text-xs text-warning font-medium">
+          For checking only: this file counts test and staff accounts as students. Don&apos;t use it for the study
+          results.
+        </p>
+      )}
+      {staffWarning && (
+        <p role="alert" className="mt-3 text-xs text-warning font-medium">
+          Staff accounts couldn&apos;t be checked because user management isn&apos;t reachable, so instructor and
+          admin accounts may be in this file. Ask an admin to check user management (Admin → Users), then download
+          again.
         </p>
       )}
       {!anonymize && (

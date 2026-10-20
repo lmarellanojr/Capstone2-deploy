@@ -41,6 +41,9 @@ All five routes use `verify_token` followed by `require_role(["admin"])`.
 | `PUT` | `/admin/users/{id}/role` | `{ "role": "student" \| "instructor" \| "admin" }` | **200** `User` |
 | `PUT` | `/admin/users/{id}/password` | `{ "password": "<8-128 chars>", "temporary": true }` | **200** `User` |
 | `DELETE` | `/admin/users/{id}/mfa` | none | **200** `User` |
+| `PUT` | `/admin/users/{id}/research-exclusion` | `{ "excluded": bool, "reason": "test_account" \| "team_member" \| "other" }` (reason required when excluding) | **200** `User` |
+
+`research-exclusion` writes only the local `research_exclusions` table (schema v16), not Keycloak. It leaves the account out of the knowledge-gain export. It is allowed on any account, including the caller's own, and audited as `ADMIN_USER_RESEARCH_EXCLUDE` / `ADMIN_USER_RESEARCH_INCLUDE`. Every `User` payload also carries `research_excluded` (bool) and `research_exclusion_reason`.
 
 `{id}` is the Keycloak user UUID taken from `User.id`, not the username. `max` is capped at 200. `search` matches Keycloak's username, email and name search.
 

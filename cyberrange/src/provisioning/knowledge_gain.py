@@ -164,11 +164,14 @@ def extract_knowledge_gain_records(
     status_filter: Optional[str] = None,
     anonymize: bool = False,
     salt: bytes | None = None,
+    exclude_student_ids: Optional[set[str]] = None,
 ) -> list[dict]:
     """Extract scoring records and calculate time-to-milestone telemetry.
 
     Library default keeps cleartext IDs (`anonymize=False`). When anonymize is
     True, a configured telemetry salt is required (explicit `salt=` or env).
+    `exclude_student_ids` (cleartext usernames: test and staff accounts) are
+    dropped before anonymization, so they never reach the records or summary.
     """
     resolved_salt: bytes | None = None
     if anonymize:
@@ -199,6 +202,8 @@ def extract_knowledge_gain_records(
 
     conn.row_factory = sqlite3.Row
     mv_rows = conn.execute(query, params).fetchall()
+    if exclude_student_ids:
+        mv_rows = [r for r in mv_rows if (r["student_id"] or "") not in exclude_student_ids]
 
     if not mv_rows:
         return []

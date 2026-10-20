@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { admin, AdminUser, AppRole, CreateUserInput } from '@/lib/api'
+import { admin, AdminUser, AppRole, CreateUserInput, ResearchExclusionReason } from '@/lib/api'
 import { backendDetail, isForbiddenError } from '@/lib/errorHandler'
 
 // ADM-USER: replaces the page's old fixture data. Writes return the updated
@@ -13,7 +13,7 @@ export function useAdminUsers() {
   const [error, setError] = useState<string | null>(null)
   const [forbidden, setForbidden] = useState(false)
   // user id -> in-flight write, so only that row's controls disable.
-  const [pending, setPending] = useState<Record<string, 'enabled' | 'role' | 'password' | 'mfa'>>({})
+  const [pending, setPending] = useState<Record<string, 'enabled' | 'role' | 'password' | 'mfa' | 'research'>>({})
   const search = useRef('')
   const requestSeq = useRef(0)
 
@@ -50,7 +50,7 @@ export function useAdminUsers() {
     setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)))
 
   /** Throws a user-safe message string on failure. */
-  const runWrite = async (userId: string, kind: 'enabled' | 'role' | 'password' | 'mfa', call: () => Promise<AdminUser>) => {
+  const runWrite = async (userId: string, kind: 'enabled' | 'role' | 'password' | 'mfa' | 'research', call: () => Promise<AdminUser>) => {
     setPending((p) => ({ ...p, [userId]: kind }))
     try {
       const updated = await call()
@@ -77,6 +77,9 @@ export function useAdminUsers() {
 
   const resetMfa = (userId: string) => runWrite(userId, 'mfa', () => admin.resetUserMfa(userId))
 
+  const setResearchExclusion = (userId: string, excluded: boolean, reason?: ResearchExclusionReason) =>
+    runWrite(userId, 'research', () => admin.setResearchExclusion(userId, excluded, reason))
+
   /** Throws a user-safe message string on failure. */
   const createUser = async (input: CreateUserInput): Promise<AdminUser> => {
     try {
@@ -100,6 +103,7 @@ export function useAdminUsers() {
     setRole,
     resetPassword,
     resetMfa,
+    setResearchExclusion,
     createUser,
   }
 }

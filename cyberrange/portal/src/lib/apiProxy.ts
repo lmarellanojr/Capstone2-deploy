@@ -120,7 +120,8 @@ export async function proxyToApi(
     }
     if (options.raw) {
       const passHeaders = new Headers()
-      for (const name of ["content-type", "content-disposition"]) {
+      // x-excluded-accounts / x-staff-exclusion: knowledge-gain CSV has no summary block.
+      for (const name of ["content-type", "content-disposition", "x-excluded-accounts", "x-staff-exclusion"]) {
         const value = res.headers.get(name)
         if (value) passHeaders.set(name, value)
       }

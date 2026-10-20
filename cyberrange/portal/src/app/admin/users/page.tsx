@@ -16,7 +16,7 @@ import { formatSqliteDate } from "@/lib/sqliteTime";
 import { APP_ROLES } from "@/lib/adminUserValidation";
 import { createCredentialFeedback, resetCredentialFeedback } from "@/lib/adminCredentialFeedback";
 import { filterAdminUsers, type RoleFilter, type StatusFilter } from "@/lib/adminUserFilter";
-import { ADMIN_USERS_MAX, type AdminUser, type AppRole } from "@/lib/api";
+import { ADMIN_USERS_MAX, type AdminUser, type AppRole, type ResearchExclusionReason } from "@/lib/api";
 
 const ROLE_BADGE: Record<AppRole, "brand" | "info" | "default"> = {
   admin: "brand",
@@ -30,7 +30,19 @@ const FILTER_SELECT =
 type PendingChange =
   | { kind: "disable"; user: AdminUser }
   | { kind: "role"; user: AdminUser; role: AppRole }
-  | { kind: "mfa"; user: AdminUser };
+  | { kind: "mfa"; user: AdminUser }
+  | { kind: "exclude"; user: AdminUser };
+
+// v16 / PAPER-16: why an account is left out of the knowledge-gain export.
+const EXCLUSION_REASON_LABEL: Record<ResearchExclusionReason, string> = {
+  test_account: "Test account",
+  team_member: "Team member",
+  other: "Other",
+};
+
+function isStaff(u: AdminUser) {
+  return u.roles.includes("instructor") || u.roles.includes("admin");
+}
 
 function displayName(u: AdminUser) {
   const full = [u.first_name, u.last_name].filter(Boolean).join(" ");
@@ -44,8 +56,22 @@ export default function AdminUsersPage() {
   const { data: session } = useSession();
   const actor = session?.user?.name ?? "";
   const { success, error: toastError } = useToastContext();
-  const { users, loading, error, forbidden, pending, search, refresh, setEnabled, setRole, resetPassword, resetMfa, createUser } =
-    useAdminUsers();
+  const {
+    users,
+    loading,
+    error,
+    forbidden,
+    pending,
+    search,
+    refresh,
+    setEnabled,
+    setRole,
+    resetPassword,
+    resetMfa,
+    setResearchExclusion,
+    createUser,
+  } = useAdminUsers();
+  const [excludeReason, setExcludeReason] = useState<ResearchExclusionReason>("test_account");
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -95,6 +121,10 @@ export default function AdminUsersPage() {
       } else if (change.kind === "mfa") {
         await resetMfa(change.user.id);
         success(`${change.user.username}'s authenticator was reset. They'll set up a new one at next sign-in.`);
+      } else if (change.kind === "exclude") {
+        await setResearchExclusion(change.user.id, true, excludeReason);
+        keepVisible(change.user.id, startKey);
+        success(`${change.user.username} is left out of research data. Their scores are kept.`);
       } else {
         await setRole(change.user.id, change.role);
         keepVisible(change.user.id, startKey);
@@ -116,6 +146,17 @@ export default function AdminUsersPage() {
       success(`${u.username} can sign in again.`);
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Couldn't enable the user.");
+    }
+  };
+
+  const includeInResearch = async (u: AdminUser) => {
+    const startKey = viewKey;
+    try {
+      await setResearchExclusion(u.id, false);
+      keepVisible(u.id, startKey);
+      success(`${u.username} is counted in research data again.`);
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Couldn't include the account.");
     }
   };
 
@@ -244,6 +285,7 @@ export default function AdminUsersPage() {
                   <th scope="col" className="py-3 px-4 font-semibold">Email</th>
                   <th scope="col" className="py-3 px-4 font-semibold">Role</th>
                   <th scope="col" className="py-3 px-4 font-semibold">Status</th>
+                  <th scope="col" className="py-3 px-4 font-semibold">Research data</th>
                   <th scope="col" className="py-3 px-4 font-semibold">Created</th>
                   <th scope="col" className="py-3 px-4 font-semibold text-right">
                     <span className="sr-only">Actions</span>
@@ -291,6 +333,50 @@ export default function AdminUsersPage() {
                         <Badge variant={u.enabled ? "success" : "danger"} dot>
                           {u.enabled ? "Active" : "Disabled"}
                         </Badge>
+                      </td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        {isStaff(u) ? (
+                          <span
+                            className="text-xs text-text-muted"
+                            title="Instructor and admin accounts are always left out of the knowledge-gain export"
+                          >
+                            Excluded (staff)
+                          </span>
+                        ) : u.research_excluded ? (
+                          <span className="inline-flex items-center gap-2">
+                            <Badge variant="warning">
+                              Excluded ·{" "}
+                              {u.research_exclusion_reason ? EXCLUSION_REASON_LABEL[u.research_exclusion_reason] : "Other"}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={!!busy}
+                              loading={busy === "research"}
+                              onClick={() => void includeInResearch(u)}
+                              aria-label={`Include ${u.username} in research data`}
+                            >
+                              Include
+                            </Button>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-2">
+                            <span className="text-xs text-text-muted">Included</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={!!busy}
+                              loading={busy === "research"}
+                              onClick={() => {
+                                setExcludeReason("test_account");
+                                setConfirm({ kind: "exclude", user: u });
+                              }}
+                              aria-label={`Exclude ${u.username} from research data`}
+                            >
+                              Exclude
+                            </Button>
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-text-muted whitespace-nowrap">
                         {formatSqliteDate(u.created_at)}
@@ -385,7 +471,9 @@ export default function AdminUsersPage() {
                   ? `Disable ${confirm.user.username}?`
                   : confirm.kind === "mfa"
                     ? `Reset ${confirm.user.username}'s authenticator?`
-                    : `Make ${confirm.user.username} ${ROLE_LABEL[confirm.role]}?`
+                    : confirm.kind === "exclude"
+                      ? `Leave ${confirm.user.username} out of research data?`
+                      : `Make ${confirm.user.username} ${ROLE_LABEL[confirm.role]}?`
               }
             />
             <ModalBody>
@@ -394,6 +482,28 @@ export default function AdminUsersPage() {
                   They&apos;ll be signed out everywhere right away and won&apos;t be able to sign in until you enable
                   the account again. Their scores and history are kept.
                 </p>
+              ) : confirm.kind === "exclude" ? (
+                <div className="space-y-3">
+                  <p className="text-text-secondary">
+                    Their rows are left out of the knowledge-gain export, so they don&apos;t count in completion rate
+                    or time to milestone. Use this for accounts that aren&apos;t study participants. Nothing is
+                    deleted, their lab and scores stay as they are, and you can include them again at any time.
+                  </p>
+                  <label className="block text-sm">
+                    <span className="block font-semibold text-text-main mb-1">Reason</span>
+                    <select
+                      value={excludeReason}
+                      onChange={(e) => setExcludeReason(e.target.value as ResearchExclusionReason)}
+                      className={FILTER_SELECT}
+                    >
+                      {(Object.keys(EXCLUSION_REASON_LABEL) as ResearchExclusionReason[]).map((r) => (
+                        <option key={r} value={r}>
+                          {EXCLUSION_REASON_LABEL[r]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
               ) : confirm.kind === "mfa" ? (
                 <p className="text-text-secondary">
                   Use this when they&apos;ve lost or replaced their phone. Their current authenticator stops working,
@@ -418,7 +528,13 @@ export default function AdminUsersPage() {
                 loading={confirmBusy}
                 onClick={() => void runChange(confirm)}
               >
-                {confirm.kind === "disable" ? "Disable and sign out" : confirm.kind === "mfa" ? "Reset authenticator" : "Change role"}
+                {confirm.kind === "disable"
+                  ? "Disable and sign out"
+                  : confirm.kind === "mfa"
+                    ? "Reset authenticator"
+                    : confirm.kind === "exclude"
+                      ? "Leave out of research data"
+                      : "Change role"}
               </Button>
             </ModalFooter>
           </>

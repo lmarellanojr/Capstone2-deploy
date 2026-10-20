@@ -214,7 +214,13 @@ export interface AdminUser {
   role: AppRole | null
   roles: string[]
   created_at: string | null
+  // v16: an Admin left this account out of research data. Staff roles are
+  // left out of the export automatically and are never marked.
+  research_excluded?: boolean
+  research_exclusion_reason?: ResearchExclusionReason | null
 }
+
+export type ResearchExclusionReason = 'test_account' | 'team_member' | 'other'
 
 // users_router.list_users caps `max` at 200 and returns only that first page.
 export const ADMIN_USERS_MAX = 200
@@ -565,18 +571,27 @@ export const instructor = {
     format: 'csv' | 'json'
     anonymize: boolean
     scenarioId?: number
-  }): Promise<Blob> => {
+    /** Admin only: keep test/staff accounts in (for checking). */
+    includeExcluded?: boolean
+  }): Promise<KnowledgeGainDownload> => {
     const params: Record<string, string> = {
       format: opts.format,
       anonymize: String(opts.anonymize),
     }
     if (opts.scenarioId) params.scenario_id = String(opts.scenarioId)
+    if (opts.includeExcluded) params.include_excluded = 'true'
     try {
       const response = await apiClient.get('/instructor/export/knowledge-gain', {
         params,
         responseType: 'blob',
       })
-      return response.data as Blob
+      const headers = (response.headers ?? {}) as Record<string, string | undefined>
+      const excluded = Number(headers['x-excluded-accounts'])
+      return {
+        blob: response.data as Blob,
+        excludedAccounts: Number.isFinite(excluded) && headers['x-excluded-accounts'] !== undefined ? excluded : null,
+        staffExclusion: (headers['x-staff-exclusion'] as StaffExclusion | undefined) ?? null,
+      }
     } catch (err) {
       // With responseType 'blob' an error body is a Blob too; decode it so
       // backendDetail() can read FastAPI's JSON {detail}.
@@ -591,6 +606,17 @@ export const instructor = {
       throw err
     }
   },
+}
+
+// applied = staff left out; unavailable = Keycloak unreachable, staff may be in
+// the file; off = an Admin asked to include excluded accounts.
+export type StaffExclusion = 'applied' | 'unavailable' | 'off'
+
+export interface KnowledgeGainDownload {
+  blob: Blob
+  /** Test/staff accounts left out of this file; null if the server didn't say. */
+  excludedAccounts: number | null
+  staffExclusion: StaffExclusion | null
 }
 
 // A screenshot attached to a review case (GET /reviews/{id}/images).
@@ -707,6 +733,19 @@ export const admin = {
   // Disabling also ends the user's sessions (backend logout + cache revoke).
   setUserEnabled: async (userId: string, enabled: boolean): Promise<AdminUser> => {
     const response = await apiClient.patch(`/admin/users/${encodeURIComponent(userId)}/enabled`, { enabled })
+    return response.data
+  },
+
+  // Leave an account out of (or put it back into) the knowledge-gain export.
+  setResearchExclusion: async (
+    userId: string,
+    excluded: boolean,
+    reason?: ResearchExclusionReason,
+  ): Promise<AdminUser> => {
+    const response = await apiClient.put(`/admin/users/${encodeURIComponent(userId)}/research-exclusion`, {
+      excluded,
+      ...(excluded ? { reason } : {}),
+    })
     return response.data
   },
 
