@@ -10,7 +10,7 @@ from typing import Any, Dict, Literal, Optional, Tuple
 
 from db import log_event
 from rubrics import get_rubric, validate_flag
-from scoring import SOURCE_FLAG, insert_verification_row
+from scoring import SOURCE_FLAG, insert_verification_row, pod_created_at_for
 import scoring_state
 
 logger = logging.getLogger("provision_api")
@@ -249,6 +249,7 @@ async def evaluate_hybrid_submission(
                     detection_score=0,
                     detection_data="pure_flag_capture",
                     source=SOURCE_FLAG,
+                    pod_created_at=pod_created_at_for(conn, target_pod_id, student_id),
                 )
             log_event(
                 "HYBRID_SCORE_PASS",
@@ -327,6 +328,7 @@ async def evaluate_hybrid_submission(
                     detection_score=0,
                     detection_data="corroborated_hybrid_flag_state",
                     source=SOURCE_FLAG,
+                    pod_created_at=pod_created_at_for(conn, target_pod_id, student_id),
                 )
 
             # Auto-resolve pending conflicts; RETURNING only IDs actually updated

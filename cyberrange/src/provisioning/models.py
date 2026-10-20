@@ -90,6 +90,7 @@ class ReviewResubmitResponse(BaseModel):
 class KnowledgeGainRecord(BaseModel):
     student_id: str
     scenario_id: int
+    scenario_number: Optional[int] = None  # paper's Scenario 1-4; label only
     milestone_id: int
     status: Literal["PASS", "FAIL", "ERROR", "UNKNOWN"]
     verified_at: str

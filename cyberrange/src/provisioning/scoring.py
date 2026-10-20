@@ -114,6 +114,24 @@ def has_browser_pass(
     return row is not None
 
 
+def pod_created_at_for(
+    conn: sqlite3.Connection, pod_id: Optional[int], student_id: str
+) -> Optional[str]:
+    """created_at of this student's current pods row on this slot, or None.
+
+    Flag and browser PASSes are scored while the lab is running, so this is the
+    lab they belong to. Recording it on the row keeps time-to-milestone after
+    the slot's pods row is replaced by the next provision.
+    """
+    if not pod_id:
+        return None
+    row = conn.execute(
+        "SELECT created_at FROM pods WHERE pod_id=? AND student_id=?",
+        (pod_id, student_id),
+    ).fetchone()
+    return row[0] if row and row[0] else None
+
+
 def record_browser_milestone(
     conn: sqlite3.Connection, pod: dict, milestone_id: int, label: str
 ) -> None:
@@ -134,6 +152,7 @@ def record_browser_milestone(
             detection_score=0,
             detection_data=label,
             source=SOURCE_BROWSER,
+            pod_created_at=pod.get("created_at"),
         )
     except sqlite3.IntegrityError:
         return
