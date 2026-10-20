@@ -1,0 +1,27 @@
+name: portal-typecheck
+# #258: `next build` type-checks the portal, but Jest's TypeScript transform does
+# not, so a type error (TS1501 from #250) passed review and broke every
+# ampere-release run until the hotfix. Run the same check on every PR
+# (no paths filter, so it can be a required status check).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tsc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: cyberrange/portal/package-lock.json
+      - name: Install portal dependencies
+        working-directory: cyberrange/portal
+        run: npm ci
+      - name: Type check (tsc --noEmit)
+        working-directory: cyberrange/portal
+        run: npx tsc --noEmit
