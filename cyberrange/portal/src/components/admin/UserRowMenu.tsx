@@ -27,14 +27,14 @@ export function UserRowMenu({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [style, setStyle] = useState<CSSProperties>({});
+  const [style, setStyle] = useState<CSSProperties>({ position: "fixed" });
   const wrapRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const close = (refocus: boolean) => {
     setOpen(false);
-    if (refocus) buttonRef.current?.focus();
+    if (refocus) buttonRef.current?.focus({ preventScroll: true });
   };
 
   // Place under the button, or above it when there's no room below.
@@ -49,7 +49,7 @@ export function UserRowMenu({
         ? { position: "fixed", right, bottom: window.innerHeight - r.top + 4 }
         : { position: "fixed", right, top: r.bottom + 4 }
     );
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
   }, [open]);
 
   useEffect(() => {
@@ -74,12 +74,13 @@ export function UserRowMenu({
   }, [open]);
 
   const onMenuKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Tab") close(false);
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
     const els = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
     const i = els.indexOf(document.activeElement as HTMLElement);
     const next = e.key === "ArrowDown" ? (i + 1) % els.length : (i - 1 + els.length) % els.length;
-    els[next]?.focus();
+    els[next]?.focus({ preventScroll: true });
   };
 
   return (
@@ -112,7 +113,8 @@ export function UserRowMenu({
                 type="button"
                 role="menuitem"
                 onClick={() => {
-                  close(false);
+                  // Refocus ⋯ first so the dialog returns focus here when it closes.
+                  close(true);
                   item.onSelect();
                 }}
                 className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-main hover:bg-muted focus:outline-none focus-visible:bg-muted"

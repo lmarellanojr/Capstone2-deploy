@@ -141,6 +141,43 @@ it("the menu closes on Escape and returns focus to its button", () => {
   expect(screen.getByRole("button", { name: "More actions for alice" })).toHaveFocus()
 })
 
+it("the menu is fixed-positioned from its first render and focuses without scrolling", () => {
+  const positions: string[] = []
+  const focus = jest.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement) {
+    const menu = this.closest('[role="menu"]') as HTMLElement | null
+    if (menu) positions.push(menu.style.position)
+  })
+  try {
+    render(<AdminUsersPage />)
+    openMenu("alice")
+    // Focus runs in the layout effect before the measured style commits, so this
+    // sees the initial render's style: it must already be fixed.
+    expect(positions).toEqual(["fixed"])
+    expect(screen.getByRole("menu").style.position).toBe("fixed")
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "ArrowDown" })
+    fireEvent.keyDown(document, { key: "Escape" })
+    expect(focus).toHaveBeenCalled()
+    for (const call of focus.mock.calls) expect(call[0]).toEqual({ preventScroll: true })
+  } finally {
+    focus.mockRestore()
+  }
+})
+
+it("returns focus to the ⋯ button after a dialog opened from the menu is cancelled", () => {
+  render(<AdminUsersPage />)
+  openMenu("alice")
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reset MFA" }))
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+  expect(screen.getByRole("button", { name: "More actions for alice" })).toHaveFocus()
+})
+
+it("Tab closes the menu", () => {
+  render(<AdminUsersPage />)
+  openMenu("alice")
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Tab" })
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument()
+})
+
 it("keeps a just-disabled user visible under Active, then drops it once the view changes", async () => {
   render(<AdminUsersPage />)
   setStatus("active")
