@@ -11,12 +11,18 @@ import hashlib
 import hmac
 import io
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from secrets_loader import get_secret
 
 MIN_TELEMETRY_SALT_BYTES = 16
+# Internal scenario ids -> the paper's Scenario 1-4 numbering. Label only: the
+# ids themselves drive scoring, TTLs, templates and URLs and never change.
+SCENARIO_NUMBER = {1: 1, 6: 2, 9: 3, 11: 4}
+# Instructor-approved PASS rows (pods_router review resolve). The approval time
+# is the instructor's, not the student's, so these rows carry no time-to-milestone.
+_INSTRUCTOR_APPROVED_PREFIX = "instructor_approved"
 FORMULA_PREFIXES = ("=", "+", "-", "@")
 # Leading characters stripped before formula detection (ASCII ws + NBSP + BOM).
 _LEADING_STRIP = "".join(
@@ -111,6 +117,33 @@ def sanitize_csv_cell(value: Any) -> Any:
     return value
 
 
+def _utc_naive(ts: Any) -> Optional[datetime]:
+    """parse_timestamp as naive UTC, so SQLite and ISO-with-offset values compare."""
+    dt = parse_timestamp(ts)
+    if dt is not None and dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def format_utc(ts: Any) -> str:
+    """SQLite CURRENT_TIMESTAMP (UTC, no zone) -> 'YYYY-MM-DDTHH:MM:SSZ'.
+
+    Unparseable values pass through unchanged rather than being dropped.
+    """
+    dt = _utc_naive(ts)
+    if dt is None:
+        return str(ts or "")
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _is_instructor_approved(row: Any) -> bool:
+    try:
+        data = row["detection_data"]
+    except (IndexError, KeyError):
+        return False
+    return bool(data) and str(data).startswith(_INSTRUCTOR_APPROVED_PREFIX)
+
+
 def _has_table(conn: sqlite3.Connection, table_name: str) -> bool:
     """Check whether a table exists in the SQLite database."""
     row = conn.execute(
@@ -145,9 +178,14 @@ def extract_knowledge_gain_records(
 
     # 1. Fetch milestone verification records
     pod_cat_col = ", pod_created_at" if has_pod_cat else ", NULL as pod_created_at"
+    det_data_col = (
+        "detection_data"
+        if _has_column(conn, "milestone_verification", "detection_data")
+        else "NULL as detection_data"
+    )
     query = (
         f"SELECT id, pod_id, student_id, scenario_id, milestone_id, "
-        f"status, detection_score, verified_at{pod_cat_col} "
+        f"status, detection_score, {det_data_col}, verified_at{pod_cat_col} "
         f"FROM milestone_verification WHERE 1=1"
     )
     params: list[Any] = []
@@ -187,6 +225,20 @@ def extract_knowledge_gain_records(
                 if cdt:
                     pods_by_student_scen.setdefault((sid, scen), []).append((cdt, cat))
 
+    # lab_sessions (v8) keeps every lab's real window after its pods row is
+    # replaced; started_at is copied from pods.created_at, so keys still match.
+    sessions_by_slot: dict[tuple[int, str], list[tuple[datetime, Optional[datetime], str]]] = {}
+    if _has_table(conn, "lab_sessions"):
+        for ls in conn.execute(
+            "SELECT pod_id, student_id, started_at, ended_at FROM lab_sessions"
+        ).fetchall():
+            start_dt = _utc_naive(ls["started_at"])
+            if ls["pod_id"] is None or not ls["student_id"] or start_dt is None:
+                continue
+            sessions_by_slot.setdefault((ls["pod_id"], ls["student_id"]), []).append(
+                (start_dt, _utc_naive(ls["ended_at"]), str(ls["started_at"]))
+            )
+
     def _resolve_pod_created_at(row_dict_or_obj: Any) -> Optional[str]:
         # 1. Primary: persisted on milestone_verification
         try:
@@ -200,6 +252,17 @@ def extract_knowledge_gain_records(
         sc_id = int(row_dict_or_obj["scenario_id"]) if row_dict_or_obj["scenario_id"] is not None else None
         ver_time = row_dict_or_obj["verified_at"] or ""
         v_dt = parse_timestamp(ver_time)
+
+        # 1b. The lab session on this slot whose window contains verified_at
+        v_utc = _utc_naive(ver_time)
+        if v_utc is not None:
+            for start_dt, end_dt, started_at in sessions_by_slot.get((p_id, s_id), ()):
+                if start_dt <= v_utc and (end_dt is None or v_utc <= end_dt):
+                    return started_at
+        # Sessions are authoritative when the slot has any; the pods
+        # fallbacks below only serve pre-v8 labs without lab_sessions.
+        if (p_id, s_id) in sessions_by_slot:
+            return None
 
         # 2. Match slot and student (ONLY IF pod was created <= verified_at)
         if (p_id, s_id) in pod_by_slot_and_student:
@@ -225,13 +288,15 @@ def extract_knowledge_gain_records(
     # Key: (student_id, scenario_id, milestone_id, pod_created_at) -> first PASS verified_at
     pass_query = (
         f"SELECT id, pod_id, student_id, scenario_id, milestone_id, "
-        f"status, detection_score, verified_at{pod_cat_col} "
+        f"status, detection_score, {det_data_col}, verified_at{pod_cat_col} "
         f"FROM milestone_verification "
         f"WHERE UPPER(status) = 'PASS' "
         f"ORDER BY verified_at ASC"
     )
     first_pass_map: dict[tuple[str, int, int, Optional[str]], str] = {}
     for r in conn.execute(pass_query).fetchall():
+        if _is_instructor_approved(r):
+            continue
         r_sid = r["student_id"] or ""
         r_scen = int(r["scenario_id"])
         r_mid = int(r["milestone_id"])
@@ -269,7 +334,7 @@ def extract_knowledge_gain_records(
 
         # Calculate time-to-milestone: pod created_at to first PASS timestamp of this session
         time_to_milestone: Optional[float] = None
-        if st == "PASS":
+        if st == "PASS" and not _is_instructor_approved(row):
             first_pass_str = first_pass_map.get((sid, scen, mid, pod_cat_str)) or ver_at
             p_dt = parse_timestamp(pod_cat_str)
             fp_dt = parse_timestamp(first_pass_str)
@@ -294,11 +359,12 @@ def extract_knowledge_gain_records(
                 "scenario_id": scen,
                 "milestone_id": mid,
                 "status": st,
-                "verified_at": ver_at,
+                "verified_at": format_utc(ver_at),
                 "detection_score": det_score,
                 "time_to_milestone_seconds": time_to_milestone,
                 "rubric_score": rubric_score,
                 "scenario_rubric_score": scenario_rubric_score,
+                "scenario_number": SCENARIO_NUMBER.get(scen),
             }
         )
 
@@ -401,6 +467,8 @@ def format_records_csv(records: list[dict]) -> str:
         "time_to_milestone_seconds",
         "rubric_score",
         "scenario_rubric_score",
+        # Appended so existing column positions in analysis sheets don't shift.
+        "scenario_number",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
     writer.writeheader()
