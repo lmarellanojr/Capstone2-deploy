@@ -7,6 +7,7 @@ self-service route: accounts are created by an Admin, never by signup.
 Contract for the portal Admin UI: docs/ADM-USER-contract.md.
 """
 import logging
+import sqlite3
 import threading
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
@@ -282,6 +283,10 @@ def admin_set_research_exclusion(
                 else:
                     research_exclusions.clear_exclusion(conn, username)
             exclusion = research_exclusions.get_exclusion(conn, username)
+        except sqlite3.Error:
+            logger.exception("ADM-USER: research exclusion write failed")
+            _audit(event, username, "FAILED", actor, f"{detail} reason=db".strip())
+            raise HTTPException(status_code=503, detail="Research data setting could not be saved")
         finally:
             conn.close()
     _audit(event, username, "OK", actor, detail)

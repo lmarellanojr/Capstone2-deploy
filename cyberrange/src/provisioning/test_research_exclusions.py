@@ -189,11 +189,19 @@ def test_export_says_when_staff_roles_are_unavailable(kc):
     """Keycloak down: marked accounts still apply, staff can't be resolved, and the export says so."""
     _pass("real_student")
     _pass("teacher")
-    kc.fail_on.add("staff_usernames")
+    _pass("owner_test")
     _as("admin_demo", "admin")
-    data = _export(TestClient(app)).json()
+    client = TestClient(app)
+    r = client.put(
+        f"/admin/users/{kc.test_id}/research-exclusion",
+        json={"excluded": True, "reason": "test_account"},
+    )
+    assert r.status_code == 200, r.text
+    kc.fail_on.add("staff_usernames")
+    data = _export(client).json()
     assert data["summary"]["staff_exclusion"] == "unavailable"
     assert {r["student_id"] for r in data["records"]} == {"real_student", "teacher"}
+    assert data["summary"]["excluded_accounts"] == 1
 
 
 def test_scenario_scope_counts_only_accounts_with_rows_in_scope(kc):
@@ -213,3 +221,22 @@ def test_audit_records_exclusion_counts(kc):
     detail = _audit("KNOWLEDGE_GAIN_EXPORTED")[-1]["detail"]
     assert detail.endswith("records=1 excluded_accounts=1 staff_exclusion=applied")
     assert "teacher" not in detail and "real_student" not in detail
+
+
+def test_exclusion_db_failure_is_audited_and_returns_503(kc, monkeypatch):
+    import research_exclusions
+    import sqlite3
+
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(research_exclusions, "set_exclusion", boom)
+    _as("admin_demo", "admin")
+    r = TestClient(app).put(
+        f"/admin/users/{kc.test_id}/research-exclusion",
+        json={"excluded": True, "reason": "test_account"},
+    )
+    assert r.status_code == 503
+    rows = _audit("ADMIN_USER_RESEARCH_EXCLUDE")
+    assert [(r["student_id"], r["result"]) for r in rows] == [("owner_test", "FAILED")]
+    assert rows[0]["detail"].endswith("reason=test_account reason=db")

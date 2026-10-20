@@ -43,7 +43,13 @@ All five routes use `verify_token` followed by `require_role(["admin"])`.
 | `DELETE` | `/admin/users/{id}/mfa` | none | **200** `User` |
 | `PUT` | `/admin/users/{id}/research-exclusion` | `{ "excluded": bool, "reason": "test_account" \| "team_member" \| "other" }` (reason required when excluding) | **200** `User` |
 
-`research-exclusion` writes only the local `research_exclusions` table (schema v16), not Keycloak. It leaves the account out of the knowledge-gain export. It is allowed on any account, including the caller's own, and audited as `ADMIN_USER_RESEARCH_EXCLUDE` / `ADMIN_USER_RESEARCH_INCLUDE`. Every `User` payload also carries `research_excluded` (bool) and `research_exclusion_reason`.
+`research-exclusion` writes only the local `research_exclusions` table (schema v16), not Keycloak. It leaves the account out of the knowledge-gain export. It is allowed on any account, including the caller's own, and audited as `ADMIN_USER_RESEARCH_EXCLUDE` / `ADMIN_USER_RESEARCH_INCLUDE`. Every `User` payload also carries `research_excluded` (bool) and `research_exclusion_reason`. If the database write fails, the route returns **503** and writes a `FAILED` audit row with `reason=db`.
+
+An account that was already deleted from Keycloak can't be marked in Admin → Users. To leave its rows out of the export, insert the row by hand on the host:
+
+```sql
+INSERT INTO research_exclusions (student_id, reason, excluded_by) VALUES ('<username>', 'test_account', '<admin>');
+```
 
 `{id}` is the Keycloak user UUID taken from `User.id`, not the username. `max` is capped at 200. `search` matches Keycloak's username, email and name search.
 
