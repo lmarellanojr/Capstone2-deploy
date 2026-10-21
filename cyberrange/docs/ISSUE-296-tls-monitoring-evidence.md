@@ -101,7 +101,16 @@ _Pending: not run._
 Use a disposable student account (not a UAT participant), one lab, then end it.
 
 1. Provision one lab as the disposable student.
-2. `grep -E 'WAZUH_ENROLL_(OK|FAIL)|WAZUH_STALE_AGENT' <audit log>` for that student. Expect `WAZUH_ENROLL_OK ... agents={...}`.
+2. Read the enrollment event from the `audit_log` **table**. It is not written to any log file: `log_event` inserts into `audit_log` (`cyberrange/src/provisioning/db.py:27-41`), so grepping a log file finds nothing. Use the admin read API:
+   ```bash
+   curl -sS -H "Authorization: Bearer <admin token>" \
+     'https://<portal>/admin/audit-log?event_types=WAZUH_ENROLL_OK,WAZUH_ENROLL_FAIL&student_id=<test student>'
+   ```
+   If the API isn't reachable, read the table with Python stdlib (no `sqlite3` CLI needed on the host):
+   ```bash
+   ~/cyberrange/.venv/bin/python -c "import sqlite3,os; c=sqlite3.connect(os.getenv('DB_PATH','/home/llms_admin/cyberrange-data/pod_mgmt.db')); c.row_factory=sqlite3.Row; [print(dict(r)) for r in c.execute(\"SELECT timestamp,event_type,detail FROM audit_log WHERE student_id=? AND event_type IN ('WAZUH_ENROLL_OK','WAZUH_ENROLL_FAIL') ORDER BY id DESC LIMIT 5\", ('<test student>',)).fetchall()]" 2>&1
+   ```
+   Expect a `WAZUH_ENROLL_OK` row with `... agents={...}`. The `timestamp` column is UTC (SQLite `CURRENT_TIMESTAMP`, `cyberrange/src/provisioning/schema/v1.sql:37`); add 8 h for Asia/Manila when recording.
 3. `lxc exec wazuh-manager -- /var/ossec/bin/agent_control -l`. Expect the lab's agents as `Active`.
 4. Trigger one alert the student view should show (for example a failed SSH login) and confirm it appears in the portal SIEM panel.
 5. End the session, then re-run step 3. Expect the lab's agents to be gone.
