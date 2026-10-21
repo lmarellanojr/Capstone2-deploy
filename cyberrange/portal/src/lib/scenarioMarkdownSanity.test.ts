@@ -84,18 +84,18 @@ describe('Scenario 2 Markdown Sanity', () => {
     for (const taskNumber of [1, 2, 3, 4, 5]) {
       const task = extractTaskSection(content, taskNumber)
       expect(task).not.toBeNull()
-      expect(task).toContain('**Goal:**')
-      expect(task).toContain('**Where to work:**')
-      expect(task).toContain('**Expected result:**')
-      expect(task).toContain('**Done when:**')
+      expect(task).toMatch(/^\*\*Goal:\*\*/m)
+      expect(task).toMatch(/^\*\*Where to work:\*\*/m)
+      expect(task).toMatch(/^\*\*Expected result:\*\*/m)
+      expect(task).toMatch(/^\*\*Done when:\*\*/m)
     }
   })
 
   it('keeps Troubleshooting blockquotes on the tasks that have them', () => {
     const content = fs.readFileSync(filePath, 'utf-8')
-    const matches = content.match(/^> \*\*Troubleshooting:\*\*/gm)
-    expect(matches).not.toBeNull()
-    expect(matches!.length).toBeGreaterThanOrEqual(4)
+    for (const taskNumber of [1, 2, 4, 5]) {
+      expect(extractTaskSection(content, taskNumber)).toMatch(/^> \*\*Troubleshooting:\*\*/m)
+    }
   })
 
   it('keeps DVWA credentials visible in the first task walkthrough', () => {
