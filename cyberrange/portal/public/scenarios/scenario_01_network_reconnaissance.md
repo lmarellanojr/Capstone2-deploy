@@ -129,6 +129,8 @@ msfconsole -q
 
 Run **one command at a time**, pressing Enter after each. All blocks in this step belong in **msfconsole**, not a Linux shell.
 
+> **Scoring detail:** type `run` yourself at the `msf6 exploit(multi/http/tomcat_mgr_deploy) >` prompt in this Kali pane, and leave msfconsole open there. The checker credits only a session opened from that prompt, so a one-line `msfconsole -x "..."` command, a resource script, or a session started in another terminal is not credited.
+
 Inside msfconsole, select the module:
 
 ```bash
