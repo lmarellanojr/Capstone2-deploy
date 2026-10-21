@@ -81,7 +81,7 @@ if mode == "lxc":
     sys.exit(rc)
 
 # mode == "curl"
-method, cfg, out, fmt, url, body = "GET", None, None, None, None, None
+method, cfg, out, fmt, url, body, cacert = "GET", None, None, None, None, None, None
 i = 0
 while i < len(args):
     a = args[i]
@@ -89,10 +89,12 @@ while i < len(args):
     elif a == "-K": cfg = args[i + 1]; i += 2
     elif a == "-o": out = args[i + 1]; i += 2
     elif a == "-w": fmt = args[i + 1]; i += 2
-    elif a in ("--cacert", "-H"): i += 2
+    elif a == "--cacert": cacert = args[i + 1]; i += 2
+    elif a == "-H": i += 2
     elif a == "--data-binary": body = open(args[i + 1][1:]).read(); i += 2
     elif a.startswith("http"): url = a; i += 1
     else: i += 1
+st.setdefault("cacerts", []).append(cacert)
 cfgtext = open(cfg).read() if cfg else ""
 m = re.search(r'Bearer tok-(\S+?)"', cfgtext)
 actor = m.group(1) if m else None
@@ -169,6 +171,7 @@ def host(tmp_path):
     run.seed = seed
     run.state = lambda: json.loads(state.read_text())
     run.secrets_file = root / "secrets" / "wazuh-builtin-credentials.env"
+    run.root = root
     return run
 
 
@@ -212,11 +215,17 @@ def test_no_listener_after_restart_aborts(host):
     assert res.returncode != 0 and "did not come back up" in res.stderr
 
 
-def test_a_rejected_new_password_aborts_and_writes_no_secret(host):
+def test_a_rejected_new_password_aborts_but_the_secret_was_saved_first(host):
+    # Write-ahead (#286 review): the new passwords are persisted BEFORE being applied, so a
+    # rotation that fails verification aborts WITHOUT stranding us. The file must exist and
+    # be marked pending; it must still not leak any value to stdout/stderr.
     res = host(FAKE_PUT_NOOP="1")
     assert res.returncode != 0
     assert "new password" in res.stderr
-    assert not host.secrets_file.exists()
+    assert host.secrets_file.exists(), "new passwords must be saved before they are applied"
+    text = host.secrets_file.read_text()
+    assert "PENDING VERIFICATION" in text
+    assert "WAZUH_ADMIN_PW=" in text and "WAZUH_WUI_PW=" in text
 
 
 def test_never_prints_a_password(host):
@@ -240,6 +249,8 @@ def test_secrets_file_is_mode_600_and_holds_the_new_passwords(host):
     assert env["WAZUH_WUI_PW"] == st["users"]["wazuh-wui"]["password"]
     # the recorded secrets are the new ones, not the old defaults
     assert env["WAZUH_ADMIN_PW"] != ADMIN_PW and env["WAZUH_WUI_PW"] != "wazuh-wui"
+    # after a clean run the file is marked verified, not left pending
+    assert "VERIFIED" in text
 
 
 def test_rerun_is_safe_and_does_not_duplicate_the_host_key(host):
@@ -282,3 +293,28 @@ def test_wrong_admin_password_is_reported_and_rotates_nothing(host):
     assert "wrong" not in res.stdout + res.stderr.replace("wrong password", "")
     assert host.state()["users"]["wazuh-wui"]["password"] == "wazuh-wui"
     assert not host.secrets_file.exists()
+
+
+def test_preflight_aborts_before_touching_api_yaml(host):
+    # #286 review: a wrong CA / password must fail the pre-flight BEFORE api.yaml is edited
+    # or the manager restarted, instead of surfacing as a misleading error afterwards.
+    host.seed(bind="0.0.0.0")  # would otherwise need a rewrite + restart
+    res = host(admin_pw="wrong")
+    assert res.returncode != 0 and "could not authenticate" in res.stderr
+    st = host.state()
+    assert not st["backups"], "api.yaml must not be backed up/rewritten before auth succeeds"
+    touched = [c for c in st["calls"] if c[0] == "lxc" and c[1] in ("tee", "systemctl")]
+    assert not touched, "the manager must not be rewritten/restarted before auth succeeds"
+    assert st["users"]["wazuh"]["password"] == ADMIN_PW
+    assert not host.secrets_file.exists()
+
+
+def test_prefers_internal_ca_cert_when_present(host):
+    # #286 review: when the #168 internal CA (certs/wazuh-api-ca.crt) is installed, the
+    # script must verify against it by default, like pull_release.sh, not the old leaf pin.
+    (host.root / "certs" / "wazuh-api-ca.crt").write_text("fake-ca")
+    res = host()
+    assert res.returncode == 0, res.stderr
+    cacerts = [c for c in host.state().get("cacerts", []) if c]
+    assert cacerts, "every API call should pass --cacert"
+    assert all(c.endswith("wazuh-api-ca.crt") for c in cacerts), cacerts

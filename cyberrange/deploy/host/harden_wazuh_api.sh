@@ -35,7 +35,18 @@ umask 077
 
 ROOT="${CYBERRANGE_ROOT:-/home/llms_admin/cyberrange}"
 WZ="${WAZUH_API_URL:-https://localhost:55000}"
-CA="${WAZUH_CA_BUNDLE:-${ROOT}/certs/wazuh-api.crt}"
+# Prefer the #168 internal CA when it is present, exactly like pull_release.sh's
+# smoke_wazuh_ca does; fall back to the transitional leaf pin only when it is absent.
+# On a host with the internal CA installed, the manager presents a cert that chains to
+# wazuh-api-ca.crt, so verifying against the old leaf pin would fail every login.
+CA="${WAZUH_CA_BUNDLE:-}"
+if [ -z "$CA" ]; then
+  if [ -f "${ROOT}/certs/wazuh-api-ca.crt" ]; then
+    CA="${ROOT}/certs/wazuh-api-ca.crt"
+  else
+    CA="${ROOT}/certs/wazuh-api.crt"
+  fi
+fi
 CONTAINER="${WAZUH_CONTAINER:-wazuh-manager}"
 API_YAML="${WAZUH_API_YAML:-/var/ossec/api/configuration/api.yaml}"
 SECRETS_FILE="${WAZUH_BUILTIN_SECRETS_FILE:-${ROOT}/secrets/wazuh-builtin-credentials.env}"
@@ -117,6 +128,14 @@ sys.exit(0)
 PYEOF
 }
 
+# --- 0. pre-flight: prove the CA and the current password work BEFORE touching anything -
+# The API is reachable on https://localhost:55000 whether it binds 0.0.0.0 or 127.0.0.1, so
+# this catches a wrong CA bundle or a wrong/expired admin password up front -- before we edit
+# api.yaml or restart the manager -- instead of surfacing as a misleading failure afterwards.
+if [ -z "$(authenticate "$ADMIN_USER" "$ADMIN_PW")" ]; then
+  die "could not authenticate as ${ADMIN_USER} against ${WZ} before making any change (wrong password, or CA/URL problem); nothing was modified"
+fi
+
 # --- 1. make the API listen on loopback -------------------------------------------------
 BEFORE="$(listener_lines)"
 echo "harden_wazuh_api: listener on :55000 before change:"
@@ -177,35 +196,30 @@ new_password() { printf '%sAa1!' "$(openssl rand -base64 24 | tr -d '\r\n')"; }
 set_password() {  # $1 user-id  $2 password (via stdin, never argv)
   api admin.cfg PUT "/security/users/$1" \
     "$("$PY" -c 'import json,sys; print(json.dumps({"password": sys.stdin.read().rstrip(chr(10))}))' <<<"$2")" >/dev/null
-  [ "$(status)" = 200 ] || die "could not set the password for user id $1 (HTTP $(status))"
+  [ "$(status)" = 200 ] || die "could not set the password for user id $1 (HTTP $(status)); the intended new passwords are already saved (pending) in ${SECRETS_FILE}"
 }
 
-NEW_WUI_PW="$(new_password)"
-NEW_ADMIN_PW="$(new_password)"
-# Rotate wazuh-wui first and the admin (our token's user) last; the JWT stays valid either way.
-set_password "$WUI_ID" "$NEW_WUI_PW"
-set_password "$ADMIN_ID" "$NEW_ADMIN_PW"
-
-# --- 3. prove new credentials work and old/default ones are rejected --------------------
-check_rotation() {  # $1 user  $2 new-pw  $3 old-pw
-  [ -n "$(authenticate "$1" "$2")" ] || die "rotation failed: ${1} is rejected with its new password"
-  [ -z "$(authenticate "$1" "$3")" ] || die "rotation failed: ${1} still accepts the old password"
-}
-check_rotation "$WUI_USER"   "$NEW_WUI_PW"   "$WUI_OLD_PW"
-check_rotation "$ADMIN_USER" "$NEW_ADMIN_PW" "$ADMIN_PW"
-unset ADMIN_PW
-
-# --- 4. record the new passwords outside the repo, mode 600 (never printed) -------------
-mkdir -p "$(dirname "$SECRETS_FILE")"
-NEW_ADMIN_PW="$NEW_ADMIN_PW" NEW_WUI_PW="$NEW_WUI_PW" ADMIN_USER="$ADMIN_USER" WUI_USER="$WUI_USER" \
-SECRETS_FILE="$SECRETS_FILE" "$PY" - <<'PYEOF'
+# write_secrets <status>: write the mode-600 file OUTSIDE the repo (never printed). Called
+# with "pending" BEFORE the passwords are applied -- so a failure between the two PUTs or
+# during verification never loses a credential and locks us out -- and again with "verified"
+# once both are proven. (#286 review: write-ahead instead of write-at-the-end.)
+write_secrets() {  # $1 status: pending | verified
+  mkdir -p "$(dirname "$SECRETS_FILE")"
+  STATUS="$1" NEW_ADMIN_PW="$NEW_ADMIN_PW" NEW_WUI_PW="$NEW_WUI_PW" \
+  ADMIN_USER="$ADMIN_USER" WUI_USER="$WUI_USER" SECRETS_FILE="$SECRETS_FILE" "$PY" - <<'PYEOF'
 import os, time
 path = os.environ["SECRETS_FILE"]
+note = {
+    "pending": ("PENDING VERIFICATION -- written before these passwords were applied to the\n"
+                "# manager. If the run aborted, these are the values now in use (or to restore)."),
+    "verified": "VERIFIED -- both new passwords were accepted and the old/default ones rejected.",
+}[os.environ["STATUS"]]
 body = (
     "# Wazuh built-in API account passwords rotated by harden_wazuh_api.sh (#286).\n"
+    "# Status: %s\n"
     "# Not used at runtime (scoring=`scoring`, cleanup=`provisioner`). Copy into your\n"
-    "# secret store and delete this file if you prefer. Rotated %s UTC.\n"
-    % time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    "# secret store and delete this file if you prefer. Written %s UTC.\n"
+    % (note, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
 )
 body += "WAZUH_ADMIN_USER=%s\n" % os.environ["ADMIN_USER"]
 body += "WAZUH_ADMIN_PW=%s\n" % os.environ["NEW_ADMIN_PW"]
@@ -218,6 +232,29 @@ with os.fdopen(fd, "w", encoding="utf-8") as f:
 os.replace(tmp, path)
 os.chmod(path, 0o600)
 PYEOF
+}
+
+NEW_WUI_PW="$(new_password)"
+NEW_ADMIN_PW="$(new_password)"
+# Persist the new passwords BEFORE applying them, so an abort mid-rotation never strands us
+# without the credentials that are now live on the manager. Marked pending until proven.
+write_secrets pending
+
+# Rotate wazuh-wui first and the admin (our token's user) last; the JWT stays valid either way.
+set_password "$WUI_ID" "$NEW_WUI_PW"
+set_password "$ADMIN_ID" "$NEW_ADMIN_PW"
+
+# --- 3. prove new credentials work and old/default ones are rejected --------------------
+check_rotation() {  # $1 user  $2 new-pw  $3 old-pw
+  [ -n "$(authenticate "$1" "$2")" ] || die "rotation failed: ${1} is rejected with its new password; the new password is saved (pending) in ${SECRETS_FILE} and may already be live on the manager"
+  [ -z "$(authenticate "$1" "$3")" ] || die "rotation failed: ${1} still accepts the old password; new passwords saved (pending) in ${SECRETS_FILE}"
+}
+check_rotation "$WUI_USER"   "$NEW_WUI_PW"   "$WUI_OLD_PW"
+check_rotation "$ADMIN_USER" "$NEW_ADMIN_PW" "$ADMIN_PW"
+unset ADMIN_PW
+
+# --- 4. mark the recorded passwords verified --------------------------------------------
+write_secrets verified
 
 echo "harden_wazuh_api: done. The API listens on loopback only, and ${ADMIN_USER} and ${WUI_USER}"
 echo "were rotated (new password accepted, old/default rejected)."

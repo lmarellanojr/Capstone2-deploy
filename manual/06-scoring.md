@@ -178,23 +178,36 @@ curl -s --cacert "$CA" -H "Authorization: Bearer $ADMIN_TOKEN" \
   | python3 -c 'import sys,json; [print(u["id"], u["username"]) for u in json.load(sys.stdin)["data"]["affected_items"]]'
 ```
 
-Rotate each one. Keep the password out of `argv` — write it to a curl config file,
-not the command line:
+Rotate each one. Two rules: **save the new password to a private file outside the
+repo _before_ you apply it** (if a later step fails you must not be locked out), and
+**keep the password off `argv`** — pass it through a curl config file with `-K`, never
+`-u user:pass`, because anything on the command line is visible to other users in `ps`.
+This is the same mode-600 file the script writes.
 
 ```bash
+umask 077
+SECRETS_FILE=~/cyberrange/secrets/wazuh-builtin-credentials.env   # outside the repo, mode 600
+mkdir -p "$(dirname "$SECRETS_FILE")"; : > "$SECRETS_FILE"
+
 for who in wazuh wazuh-wui; do
   uid=$(curl -s --cacert "$CA" -H "Authorization: Bearer $ADMIN_TOKEN" \
     "$WZ/security/users?limit=500" \
     | python3 -c "import sys,json; print(next(u['id'] for u in json.load(sys.stdin)['data']['affected_items'] if u['username']=='$who'))")
   newpw="$(openssl rand -base64 24)Aa1!"
+  # Save it BEFORE applying it, so a failure mid-rotation never loses the live password.
+  case "$who" in
+    wazuh)     printf 'WAZUH_ADMIN_PW=%s\n' "$newpw" >> "$SECRETS_FILE" ;;
+    wazuh-wui) printf 'WAZUH_WUI_PW=%s\n'   "$newpw" >> "$SECRETS_FILE" ;;
+  esac
   printf '{"password": %s}' "$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip()))' <<<"$newpw")" > /tmp/body.json
   curl -s -X PUT "$WZ/security/users/$uid" --cacert "$CA" \
     -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
     --data-binary @/tmp/body.json >/dev/null
   rm -f /tmp/body.json
-  # New password authenticates (token), old/default is rejected (401).
-  echo -n "$who new → "; curl -s -o /dev/null -w '%{http_code}\n' -u "$who:$newpw" --cacert "$CA" "$WZ/security/user/authenticate"
-  echo "store $who password in your secret store"   # never echo the value itself
+  # New password authenticates (token). Login goes through a -K config, not argv.
+  printf 'user = "%s:%s"\n' "$who" "$newpw" > /tmp/auth.cfg
+  echo -n "$who new → "; curl -s -o /dev/null -w '%{http_code}\n' -K /tmp/auth.cfg --cacert "$CA" "$WZ/security/user/authenticate"
+  rm -f /tmp/auth.cfg
 done
 
 # The default must now fail.
@@ -202,8 +215,10 @@ curl -s -o /dev/null -w 'wazuh-wui default → %{http_code}\n' -u 'wazuh-wui:waz
 # → 401
 ```
 
-Store both passwords wherever you keep the deployment's other secrets. Neither is
-needed again in normal operation.
+Both new passwords are now in `$SECRETS_FILE` (mode 600). Move them into wherever you
+keep the deployment's other secrets and delete the file; the new `wazuh` password is
+the one you pass to `setup_wazuh_provisioner.sh` as `WAZUH_ADMIN_PW` in Step 3b.
+Neither built-in password is needed again in normal operation.
 
 ---
 
