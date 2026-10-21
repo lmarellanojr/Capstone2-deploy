@@ -68,7 +68,7 @@ describe('Scenario 2 Markdown Sanity', () => {
       if (inCodeFence) return
 
       if (
-        /^(What you can do with this|About `-- -`|What you'll see|Reflected vs stored XSS|So the result has to actually appear)\b/i.test(
+        /^(\*\*)?(What you can do with this|About `-- -`|What you'll see|Reflected vs stored XSS|So the result has to actually appear|DVWA sign-in|Troubleshooting)\b/i.test(
           trimmed
         )
       ) {
@@ -79,11 +79,23 @@ describe('Scenario 2 Markdown Sanity', () => {
     expect(unformattedLines).toEqual([])
   })
 
-  it('contains proper blockquotes for What you can do with this', () => {
+  it('gives every task a Goal, Where to work, Expected result, and Done when', () => {
     const content = fs.readFileSync(filePath, 'utf-8')
-    const matches = content.match(/> \*\*What you can do with this:\*\*/g)
-    expect(matches).not.toBeNull()
-    expect(matches!.length).toBeGreaterThanOrEqual(4)
+    for (const taskNumber of [1, 2, 3, 4, 5]) {
+      const task = extractTaskSection(content, taskNumber)
+      expect(task).not.toBeNull()
+      expect(task).toMatch(/^\*\*Goal:\*\*/m)
+      expect(task).toMatch(/^\*\*Where to work:\*\*/m)
+      expect(task).toMatch(/^\*\*Expected result:\*\*/m)
+      expect(task).toMatch(/^\*\*Done when:\*\*/m)
+    }
+  })
+
+  it('keeps Troubleshooting blockquotes on the tasks that have them', () => {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    for (const taskNumber of [1, 2, 4, 5]) {
+      expect(extractTaskSection(content, taskNumber)).toMatch(/^> \*\*Troubleshooting:\*\*/m)
+    }
   })
 
   it('keeps DVWA credentials visible in the first task walkthrough', () => {
