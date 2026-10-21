@@ -403,6 +403,8 @@ write_files:
                 missing = [role for role in roles if role not in agent_ids]
                 raise AgentNotConnected(f"not enrolled: {missing}")
             if roles:
+                # On top of the ~45s id lookup above. Worst case is about 135s.
+                # That wait is accepted: a disconnected agent must not become ACTIVE.
                 timeout_s = float(os.getenv("WAZUH_AGENT_CONNECT_TIMEOUT_S", "90"))
                 wait_for_agents_active(token, agent_ids, timeout_s=timeout_s)
             enrolled = json.dumps(agent_ids) if agent_ids else None

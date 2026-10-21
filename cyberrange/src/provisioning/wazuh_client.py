@@ -75,10 +75,9 @@ def _authenticate(user: str, password: str, timeout=None) -> str:
 
 
 def get_wazuh_token(timeout=None):
-    # Fail closed rather than sending empty or half-configured credentials.
-    # The enrolment caller in provision.py catches Exception and continues, so
-    # an unconfigured host logs WAZUH_ENROLL_FAIL and still provisions -- it
-    # just does no scoring.
+    # Missing credentials raise RuntimeError. finish_enroll still lets that
+    # host provision (WAZUH_ENROLL_FAIL, pod can become ACTIVE, no scoring).
+    # TLS failures and HTTP 401/403 do not: those become AgentNotConnected.
     if not WAZUH_USER or not WAZUH_PASS:
         raise RuntimeError(
             "Wazuh scoring is not configured: set WAZUH_SCORING_USER and "
@@ -280,6 +279,19 @@ def finish_enroll(student_id: str, pod_id: int, enroll, log_event, log_warning):
     except AgentNotConnected as e:
         log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))
         raise
+    except requests.exceptions.SSLError as e:
+        # A TLS failure used to be swallowed here, and the pod still became
+        # ACTIVE with no agent. That is the #168 symptom.
+        log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=f"tls: {e}")
+        raise AgentNotConnected(f"tls: {e}") from e
+    except requests.exceptions.HTTPError as e:
+        code = e.response.status_code if e.response is not None else 0
+        if code in (401, 403):
+            log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=f"auth HTTP {code}")
+            raise AgentNotConnected(f"auth HTTP {code}") from e
+        log_warning(f"Wazuh enroll skipped/failed: {e}")
+        log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))
+        return None
     except Exception as e:
         log_warning(f"Wazuh enroll skipped/failed: {e}")
         log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))

@@ -303,6 +303,41 @@ def test_enroll_handler_reraises_stale_and_swallows_other_errors():
     assert "disconnected" in events[0][3]
 
 
+def test_enroll_handler_reraises_tls_and_auth_errors():
+    events = []
+
+    def log_event(event_type, student_id=None, pod_id=None, **kwargs):
+        events.append((event_type, kwargs.get("detail")))
+
+    def tls():
+        raise wc.requests.exceptions.SSLError("bad cert")
+
+    with pytest.raises(wc.AgentNotConnected, match="tls:"):
+        wc.finish_enroll("alice", 1, tls, log_event, lambda message: None)
+    assert events == [("WAZUH_ENROLL_FAIL", "tls: bad cert")]
+
+    events.clear()
+
+    def auth():
+        err = wc.requests.exceptions.HTTPError("unauthorized")
+        err.response = type("R", (), {"status_code": 401})()
+        raise err
+
+    with pytest.raises(wc.AgentNotConnected, match="auth HTTP 401"):
+        wc.finish_enroll("alice", 1, auth, log_event, lambda message: None)
+    assert events[0] == ("WAZUH_ENROLL_FAIL", "auth HTTP 401")
+
+    events.clear()
+
+    def other_http():
+        err = wc.requests.exceptions.HTTPError("busy")
+        err.response = type("R", (), {"status_code": 500})()
+        raise err
+
+    assert wc.finish_enroll("alice", 1, other_http, log_event, lambda message: None) is None
+    assert events[0][0] == "WAZUH_ENROLL_FAIL"
+
+
 def test_wait_for_agents_active_times_out_while_disconnected():
     clock = {"now": 0.0}
 
