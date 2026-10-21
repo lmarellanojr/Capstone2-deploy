@@ -137,20 +137,88 @@ The agent listing should show agent **000**, `wazuh-manager`, `active`.
 
 ---
 
-## Step 2: Rotate the built-in account
+## Step 2: Bind the API to loopback and rotate the built-in accounts
 
 You just used `wazuh:wazuh`, a published default, on a host that will be reachable
-through a tunnel. Change it now.
+through a tunnel. There is also a second built-in account, `wazuh-wui`, with the
+default password `wazuh-wui`. And a stock install binds the API to `0.0.0.0:55000`
+inside the container, so a pod on mon-net can reach it directly. Close all three
+now (#286).
+
+### 2a. The supported path — run the script
+
+`deploy/host/harden_wazuh_api.sh` does the whole step idempotently: it records the
+current listener, sets `host: 127.0.0.1` in `api.yaml`, restarts the manager, and
+refuses to go on unless the only `:55000` listener left is loopback. It then rotates
+**both** `wazuh` and `wazuh-wui` — looked up **by username**, not by a hard-coded id —
+proves each new password gets a token while the old/default one is rejected, and
+writes the two new passwords to a mode-600 file outside the repo. It never prints a
+password.
 
 ```bash
-curl -s -X PUT "$WZ/security/users/1" --cacert "$CA" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d "{\"password\": \"$(openssl rand -base64 24)\"}"
+read -rs WAZUH_ADMIN_PW; export WAZUH_ADMIN_PW   # the current `wazuh` password; not echoed
+~/cyberrange/deploy/host/harden_wazuh_api.sh
+unset WAZUH_ADMIN_PW
 ```
 
-Store that password wherever you keep the deployment's other secrets. It is not
-needed again in normal operation.
+It prints the path of the file holding the new passwords
+(`~/cyberrange/secrets/wazuh-builtin-credentials.env` by default). Move them into
+your secret store and delete the file. The new `wazuh` password is the one you pass
+to `setup_wazuh_provisioner.sh` as `WAZUH_ADMIN_PW` in Step 3b; neither built-in
+password is used at runtime.
+
+### 2b. By hand (if you are not running the script)
+
+Read the user ids back by **username** — do not assume `wazuh` is id 1 and
+`wazuh-wui` is id 2:
+
+```bash
+curl -s --cacert "$CA" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$WZ/security/users?limit=500" \
+  | python3 -c 'import sys,json; [print(u["id"], u["username"]) for u in json.load(sys.stdin)["data"]["affected_items"]]'
+```
+
+Rotate each one. Two rules: **save the new password to a private file outside the
+repo _before_ you apply it** (if a later step fails you must not be locked out), and
+**keep the password off `argv`** — pass it through a curl config file with `-K`, never
+`-u user:pass`, because anything on the command line is visible to other users in `ps`.
+This is the same mode-600 file the script writes.
+
+```bash
+umask 077
+SECRETS_FILE=~/cyberrange/secrets/wazuh-builtin-credentials.env   # outside the repo, mode 600
+mkdir -p "$(dirname "$SECRETS_FILE")"; : > "$SECRETS_FILE"
+
+for who in wazuh wazuh-wui; do
+  uid=$(curl -s --cacert "$CA" -H "Authorization: Bearer $ADMIN_TOKEN" \
+    "$WZ/security/users?limit=500" \
+    | python3 -c "import sys,json; print(next(u['id'] for u in json.load(sys.stdin)['data']['affected_items'] if u['username']=='$who'))")
+  newpw="$(openssl rand -base64 24)Aa1!"
+  # Save it BEFORE applying it, so a failure mid-rotation never loses the live password.
+  case "$who" in
+    wazuh)     printf 'WAZUH_ADMIN_PW=%s\n' "$newpw" >> "$SECRETS_FILE" ;;
+    wazuh-wui) printf 'WAZUH_WUI_PW=%s\n'   "$newpw" >> "$SECRETS_FILE" ;;
+  esac
+  printf '{"password": %s}' "$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip()))' <<<"$newpw")" > /tmp/body.json
+  curl -s -X PUT "$WZ/security/users/$uid" --cacert "$CA" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @/tmp/body.json >/dev/null
+  rm -f /tmp/body.json
+  # New password authenticates (token). Login goes through a -K config, not argv.
+  printf 'user = "%s:%s"\n' "$who" "$newpw" > /tmp/auth.cfg
+  echo -n "$who new → "; curl -s -o /dev/null -w '%{http_code}\n' -K /tmp/auth.cfg --cacert "$CA" "$WZ/security/user/authenticate"
+  rm -f /tmp/auth.cfg
+done
+
+# The default must now fail.
+curl -s -o /dev/null -w 'wazuh-wui default → %{http_code}\n' -u 'wazuh-wui:wazuh-wui' --cacert "$CA" "$WZ/security/user/authenticate"
+# → 401
+```
+
+Both new passwords are now in `$SECRETS_FILE` (mode 600). Move them into wherever you
+keep the deployment's other secrets and delete the file; the new `wazuh` password is
+the one you pass to `setup_wazuh_provisioner.sh` as `WAZUH_ADMIN_PW` in Step 3b.
+Neither built-in password is needed again in normal operation.
 
 ---
 
