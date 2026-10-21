@@ -386,10 +386,39 @@ lxc exec wazuh-manager -- bash -c 'ls /var/ossec/tmp | wc -l'      # → 0
 > despite looking disabled. Force every `<enabled>` inside the block to `no`, then
 > confirm `/var/ossec/tmp` stays empty.
 
-### 4d. Expose the API to the host
+### 4d. Bind the API to loopback inside the container
 
-The API listens on `127.0.0.1:55000` inside the container. Publish it to the host
-loopback with an LXD proxy device — not to `0.0.0.0`, and not through the VCN.
+A stock Wazuh 4.7.x install binds the API to `0.0.0.0:55000` inside the container,
+so it is reachable on the manager's mon-net address (`10.0.40.10:55000`) by anything
+peered to that network — including student pods, which have no egress ACL yet (#285).
+Pin the listener to loopback first; the proxy below then re-exposes it only on the
+host's own loopback (#286).
+
+```bash
+# Record the current listener before changing anything (evidence).
+lxc exec wazuh-manager -- ss -ltnp | grep 55000
+
+# Set host: 127.0.0.1 in api.yaml, then restart the manager.
+lxc exec wazuh-manager -- bash -c '
+  f=/var/ossec/api/configuration/api.yaml
+  cp "$f" "$f.bak.$(date -u +%Y%m%d%H%M%S)"
+  sed -i "/^#\?\s*host\s*:/d" "$f"
+  sed -i "1i host: 127.0.0.1" "$f"
+  systemctl restart wazuh-manager
+'
+
+# Confirm: the only listener on :55000 is 127.0.0.1 (never 0.0.0.0 or 10.0.40.10).
+lxc exec wazuh-manager -- ss -ltnp | grep 55000
+# → LISTEN ... 127.0.0.1:55000 ...
+```
+
+> Chapter 06 Step 2 rotates the two built-in accounts and re-checks this with
+> `deploy/host/harden_wazuh_api.sh`, which does both steps idempotently. Running the
+> script there is the supported path; the manual commands above are the minimum if
+> you are doing it by hand.
+
+Now publish it to the host loopback with an LXD proxy device — not to `0.0.0.0`, and
+not through the VCN.
 
 ```bash
 lxc config device add wazuh-manager wazuh-api proxy \
