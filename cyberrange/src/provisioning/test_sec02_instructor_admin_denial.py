@@ -8,7 +8,8 @@ own account, the only Admin), it checks that:
 
   * the answer is 403 with the standard "Insufficient privileges" detail,
   * no database row changed (pods, audit_log, review_cases,
-    milestone_verification, ...), compared as a full before/after snapshot,
+    milestone_verification, research_exclusions, ...), compared as a full
+    before/after snapshot,
   * no pod teardown was scheduled (perform_destruction never called),
   * Keycloak was never touched: zero Admin API calls, not even reads, and the
     fake realm's users, roles, passwords and sessions are unchanged,
@@ -144,6 +145,17 @@ ADMIN_CASES = {
         ("read the full audit trail", "/admin/audit-log", None),
         ("read Admin user-management events", "/admin/audit-log?event_type=ADMIN_USER_ROLE_SET", None),
     ],
+    # Added for SEC-02 (#288): ADM-USER (#273/SCORE-02) served this route
+    # without SEC-02 side-effect coverage. The route writes research_exclusions
+    # and an audit row, so both must stay untouched when an Instructor is denied.
+    ("PUT", "/admin/users/{user_id}/research-exclusion"): [
+        ("exclude a Student as a test account",
+         lambda ids: f"/admin/users/{ids['student_demo']}/research-exclusion", {"excluded": True, "reason": "test_account"}),
+        ("exclude the Instructor's own account as a team member",
+         lambda ids: f"/admin/users/{ids['instructor_demo']}/research-exclusion", {"excluded": True, "reason": "team_member"}),
+        ("put an already-excluded account back into the export",
+         lambda ids: f"/admin/users/{ids['disabled_user']}/research-exclusion", {"excluded": False}),
+    ],
 }
 CASES = [(route, *case) for route, cases in ADMIN_CASES.items() for case in cases]
 CASE_IDS = [label for _, label, _, _ in CASES]
@@ -155,7 +167,7 @@ KC_API = sorted(
 )
 
 # Tables whose rows are compared before/after every denied request.
-SNAPSHOT_TABLES = ("pods", "audit_log", "review_cases", "milestone_verification")
+SNAPSHOT_TABLES = ("pods", "audit_log", "review_cases", "milestone_verification", "research_exclusions")
 
 _observed: list = []
 
@@ -232,6 +244,11 @@ def world(monkeypatch):
         )
     conn.execute(
         "INSERT INTO milestone_verification (pod_id, student_id, scenario_id, milestone_id, status) VALUES (1, 'student_demo', 1, 1, 'PASS')"
+    )
+    # An account already left out of the research export, so the "put back in"
+    # case has a real row for the Admin control to delete.
+    conn.execute(
+        "INSERT INTO research_exclusions (student_id, reason, excluded_by) VALUES ('disabled_user', 'test_account', 'admin_demo')"
     )
     conn.commit()
     conn.close()
