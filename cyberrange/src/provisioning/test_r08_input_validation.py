@@ -44,6 +44,7 @@ SHAPE_ERRORS = [
     {"student_id": "pod;rm"},
     {"student_id": ID_32 + "c"},             # 33 chars
     {"pod_id": 0},
+    {"pod_id": 2**70},                       # beyond SQLite INTEGER
     {"scenario_id": 0},
     {"scenario_id": 100},
     {"milestone_id": 0},

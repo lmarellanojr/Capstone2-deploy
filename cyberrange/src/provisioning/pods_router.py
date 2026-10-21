@@ -78,7 +78,7 @@ class BrowserScoreIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     student_id: str = Field(..., pattern=STUDENT_ID_PATTERN)
-    pod_id: int = Field(..., ge=1)
+    pod_id: int = Field(..., ge=1, le=2**63 - 1)
     scenario_id: int = Field(..., ge=1, le=99)
     milestone_id: int = Field(..., ge=1, le=10)
     label: str = Field(..., min_length=1, max_length=64)
@@ -88,7 +88,7 @@ class BrowserDiagnosticIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     student_id: str = Field(..., pattern=STUDENT_ID_PATTERN)
-    pod_id: int = Field(..., ge=1)
+    pod_id: int = Field(..., ge=1, le=2**63 - 1)
     scenario_id: int = Field(..., ge=1, le=99)
     milestone_id: int = Field(..., ge=1, le=10)
     reason: str = Field(..., min_length=1, max_length=64)
