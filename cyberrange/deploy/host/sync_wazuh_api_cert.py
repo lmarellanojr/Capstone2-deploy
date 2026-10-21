@@ -147,6 +147,27 @@ def _extract_manager_pem(lxc_bin: str = "lxc") -> bytes:
     return data[start:end] + b"\n"
 
 
+def _openssl_cert_chains(ca_pem: bytes, server_pem: bytes) -> bool:
+    """True when server_pem verifies against the CA public certificate."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ca_path = Path(tmp) / "ca.pem"
+        server_path = Path(tmp) / "server.pem"
+        ca_path.write_bytes(ca_pem)
+        server_path.write_bytes(server_pem)
+        proc = subprocess.run(
+            ["openssl", "verify", "-CAfile", str(ca_path), str(server_path)],
+            check=False,
+            capture_output=True,
+            timeout=15,
+        )
+    text = b"\n".join([proc.stdout or b"", proc.stderr or b""]).decode(
+        "utf-8", errors="replace"
+    )
+    return proc.returncode == 0 and ": OK" in text
+
+
 def sync_wazuh_api_cert(
     *,
     root: Path,
@@ -159,11 +180,31 @@ def sync_wazuh_api_cert(
     live_server_pem: Callable[..., bytes] = _live_server_pem,
     fingerprint_pem: Callable[[bytes], str] = _openssl_fingerprint,
     has_dns_localhost: Callable[[bytes], bool] = _openssl_has_dns_localhost,
+    cert_chains: Callable[[bytes, bytes], bool] = _openssl_cert_chains,
 ) -> SyncResult:
-    """Refresh root/certs/wazuh-api.crt from live manager when fingerprints match."""
+    """Refresh the host pin from the live manager.
+
+    When certs/wazuh-api-ca.crt exists (#168), the live server certificate
+    must chain to that CA. The CA file is never replaced with the leaf.
+    Without a CA file, the transitional leaf pin in wazuh-api.crt is refreshed.
+    """
     try:
         if not manager_present(lxc_bin):
             return SyncResult("skipped", "wazuh-manager LXD guest not found")
+
+        ca_path = root / "certs" / "wazuh-api-ca.crt"
+        if ca_path.is_file():
+            live = live_server_pem(connect)
+            if not cert_chains(ca_path.read_bytes(), live):
+                raise SyncError(
+                    "live manager cert does not chain to wazuh-api-ca.crt; "
+                    "refusing to replace the CA pin with the leaf"
+                )
+            return SyncResult(
+                "unchanged",
+                "live manager cert chains to the internal CA",
+                fingerprint_pem(live),
+            )
 
         extracted = extract_manager_pem(lxc_bin)
         live = live_server_pem(connect)

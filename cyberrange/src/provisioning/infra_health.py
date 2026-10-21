@@ -226,7 +226,7 @@ def classify_wazuh(
     if unreachable:
         return _row(name, UNAVAILABLE, "Wazuh manager API unreachable")
     if tls_failed:
-        return _row(name, DEGRADED, "reachable, but TLS verification failed")
+        return _row(name, DEGRADED, "Wazuh TLS-Degraded: reachable, but TLS verification failed")
     for code in (auth_status, agents_status):
         if code in _PROXY_DOWN:
             return _row(name, UNAVAILABLE, f"Wazuh manager API not responding (HTTP {code})")

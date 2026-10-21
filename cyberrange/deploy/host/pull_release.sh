@@ -23,6 +23,8 @@ restart_units() {
 # Best-effort: never fails the pull (manager stopped / proxy down → skip).
 # Fixes Admin Wazuh TLS-Degraded on every Ampere domain after Promote apply
 # (#154); complements #152 preserve-if-exists for tarball extracts.
+# When certs/wazuh-api-ca.crt exists (#168), a live cert that does not chain
+# to that CA fails this release. Hosts without the CA file stay on the leaf pin.
 sync_wazuh_api_cert() {
   local helper="${ROOT}/deploy/host/sync_wazuh_api_cert.py" rc=0
   if [ ! -f "$helper" ]; then
@@ -40,6 +42,27 @@ sync_wazuh_api_cert() {
     echo "pull-release: wazuh-api.crt sync exited $rc (non-fatal)" >&2
   fi
   return 0
+}
+
+# Fail the release when the internal CA is installed and the live manager
+# certificate does not chain to it. No CA file means the transitional leaf
+# pin is still in use, so this check does not run.
+smoke_wazuh_ca() {
+  local ca="${ROOT}/certs/wazuh-api-ca.crt" out
+  if [ ! -f "$ca" ]; then
+    return 0
+  fi
+  if ! command -v lxc >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! lxc info wazuh-manager >/dev/null 2>&1; then
+    return 0
+  fi
+  out=$(openssl s_client -connect localhost:55000 -servername localhost -CAfile "$ca" </dev/null 2>&1 || true)
+  if ! printf '%s\n' "$out" | grep -q "Verify return code: 0"; then
+    echo "pull-release: Wazuh TLS-Degraded: manager cert does not chain to $ca" >&2
+    return 1
+  fi
 }
 
 restore_snapshot() {
@@ -129,6 +152,7 @@ if [ "$APPLY_RC" -eq 2 ]; then
   echo "pull-release skip: $APPLY_OUT"
   # Still heal a mismatched host pin when the release SHA is unchanged.
   sync_wazuh_api_cert
+  smoke_wazuh_ca
   exit 0
 fi
 if [ "$APPLY_RC" -ne 0 ]; then
@@ -198,6 +222,7 @@ fi
 
 # After extract (preserve keeps a wrong pin too): align pin to live manager.
 sync_wazuh_api_cert
+smoke_wazuh_ca
 
 GOT="$("$PY" "$SYNC" --lock-hash "${ROOT}/portal/package-lock.json")"
 WANT="$("$PY" - "${WORK}/manifest.json" <<'PY'

@@ -26,7 +26,7 @@ Wazuh is **Healthy** only when all of these are true:
 |---|---|---|
 | Manager API reachable; scoring not configured | Manager answers; scoring user/password missing in the **API process** | Set creds in `.env`, restart API |
 | scoring credentials not configured … manager API unreachable | Creds missing **and** manager not answering | Start/fix manager, then set creds |
-| reachable, but TLS verification failed | Creds present; CA pin does not match live `server.crt` | Re-extract cert (§ below) |
+| Wazuh TLS-Degraded: reachable, but TLS verification failed | Creds present; the pin does not match the live certificate. With `certs/wazuh-api-ca.crt` present, the live certificate does not chain to that CA | Run `deploy/host/issue_wazuh_internal_ca.py --install` once, or re-extract the leaf pin (§ below) while the CA file is absent |
 | reachable, but the scoring credentials were rejected | Wrong user/password | Reset password / recreate scoring user (Manual 06) |
 | scoring user cannot read agents | User exists but wrong/missing role | Attach readonly role (Manual 06 §1c) |
 | manager agent reports disconnected / pending / … | Auth works; agent 000 not `active` | Fix manager agent status |

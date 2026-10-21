@@ -15,11 +15,13 @@ import lab_history
 from lab_proxy import add_dvwa_http_proxy, remove_dvwa_http_proxy
 from pod_net import create_pod_network, delete_pod_network, pod_net_name, pod_subnet
 from wazuh_client import (
+    AgentNotConnected,
     abort_if_names_remain,
     deregister_agents,
     finish_enroll,
     get_agent_id_by_name,
     get_wazuh_token,
+    wait_for_agents_active,
 )
 
 logger = logging.getLogger("provision_api")
@@ -397,6 +399,12 @@ write_files:
                 if len(agent_ids) == len(roles):
                     break
                 time.sleep(5)
+            if roles and len(agent_ids) != len(roles):
+                missing = [role for role in roles if role not in agent_ids]
+                raise AgentNotConnected(f"not enrolled: {missing}")
+            if roles:
+                timeout_s = float(os.getenv("WAZUH_AGENT_CONNECT_TIMEOUT_S", "90"))
+                wait_for_agents_active(token, agent_ids, timeout_s=timeout_s)
             enrolled = json.dumps(agent_ids) if agent_ids else None
             log_event("WAZUH_ENROLL_OK", student_id, pod_id, detail=f"manager={manager_ip} agents={agent_ids}")
             return enrolled
