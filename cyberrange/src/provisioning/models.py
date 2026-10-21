@@ -1,7 +1,7 @@
 """Pydantic request/response models."""
 from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # student_id is embedded unvalidated into LXD instance names
 # (pod-{student_id}-kali/meta/dvwa), cloud-config content, /etc/sudoers.d
@@ -132,6 +132,8 @@ class KnowledgeGainExportResponse(BaseModel):
 
 
 class FlagSubmissionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     milestone_id: int = Field(..., ge=1, le=10)
     flag: str = Field(..., min_length=1, max_length=256)
 

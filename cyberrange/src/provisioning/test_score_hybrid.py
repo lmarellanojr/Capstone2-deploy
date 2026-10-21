@@ -549,7 +549,7 @@ def test_tc_s12_10_conflict_routed_to_inst_03_queue_and_resolved(client, hybrid_
 # ---------------------------------------------------------------------------
 
 def test_flag_submit_cannot_impersonate_another_student(client, hybrid_db: str):
-    """Smuggling student_id in body must be ignored."""
+    """Smuggling student_id in the body is rejected (R-8 extra="forbid") and writes nothing."""
     set_caller(app, "student_shekinah", "student")
     insert_test_pod(hybrid_db, "student_shekinah", scenario_id=1, pod_id=101)
     insert_test_pod(hybrid_db, "student_victim", scenario_id=1, pod_id=999)
@@ -564,7 +564,7 @@ def test_flag_submit_cannot_impersonate_another_student(client, hybrid_db: str):
             "flag": flag_victim,
         },
     )
-    assert res.status_code == 200
+    assert res.status_code == 422
 
     # Ensure review or verification row belongs to caller 'student_shekinah', NEVER 'student_victim'
     conn = sqlite3.connect(hybrid_db)
