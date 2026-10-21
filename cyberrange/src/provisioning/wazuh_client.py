@@ -2,6 +2,7 @@
 import json
 import logging
 import re
+import time
 
 import requests
 
@@ -18,6 +19,11 @@ from config import (
 from db import log_event
 
 logger = logging.getLogger("provision_api")
+
+
+class AgentNotConnected(Exception):
+    """Lab agents enrolled but are not Active. Not swallowed: the pod must not
+    become ACTIVE while detection scoring is still blind (issue #168)."""
 
 
 class StaleWazuhAgent(Exception):
@@ -69,10 +75,9 @@ def _authenticate(user: str, password: str, timeout=None) -> str:
 
 
 def get_wazuh_token(timeout=None):
-    # Fail closed rather than sending empty or half-configured credentials.
-    # The enrolment caller in provision.py catches Exception and continues, so
-    # an unconfigured host logs WAZUH_ENROLL_FAIL and still provisions -- it
-    # just does no scoring.
+    # Missing credentials raise RuntimeError. finish_enroll still lets that
+    # host provision (WAZUH_ENROLL_FAIL, pod can become ACTIVE, no scoring).
+    # TLS failures and HTTP 401/403 do not: those become AgentNotConnected.
     if not WAZUH_USER or not WAZUH_PASS:
         raise RuntimeError(
             "Wazuh scoring is not configured: set WAZUH_SCORING_USER and "
@@ -135,6 +140,56 @@ def ping_manager_api(timeout: float = 10) -> int:
     """Unauthenticated GET / -- no credentials sent. Any HTTP answer (normally
     401) means the manager API is up. Raises requests.RequestException."""
     return requests.get(f"{WAZUH_URL}/", verify=_wazuh_verify(), timeout=timeout).status_code
+
+
+def get_agent_status(token: str, agent_id, timeout: float = 10):
+    """Status of one agent id. 'active' is the Wazuh API spelling of connected."""
+    aid = "" if agent_id is None else str(agent_id).strip()
+    if not re.fullmatch(r"[0-9]+", aid):
+        return None
+    r = requests.get(
+        f"{WAZUH_URL}/agents",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"agents_list": aid, "select": "status"},
+        verify=_wazuh_verify(),
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    items = r.json().get("data", {}).get("affected_items", [])
+    return items[0].get("status") if items else None
+
+
+def wait_for_agents_active(
+    token: str,
+    agent_ids: dict,
+    *,
+    timeout_s: float = 90,
+    interval_s: float = 5,
+    status_fn=None,
+    sleep_fn=None,
+    clock=None,
+) -> dict:
+    """Poll until every enrolled agent reports active. Raises AgentNotConnected
+    when the deadline passes with any agent still not active."""
+    status_fn = status_fn or get_agent_status
+    sleep_fn = sleep_fn or time.sleep
+    clock = clock or time.monotonic
+    pending = dict(agent_ids)
+    last = {}
+    deadline = clock() + timeout_s
+    while True:
+        for role, aid in list(pending.items()):
+            status = status_fn(token, aid)
+            last[role] = status
+            if str(status or "").lower() == "active":
+                del pending[role]
+        if not pending:
+            return last
+        now = clock()
+        if now >= deadline:
+            detail = ", ".join(f"{role}={last.get(role)}" for role in pending)
+            raise AgentNotConnected(detail)
+        sleep_fn(min(interval_s, max(0.0, deadline - now)))
 
 
 def get_manager_agent_status(token: str, timeout: float = 10):
@@ -221,6 +276,22 @@ def finish_enroll(student_id: str, pod_id: int, enroll, log_event, log_warning):
     except StaleWazuhAgent as e:
         log_event("WAZUH_STALE_AGENT", student_id, pod_id, detail=str(e.ids))
         raise
+    except AgentNotConnected as e:
+        log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))
+        raise
+    except requests.exceptions.SSLError as e:
+        # A TLS failure used to be swallowed here, and the pod still became
+        # ACTIVE with no agent. That is the #168 symptom.
+        log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=f"tls: {e}")
+        raise AgentNotConnected(f"tls: {e}") from e
+    except requests.exceptions.HTTPError as e:
+        code = e.response.status_code if e.response is not None else 0
+        if code in (401, 403):
+            log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=f"auth HTTP {code}")
+            raise AgentNotConnected(f"auth HTTP {code}") from e
+        log_warning(f"Wazuh enroll skipped/failed: {e}")
+        log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))
+        return None
     except Exception as e:
         log_warning(f"Wazuh enroll skipped/failed: {e}")
         log_event("WAZUH_ENROLL_FAIL", student_id, pod_id, detail=str(e))

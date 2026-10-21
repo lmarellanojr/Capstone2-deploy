@@ -23,6 +23,8 @@ restart_units() {
 # Best-effort: never fails the pull (manager stopped / proxy down → skip).
 # Fixes Admin Wazuh TLS-Degraded on every Ampere domain after Promote apply
 # (#154); complements #152 preserve-if-exists for tarball extracts.
+# When certs/wazuh-api-ca.crt exists (#168), a live cert that does not chain
+# to that CA fails this release. Hosts without the CA file stay on the leaf pin.
 sync_wazuh_api_cert() {
   local helper="${ROOT}/deploy/host/sync_wazuh_api_cert.py" rc=0
   if [ ! -f "$helper" ]; then
@@ -40,6 +42,84 @@ sync_wazuh_api_cert() {
     echo "pull-release: wazuh-api.crt sync exited $rc (non-fatal)" >&2
   fi
   return 0
+}
+
+# Fail the release when the internal CA is installed and the live manager
+# certificate does not chain to it for localhost, or the scoring user cannot
+# authenticate. No CA file means the transitional leaf pin is still in use.
+# Every skip is logged. The caller after extract must use
+# `smoke_wazuh_ca || fail_apply ...` so a failure rolls the release back.
+smoke_wazuh_ca() {
+  local ca="${ROOT}/certs/wazuh-api-ca.crt" out auth_py
+  if [ ! -f "$ca" ]; then
+    echo "pull-release: wazuh CA smoke skipped: ${ca} is absent"
+    return 0
+  fi
+  if ! command -v lxc >/dev/null 2>&1; then
+    echo "pull-release: wazuh CA smoke skipped: lxc is not installed"
+    return 0
+  fi
+  if ! lxc info wazuh-manager >/dev/null 2>&1; then
+    echo "pull-release: wazuh CA smoke skipped: wazuh-manager guest not found"
+    return 0
+  fi
+  out=$(openssl s_client -connect localhost:55000 -servername localhost \
+    -verify_hostname localhost -CAfile "$ca" </dev/null 2>&1 || true)
+  if ! printf '%s\n' "$out" | grep -q "Verify return code: 0"; then
+    echo "pull-release: Wazuh TLS-Degraded: manager cert failed chain or hostname check against $ca" >&2
+    return 1
+  fi
+  auth_py="$PY"
+  if [ -x "${ROOT}/.venv/bin/python" ]; then
+    auth_py="${ROOT}/.venv/bin/python"
+  fi
+  "$auth_py" - "$ROOT" "$ca" <<'PY'
+import sys
+from pathlib import Path
+
+root, ca = Path(sys.argv[1]), sys.argv[2]
+vals = {}
+env_path = root / "env" / ".env"
+if env_path.is_file():
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        vals[key.strip()] = value.strip().strip('"').strip("'")
+user = vals.get("WAZUH_SCORING_USER", "")
+password = vals.get("WAZUH_SCORING_PW", "")
+url = vals.get("WAZUH_API_URL", "https://localhost:55000").rstrip("/")
+if not user or not password:
+    print("pull-release: wazuh CA smoke skipped: scoring credentials are not set")
+    raise SystemExit(0)
+try:
+    import requests
+except ImportError:
+    print("pull-release: wazuh CA smoke failed: python requests is not installed", file=sys.stderr)
+    raise SystemExit(1)
+try:
+    response = requests.post(
+        f"{url}/security/user/authenticate",
+        auth=(user, password),
+        verify=ca,
+        timeout=15,
+    )
+except requests.exceptions.SSLError as exc:
+    print(f"pull-release: Wazuh TLS-Degraded: authenticate failed: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+except requests.RequestException as exc:
+    print(f"pull-release: wazuh API authenticate failed: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if response.status_code != 200:
+    print(f"pull-release: wazuh API authenticate HTTP {response.status_code}", file=sys.stderr)
+    raise SystemExit(1)
+print("pull-release: wazuh CA smoke authenticated")
+PY
+  # The apply path calls this as `smoke_wazuh_ca || fail_apply`. In that
+  # context bash ignores set -e inside the function, so a failed authenticate
+  # would otherwise fall through and look like success.
+  [ $? -eq 0 ] || return 1
 }
 
 restore_snapshot() {
@@ -129,6 +209,7 @@ if [ "$APPLY_RC" -eq 2 ]; then
   echo "pull-release skip: $APPLY_OUT"
   # Still heal a mismatched host pin when the release SHA is unchanged.
   sync_wazuh_api_cert
+  smoke_wazuh_ca
   exit 0
 fi
 if [ "$APPLY_RC" -ne 0 ]; then
@@ -197,7 +278,10 @@ fi
 "$PY" "$SYNC" --extract "${WORK}/portal-build.tgz" "${ROOT}/portal"
 
 # After extract (preserve keeps a wrong pin too): align pin to live manager.
+# A failed smoke must roll back. A bare call would exit under set -e and
+# leave the new tree in place with no bad-sha.
 sync_wazuh_api_cert
+smoke_wazuh_ca || fail_apply "Wazuh CA smoke failed"
 
 GOT="$("$PY" "$SYNC" --lock-hash "${ROOT}/portal/package-lock.json")"
 WANT="$("$PY" - "${WORK}/manifest.json" <<'PY'

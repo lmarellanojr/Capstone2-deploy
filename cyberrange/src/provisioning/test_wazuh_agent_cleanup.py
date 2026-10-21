@@ -291,3 +291,88 @@ def test_enroll_handler_reraises_stale_and_swallows_other_errors():
 
     assert wc.finish_enroll("alice", 1, other, log_event, lambda message: None) is None
     assert events[0][0] == "WAZUH_ENROLL_FAIL"
+
+    events.clear()
+
+    def disconnected():
+        raise wc.AgentNotConnected("meta=disconnected")
+
+    with pytest.raises(wc.AgentNotConnected):
+        wc.finish_enroll("alice", 1, disconnected, log_event, lambda message: None)
+    assert events[0][0] == "WAZUH_ENROLL_FAIL"
+    assert "disconnected" in events[0][3]
+
+
+def test_enroll_handler_reraises_tls_and_auth_errors():
+    events = []
+
+    def log_event(event_type, student_id=None, pod_id=None, **kwargs):
+        events.append((event_type, kwargs.get("detail")))
+
+    def tls():
+        raise wc.requests.exceptions.SSLError("bad cert")
+
+    with pytest.raises(wc.AgentNotConnected, match="tls:"):
+        wc.finish_enroll("alice", 1, tls, log_event, lambda message: None)
+    assert events == [("WAZUH_ENROLL_FAIL", "tls: bad cert")]
+
+    events.clear()
+
+    def auth():
+        err = wc.requests.exceptions.HTTPError("unauthorized")
+        err.response = type("R", (), {"status_code": 401})()
+        raise err
+
+    with pytest.raises(wc.AgentNotConnected, match="auth HTTP 401"):
+        wc.finish_enroll("alice", 1, auth, log_event, lambda message: None)
+    assert events[0] == ("WAZUH_ENROLL_FAIL", "auth HTTP 401")
+
+    events.clear()
+
+    def other_http():
+        err = wc.requests.exceptions.HTTPError("busy")
+        err.response = type("R", (), {"status_code": 500})()
+        raise err
+
+    assert wc.finish_enroll("alice", 1, other_http, log_event, lambda message: None) is None
+    assert events[0][0] == "WAZUH_ENROLL_FAIL"
+
+
+def test_wait_for_agents_active_times_out_while_disconnected():
+    clock = {"now": 0.0}
+
+    def status(_token, agent_id):
+        return "disconnected"
+
+    def sleep(_seconds):
+        clock["now"] += 5
+
+    with pytest.raises(wc.AgentNotConnected):
+        wc.wait_for_agents_active(
+            "tok",
+            {"meta": "3"},
+            timeout_s=10,
+            interval_s=5,
+            status_fn=status,
+            sleep_fn=sleep,
+            clock=lambda: clock["now"],
+        )
+
+
+def test_wait_for_agents_active_returns_when_connected():
+    seen = {"n": 0}
+
+    def status(_token, _agent_id):
+        seen["n"] += 1
+        return "pending" if seen["n"] == 1 else "active"
+
+    result = wc.wait_for_agents_active(
+        "tok",
+        {"meta": "3"},
+        timeout_s=30,
+        interval_s=5,
+        status_fn=status,
+        sleep_fn=lambda _s: None,
+        clock=lambda: 0.0,
+    )
+    assert result == {"meta": "active"}

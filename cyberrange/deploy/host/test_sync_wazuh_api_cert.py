@@ -22,6 +22,54 @@ FP_A = "AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:
 FP_B = "BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB"
 
 
+def test_ca_pin_rejects_a_leaf_that_does_not_chain(tmp_path: Path):
+    root = tmp_path / "cyberrange"
+    data = tmp_path / "data"
+    ca = root / "certs" / "wazuh-api-ca.crt"
+    ca.parent.mkdir(parents=True)
+    ca.write_bytes(b"CA")
+    leaf = root / "certs" / "wazuh-api.crt"
+    leaf.write_bytes(PEM_A)
+
+    result = sync_wazuh_api_cert(
+        root=root,
+        data_dir=data,
+        manager_present=lambda _b: True,
+        extract_manager_pem=lambda _b: PEM_B,
+        live_server_pem=lambda *_a, **_k: PEM_B,
+        fingerprint_pem=lambda _p: FP_B,
+        has_dns_localhost=lambda _p: True,
+        cert_chains=lambda _ca, _server: False,
+        best_effort=True,
+    )
+    assert result.status == "failed"
+    assert "does not chain" in result.detail
+    assert ca.read_bytes() == b"CA"
+    assert leaf.read_bytes() == PEM_A
+
+
+def test_ca_pin_leaves_the_ca_file_when_the_live_cert_chains(tmp_path: Path):
+    root = tmp_path / "cyberrange"
+    data = tmp_path / "data"
+    ca = root / "certs" / "wazuh-api-ca.crt"
+    ca.parent.mkdir(parents=True)
+    ca.write_bytes(b"CA")
+
+    result = sync_wazuh_api_cert(
+        root=root,
+        data_dir=data,
+        manager_present=lambda _b: True,
+        live_server_pem=lambda *_a, **_k: PEM_A,
+        fingerprint_pem=lambda _p: FP_A,
+        cert_chains=lambda ca_pem, server_pem: ca_pem == b"CA" and server_pem == PEM_A,
+        best_effort=False,
+    )
+    assert result.status == "unchanged"
+    assert "internal CA" in result.detail
+    assert ca.read_bytes() == b"CA"
+    assert not (root / "certs" / "wazuh-api.crt").exists()
+
+
 def test_skips_when_manager_missing(tmp_path: Path):
     root = tmp_path / "cyberrange"
     data = tmp_path / "data"

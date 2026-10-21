@@ -68,6 +68,28 @@ scoring via `WAZUH_CA_BUNDLE` (typically `~/cyberrange/certs/wazuh-api.crt`).
 `certs/wazuh-api.crt` (exact relpath). Routine promotes do **not** overwrite
 a host pin with the git starter. Missing file → tarball starter is installed.
 
+### `wazuh-api-ca.crt` — internal CA (issue #168)
+
+This file is **not** committed. On each Ampere host, run:
+
+```bash
+python3 ~/cyberrange/deploy/host/issue_wazuh_internal_ca.py --install
+```
+
+That writes a long-lived CA and a manager API certificate under
+`~/cyberrange-data/wazuh-ca/` (private keys mode 600, SAN `DNS:localhost`).
+A run without `--install` stops there and does not create
+`certs/wazuh-api-ca.crt`. `--install` pushes the server certificate and key
+into the `wazuh-manager` guest as the `wazuh` user (key mode 0640), restarts
+the manager, and checks that `localhost:55000` chains to the CA for
+`localhost`. Only after that check passes does it copy the CA public
+certificate to `certs/wazuh-api-ca.crt` and point `WAZUH_CA_BUNDLE` at that
+file. A later manager-certificate rotation that is signed by the same CA
+does not need a new pin. `pull_release` fails the apply, and rolls it back,
+when this file exists and the live certificate does not chain to it or the
+scoring user cannot authenticate. Until the file exists, the leaf pin above
+remains the transitional trust anchor.
+
 After extract (and on unchanged-SHA skip), `pull_release` also runs
 `deploy/host/sync_wazuh_api_cert.py` (#154): if `wazuh-manager` is up, the
 host pin is refreshed from the live manager cert when fingerprints match
