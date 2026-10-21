@@ -4,7 +4,7 @@
 **Parent:** #280 (Identity, RBAC, Monitoring post-UAT remediation)
 **Owner:** Lenie Joice Mendoza (@leniejoice)
 **Testing partner:** Shekinah Jabez Florentino (independently verifies backend findings; no self-approval)
-**Related:** #192 (completed — manual account creation by domain owners), #193, #189, #283 (evidence preservation)
+**Related:** #192 (completed — manual account creation by domain owners), #193, #198 (`9a911ac` — removed the admin credential email, replacing it with the handoff modal), #189, #283 (evidence preservation)
 **Recorded:** 2026-10-22 (Asia/Manila)
 **Code context:** `origin/main` = `0d4633a0e248ac040615dd6ca38395535a2ab4f8` (unchanged since the ticket was written)
 
@@ -23,8 +23,9 @@ as part of completed #192's switch to manual account creation by domain owners. 
 `main` to satisfy the finding; the correct deliverable is this disposition record plus the evidence below.
 
 One premise in the ticket is inaccurate and is corrected in §4: there is **no "Admin → Users credential
-email."** By design since #192, Admin user creation sends no credentials by email; the handoff is a
-short-lived in-portal modal.
+email."** Admin user creation sends no credentials by email — but note this was **not** #192's design.
+#192/#193 kept Admin → Users sending credentials separately by email; the email was removed later by
+**PR #198** (`9a911ac`, 2026-10-14), which replaced it with a short-lived in-portal handoff modal.
 
 ## 2. SHA comparison against `main` and #192
 
@@ -82,11 +83,15 @@ reintroduced to satisfy any stale test.
   account for …"), with the "Action required" callout at `:253`/`:265`. The notice is sent to the fixed
   four-owner `NOTIFY_EMAIL` list (`Code.gs:20`), and the assigned domain is named in the body; per-domain
   routing would be a **new** requirement, not part of this finding.
-- **"Admin → Users credential email" — ticket premise corrected.** There is no credential email by design
-  (#192). `src/provisioning/test_admin_users.py:274`
-  (`test_create_never_emails_or_exposes_credentials`) fails if SMTP is touched on create; the handoff is the
-  short-lived `CredentialHandoffModal` (`portal/src/app/admin/users/page.tsx:442`). The check that still
-  works is the **credential handoff modal**, not an email.
+- **"Admin → Users credential email" — ticket premise corrected.** There is no credential email, but the
+  removal was **not** #192's doing. PR #193 (which closed #192) explicitly kept it — its description says
+  Admin → Users "then sends the tester's credentials separately." The email was removed later by **PR #198**
+  (`9a911ac`, 2026-10-14), which deleted `credential_email.py` / `test_credential_email.py` and replaced the
+  step with a short-lived in-portal handoff. `src/provisioning/test_admin_users.py:274`
+  (`test_create_never_emails_or_exposes_credentials`, added in `9a911ac`) fails if SMTP is touched on
+  create; the handoff is the short-lived `CredentialHandoffModal`
+  (`portal/src/app/admin/users/page.tsx:442`, also added in `9a911ac`). The check that still works is the
+  **credential handoff modal**, not an email.
 
 ## 5. Leftovers — kept vs. noted
 
@@ -146,7 +151,8 @@ cyberrange/src/provisioning/test_booking_script.cjs:180:  # asserts no BOOKING_P
 ## 8. Decision needed from the owner
 
 1. Correct the ticket wording "Admin → Users credential email still works" to "the credential handoff modal
-   still works" (an email would contradict #192).
+   still works." The email was removed by **PR #198** (`9a911ac`), which replaced the credential-by-email
+   step that #192/#193 had kept; an email no longer exists.
 2. Confirm the four-owner broadcast (`Code.gs:20`) is acceptable for "notice reaches the assigned domain
    owner," or raise per-domain routing as a new requirement.
 3. Decide whether to delete the unused `find_users_by_email` (§5) as a separate one-line PR, or leave it.
