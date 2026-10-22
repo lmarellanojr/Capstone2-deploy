@@ -31,15 +31,27 @@ restart_units() {
 # (#154); complements #152 preserve-if-exists for tarball extracts.
 # When certs/wazuh-api-ca.crt exists (#168), a live cert that does not chain
 # to that CA fails this release. Hosts without the CA file stay on the leaf pin.
+# Sets CERT_SYNC_RC (helper exit code) and CERT_SYNC_SKIPPED=1 when nothing
+# was checked (helper absent, or it reported "sync skipped"), so the
+# unchanged-release summary does not call a skip OK.
 sync_wazuh_api_cert() {
-  local helper="${ROOT}/deploy/host/sync_wazuh_api_cert.py" rc=0
+  local helper="${ROOT}/deploy/host/sync_wazuh_api_cert.py" rc=0 out
+  CERT_SYNC_RC=0
+  CERT_SYNC_SKIPPED=0
   if [ ! -f "$helper" ]; then
+    echo "pull-release: wazuh-api.crt sync skipped: ${helper} is absent"
+    CERT_SYNC_SKIPPED=1
     return 0
   fi
   set +e
-  "$PY" "$helper" --root "$ROOT" --data "$DATA"
+  out="$("$PY" "$helper" --root "$ROOT" --data "$DATA")"
   rc=$?
   set -e
+  [ -z "$out" ] || printf '%s\n' "$out"
+  case "$out" in
+    *"sync skipped"*) CERT_SYNC_SKIPPED=1 ;;
+  esac
+  CERT_SYNC_RC=$rc
   # Helper: 0 ok/skipped/unchanged/installed; 2 = failed after validation (loud).
   # Never abort the pull — only surface the failure so operators notice.
   if [ "$rc" -eq 2 ]; then
@@ -53,24 +65,34 @@ sync_wazuh_api_cert() {
 # Fail the release when the internal CA is installed and the live manager
 # certificate does not chain to it for localhost, or the scoring user cannot
 # authenticate. No CA file means the transitional leaf pin is still in use.
-# Every skip is logged. The caller after extract must use
-# `smoke_wazuh_ca || fail_apply ...` so a failure rolls the release back.
+# Every skip is logged. Returns 0 when the check ran and passed (or there is
+# no CA file, so there is nothing to check), 1 on a real failure, and 2 when
+# the CA is installed but the check could not run (no lxc, no manager guest,
+# scoring creds unset). Call it through run_wazuh_smoke, which sets SMOKE_RC.
 smoke_wazuh_ca() {
-  local ca="${ROOT}/certs/wazuh-api-ca.crt" out auth_py
+  local ca="${ROOT}/certs/wazuh-api-ca.crt" out auth_py rc
   if [ ! -f "$ca" ]; then
     echo "pull-release: wazuh CA smoke skipped: ${ca} is absent"
     return 0
   fi
   if ! command -v lxc >/dev/null 2>&1; then
-    echo "pull-release: wazuh CA smoke skipped: lxc is not installed"
-    return 0
+    # Not silent (#304): with the CA installed this host expects lxc, so a miss
+    # means the unit PATH is wrong, not that Wazuh is absent.
+    echo "pull-release: ERROR: wazuh CA smoke cannot run: lxc not found on PATH=${PATH}" >&2
+    return 2
   fi
   if ! lxc info wazuh-manager >/dev/null 2>&1; then
     echo "pull-release: wazuh CA smoke skipped: wazuh-manager guest not found"
-    return 0
+    return 2
   fi
   out=$(openssl s_client -connect localhost:55000 -servername localhost \
     -verify_hostname localhost -CAfile "$ca" </dev/null 2>&1 || true)
+  if ! printf '%s\n' "$out" | grep -q "CONNECTED("; then
+    # No TCP connection (e.g. manager stopped): no chain was checked, so this
+    # is "could not run", not a chain failure. Matches the helper's SyncSkip.
+    echo "pull-release: wazuh CA smoke skipped: localhost:55000 not accepting connections"
+    return 2
+  fi
   if ! printf '%s\n' "$out" | grep -q "Verify return code: 0"; then
     echo "pull-release: Wazuh TLS-Degraded: manager cert failed chain or hostname check against $ca" >&2
     return 1
@@ -98,7 +120,7 @@ password = vals.get("WAZUH_SCORING_PW", "")
 url = vals.get("WAZUH_API_URL", "https://localhost:55000").rstrip("/")
 if not user or not password:
     print("pull-release: wazuh CA smoke skipped: scoring credentials are not set")
-    raise SystemExit(0)
+    raise SystemExit(3)
 try:
     import requests
 except ImportError:
@@ -122,10 +144,20 @@ if response.status_code != 200:
     raise SystemExit(1)
 print("pull-release: wazuh CA smoke authenticated")
 PY
-  # The apply path calls this as `smoke_wazuh_ca || fail_apply`. In that
-  # context bash ignores set -e inside the function, so a failed authenticate
-  # would otherwise fall through and look like success.
-  [ $? -eq 0 ] || return 1
+  # run_wazuh_smoke turns set -e off around this call, so read the status
+  # here instead of letting a failed authenticate fall through as success.
+  rc=$?
+  [ "$rc" -eq 3 ] && return 2
+  [ "$rc" -eq 0 ] || return 1
+}
+
+# Run the smoke with set -e off (so a failing step inside reaches its return
+# code instead of exiting the script) and keep its status in SMOKE_RC.
+run_wazuh_smoke() {
+  set +e
+  smoke_wazuh_ca
+  SMOKE_RC=$?
+  set -e
 }
 
 restore_snapshot() {
@@ -213,9 +245,22 @@ APPLY_RC=$?
 set -e
 if [ "$APPLY_RC" -eq 2 ]; then
   echo "pull-release skip: $APPLY_OUT"
-  # Still heal a mismatched host pin when the release SHA is unchanged.
+  # Still heal a mismatched host pin when the release SHA is unchanged, so a
+  # failed sync is retried by the next timer run instead of waiting for a new
+  # release (#304). A failed smoke exits 1 so the unit shows failed.
+  # OK only when both checks really ran; a skip is "incomplete", not OK.
   sync_wazuh_api_cert
-  smoke_wazuh_ca
+  run_wazuh_smoke
+  if [ "$SMOKE_RC" -eq 1 ]; then
+    echo "pull-release: wazuh cert recheck FAILED on unchanged release; the next pull retries" >&2
+    exit 1
+  elif [ "$CERT_SYNC_RC" -ne 0 ]; then
+    echo "pull-release: wazuh cert recheck incomplete on unchanged release (sync exited ${CERT_SYNC_RC}); the next pull retries" >&2
+  elif [ "$CERT_SYNC_SKIPPED" -eq 1 ] || [ "$SMOKE_RC" -ne 0 ]; then
+    echo "pull-release: wazuh cert recheck incomplete on unchanged release (a check could not run, nothing verified); the next pull retries" >&2
+  else
+    echo "pull-release: wazuh cert recheck OK on unchanged release"
+  fi
   exit 0
 fi
 if [ "$APPLY_RC" -ne 0 ]; then
@@ -284,10 +329,15 @@ fi
 "$PY" "$SYNC" --extract "${WORK}/portal-build.tgz" "${ROOT}/portal"
 
 # After extract (preserve keeps a wrong pin too): align pin to live manager.
-# A failed smoke must roll back. A bare call would exit under set -e and
-# leave the new tree in place with no bad-sha.
+# A failed smoke (1) must roll back. A smoke that could not run (2) is
+# already logged and does not roll back a good release.
 sync_wazuh_api_cert
-smoke_wazuh_ca || fail_apply "Wazuh CA smoke failed"
+run_wazuh_smoke
+if [ "$SMOKE_RC" -eq 1 ]; then
+  fail_apply "Wazuh CA smoke failed"
+elif [ "$SMOKE_RC" -ne 0 ]; then
+  echo "pull-release: wazuh CA smoke could not run after extract (non-fatal; no rollback)" >&2
+fi
 
 GOT="$("$PY" "$SYNC" --lock-hash "${ROOT}/portal/package-lock.json")"
 WANT="$("$PY" - "${WORK}/manifest.json" <<'PY'

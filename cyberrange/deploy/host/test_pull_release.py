@@ -66,6 +66,9 @@ exit 0
 SYNC = r"""import os, sys
 op = sys.argv[1]
 if op == "--check-apply":
+    if os.environ.get("FAKE_SKIP"):
+        print("already deployed " + os.environ["FAKE_SHA"])
+        sys.exit(2)
     print(os.environ["FAKE_SHA"])
 elif op == "--lock-hash":
     print("LOCK")
@@ -98,7 +101,7 @@ def host(tmp_path):
         e.update(env)
         return subprocess.run([BASH, str(SCRIPT), *args], capture_output=True, text=True, env=e, timeout=60)
 
-    run.root, run.data = root, data
+    run.root, run.data, run.state, run.bin = root, data, state, bin_dir
     return run
 
 
@@ -189,3 +192,186 @@ def test_no_provisioner_warning_when_set_or_wazuh_unused(host, env):
     res = host()
     assert res.returncode == 0, res.stderr
     assert "WAZUH_PROVISION_USER" not in res.stderr
+
+
+# #304: cert sync under the real unit PATH, and recovery when the SHA is unchanged.
+CERT_HELPER = r"""import os, sys
+with open(os.path.join(os.environ["FAKE_STATE"], "cert-sync"), "a") as f:
+    f.write(os.environ["PATH"] + "\n")
+rc = int(os.environ.get("FAKE_CERT_RC", "0"))
+if rc:
+    print("wazuh-api.crt sync failed: fake", file=sys.stderr)
+else:
+    print("wazuh-api.crt sync " + os.environ.get("FAKE_CERT_STATUS", "unchanged") + ": fake")
+sys.exit(rc)
+"""
+
+
+def _install_cert_helper(host):
+    (host.root / "deploy" / "host" / "sync_wazuh_api_cert.py").write_text(CERT_HELPER)
+
+
+# Like real s_client: CONNECTED( once TCP connects, then the verify result.
+# FAKE_REFUSED=1 mimics a stopped manager (connection refused, exit 1).
+OPENSSL_STUB = """#!/bin/bash
+if [ -n "$FAKE_REFUSED" ]; then
+  echo "connect:errno=111"
+  exit 1
+fi
+echo "CONNECTED(00000003)"
+echo "Verify return code: ${FAKE_VERIFY:-21}"
+"""
+
+
+def _install_ca_and_lxc(host):
+    certs = host.root / "certs"
+    certs.mkdir(exist_ok=True)
+    (certs / "wazuh-api-ca.crt").write_text("CA\n")
+    stubs = {"lxc": "#!/bin/bash\nexit 0\n",
+             "openssl": OPENSSL_STUB}
+    for name, body in stubs.items():
+        p = host.bin / name
+        p.write_text(body)
+        p.chmod(0o755)
+
+
+def _install_auth_ok(host):
+    # Stand-in for the venv python that runs the scoring-user authenticate step.
+    py = host.root / ".venv" / "bin" / "python"
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text('#!/bin/bash\ncat >/dev/null\necho "pull-release: wazuh CA smoke authenticated"\n')
+    py.chmod(0o755)
+
+
+def _sync_paths(host):
+    return (host.state / "cert-sync").read_text().splitlines()
+
+
+def test_service_path_appends_sbin_for_cert_sync(host):
+    _install_cert_helper(host)
+    res = host(PATH=f"{host.bin}:/usr/bin:/bin", FAKE_SKIP="1")
+    assert res.returncode == 0, res.stderr
+    # The installed unit's PATH stays first (test stubs win); lxc dirs are appended.
+    assert _sync_paths(host) == [f"{host.bin}:/usr/bin:/bin:/usr/sbin:/snap/bin"]
+
+
+def test_unchanged_release_retries_a_failed_cert_sync(host):
+    _install_cert_helper(host)
+    first = host(FAKE_SKIP="1", FAKE_CERT_RC="2")
+    assert first.returncode == 0, first.stderr  # sync stays non-fatal
+    assert "wazuh-api.crt sync FAILED" in first.stderr
+    assert "recheck incomplete on unchanged release (sync exited 2)" in first.stderr
+    second = host(FAKE_SKIP="1")
+    assert second.returncode == 0, second.stderr
+    assert "wazuh cert recheck OK on unchanged release" in second.stdout
+    assert len(_sync_paths(host)) == 2  # retried without a new release SHA
+    assert (host.root / "DEPLOYED_SHA").read_text().strip() == "b" * 40
+
+
+def test_unchanged_release_ca_smoke_failure_is_loud_then_recovers(host):
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    _install_auth_ok(host)
+    bad = host(FAKE_SKIP="1")
+    assert bad.returncode == 1
+    assert "TLS-Degraded" in bad.stderr
+    assert "recheck FAILED on unchanged release" in bad.stderr
+    assert (host.root / "certs" / "wazuh-api-ca.crt").read_text() == "CA\n"
+    good = host(FAKE_SKIP="1", FAKE_VERIFY="0")
+    assert good.returncode == 0, good.stderr
+    assert "wazuh CA smoke authenticated" in good.stdout
+    assert "wazuh cert recheck OK on unchanged release" in good.stdout
+    assert "recheck incomplete" not in good.stderr
+    assert (host.root / "certs" / "wazuh-api-ca.crt").read_text() == "CA\n"
+
+
+@pytest.mark.skipif(any(Path(d, "lxc").exists() for d in ("/usr/bin", "/bin", "/usr/sbin", "/snap/bin")),
+                    reason="host has a real lxc")
+def test_ca_mode_without_lxc_logs_an_error(host):
+    certs = host.root / "certs"
+    certs.mkdir()
+    (certs / "wazuh-api-ca.crt").write_text("CA\n")
+    _install_cert_helper(host)
+    # Without lxc the real helper fails its sync, so mirror that here.
+    res = host(PATH=f"{host.bin}:/usr/bin:/bin", FAKE_SKIP="1", FAKE_CERT_RC="2")
+    assert res.returncode == 0, res.stderr
+    assert "ERROR: wazuh CA smoke cannot run: lxc not found on PATH=" in res.stderr
+    assert "recheck incomplete" in res.stderr
+    assert "recheck OK" not in res.stdout
+    # Even when the sync itself reports fine, a smoke that could not run is not OK.
+    res = host(PATH=f"{host.bin}:/usr/bin:/bin", FAKE_SKIP="1")
+    assert res.returncode == 0, res.stderr
+    assert "recheck incomplete on unchanged release (a check could not run" in res.stderr
+    assert "recheck OK" not in res.stdout
+
+
+def test_unchanged_release_sync_skip_is_incomplete_not_ok(host):
+    # Leaf mode, manager stopped: the helper says "sync skipped" with rc 0.
+    _install_cert_helper(host)
+    res = host(FAKE_SKIP="1", FAKE_CERT_STATUS="skipped")
+    assert res.returncode == 0, res.stderr
+    assert "wazuh-api.crt sync skipped: fake" in res.stdout
+    assert "recheck incomplete on unchanged release (a check could not run" in res.stderr
+    assert "recheck OK" not in res.stdout
+
+
+def test_unchanged_release_without_helper_is_incomplete_not_ok(host):
+    res = host(FAKE_SKIP="1")
+    assert res.returncode == 0, res.stderr
+    assert "sync_wazuh_api_cert.py is absent" in res.stdout
+    assert "recheck incomplete" in res.stderr
+    assert "recheck OK" not in res.stdout
+
+
+def test_unchanged_release_ca_smoke_without_creds_is_incomplete(host):
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    res = host(FAKE_SKIP="1", FAKE_VERIFY="0")
+    assert res.returncode == 0, res.stderr
+    assert "scoring credentials are not set" in res.stdout
+    assert "recheck incomplete" in res.stderr
+    assert "recheck OK" not in res.stdout
+
+
+def test_apply_does_not_roll_back_when_ca_smoke_cannot_run(host):
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    res = host(FAKE_VERIFY="0")  # creds unset, so the smoke cannot run
+    assert res.returncode == 0, res.stderr
+    assert "smoke could not run after extract (non-fatal; no rollback)" in res.stderr
+    assert (host.root / "DEPLOYED_SHA").read_text().strip() == SHA
+    assert not (host.data / "rollback" / "bad-sha").exists()
+
+
+def test_apply_rolls_back_when_ca_smoke_fails(host):
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    res = host()  # openssl stub reports a failed verify
+    assert res.returncode == 1
+    assert (host.data / "rollback" / "bad-sha").read_text().strip() == SHA
+
+
+def test_unchanged_release_refused_connection_is_incomplete_not_failed(host):
+    # Manager stopped in CA mode: s_client never connects, so no chain was checked.
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    _install_auth_ok(host)
+    res = host(FAKE_SKIP="1", FAKE_REFUSED="1")
+    assert res.returncode == 0, res.stderr
+    assert "wazuh CA smoke skipped: localhost:55000 not accepting connections" in res.stdout
+    assert "recheck incomplete" in res.stderr
+    assert "recheck OK" not in res.stdout
+    assert "recheck FAILED" not in res.stderr
+    assert "TLS-Degraded" not in res.stderr
+
+
+def test_apply_does_not_roll_back_when_connection_is_refused(host):
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    _install_auth_ok(host)
+    res = host(FAKE_REFUSED="1")
+    assert res.returncode == 0, res.stderr
+    assert "not accepting connections" in res.stdout
+    assert "TLS-Degraded" not in res.stderr
+    assert (host.root / "DEPLOYED_SHA").read_text().strip() == SHA
+    assert not (host.data / "rollback" / "bad-sha").exists()
