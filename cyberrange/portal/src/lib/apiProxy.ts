@@ -116,6 +116,10 @@ export async function proxyToApi(
         const value = res.headers.get(name)
         if (value) passHeaders.set(name, value)
       }
+      // Next 15 drops a route CSP when config sets one, so config sets none on
+      // this path and the full policy (upstream sandbox + framing) lives here.
+      const upstreamCsp = (passHeaders.get("content-security-policy") || "default-src 'none'; sandbox").replace(/[;\s]+$/, "")
+      passHeaders.set("content-security-policy", `${upstreamCsp}; frame-ancestors 'none'`)
       return new NextResponse(await res.arrayBuffer(), { status: res.status, headers: passHeaders })
     }
     if (options.raw) {

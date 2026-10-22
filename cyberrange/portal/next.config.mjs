@@ -33,13 +33,20 @@ const nextConfig = {
     }
     return [
       {
-        source: '/((?!lab/dvwa(?:/|$)).*)',
+        // Review image uploads are excluded too: apiProxy sets their full
+        // sandbox CSP, which a config CSP would replace on Next 15.
+        source: '/((?!lab/dvwa(?:/|$)|api/reviews/[^/]+/images/[^/]+/?$).*)',
         headers: [
           { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
           { key: 'X-Frame-Options', value: 'DENY' },
           nosniff,
           referrer,
         ],
+      },
+      {
+        // Uploaded review images; no CSP here (apiProxy binary branch owns it).
+        source: '/api/reviews/:id/images/:imageId',
+        headers: [{ key: 'X-Frame-Options', value: 'DENY' }, nosniff, referrer],
       },
       {
         // Exact /lab/dvwa and descendants; no CSP here (route/middleware own it).
