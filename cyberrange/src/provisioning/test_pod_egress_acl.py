@@ -55,13 +55,30 @@ def test_rules_allow_only_own_subnet_and_agent_ports():
         ],
         ["action=reject", "destination=10.93.10.1/32", "protocol=udp", "destination_port=53"],
         ["action=reject", "destination=10.93.10.1/32", "protocol=tcp", "destination_port=53"],
+        ["action=reject", "destination=10.0.52.1/32"],
     ]
     allows = " ".join(" ".join(r) for r in rules if r[0] == "action=allow")
     for blocked in ("55000", "port=22", "port=53", "0.0.0.0/0", "action=drop"):
         assert blocked not in allows
     # The DNS rejects hit only the uplink resolver, never meta's port 53.
-    rejects = [r for r in rules if r[0] == "action=reject"]
-    assert all(r[1] == "destination=10.93.10.1/32" for r in rejects)
+    dns_rejects = [r for r in rules if r[0] == "action=reject" and "destination_port=53" in r]
+    assert len(dns_rejects) == 2
+    assert all(r[1] == "destination=10.93.10.1/32" for r in dns_rejects)
+
+
+@pytest.mark.parametrize("pod_id", range(1, 7))
+def test_gateway_reject_is_scoped_to_the_pod_gateway(pod_id):
+    sub = f"10.0.{50 + pod_id}"
+    rules = pod_net.pod_acl_rules(pod_id, "10.0.40.10", "10.93.10.1")
+    gw = ["action=reject", f"destination={sub}.1/32"]
+    assert gw in rules
+    # After the allows; the manager rule keeps index 1.
+    assert rules.index(gw) > max(i for i, r in enumerate(rules) if r[0] == "action=allow")
+    assert "destination=10.0.40.10/32" in rules[1]
+    # Only the /32 gateway is rejected: meta's DNS (.20:53) is still allowed.
+    assert [r for r in rules if r[0] == "action=reject" and f"{sub}." in r[1]] == [gw]
+    assert _allow_matches(rules[0], f"{sub}.20", 53)
+    assert not any(r[0] == "action=reject" and f"{sub}.20" in r[1] for r in rules)
 
 
 def test_create_makes_acl_before_network_and_attaches_it(monkeypatch):
@@ -72,7 +89,7 @@ def test_create_makes_acl_before_network_and_attaches_it(monkeypatch):
     acl_create = calls.index(("network", "acl", "create", "pod-1-egress"))
     net_create = calls.index(_net_create(calls))
     rule_adds = [i for i, c in enumerate(calls) if c[:3] == ("network", "acl", "rule")]
-    assert len(rule_adds) == 4
+    assert len(rule_adds) == 5
     assert acl_create < min(rule_adds) and max(rule_adds) < net_create
     assert all(calls[i][3:6] == ("add", "pod-1-egress", "egress") for i in rule_adds)
 

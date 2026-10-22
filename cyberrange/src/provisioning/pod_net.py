@@ -49,6 +49,10 @@ def pod_acl_rules(pod_id: int, manager_ip: str, uplink_dns: str) -> List[List[st
     which outranks the default reject. The explicit rejects below (priority
     400) close that DNS path out of the pod. They target only the uplink /32,
     so DNS to meta inside the pod subnet still works.
+
+    The last reject closes the pod's own gateway (.1/32), which the own-/24
+    allow would otherwise cover. A reject rule (priority 400) outranks the
+    allow (300). It comes last so the manager rule keeps index 1.
     """
     return [
         ["action=allow", f"destination={manager_pod_route(pod_id)}"],
@@ -60,6 +64,7 @@ def pod_acl_rules(pod_id: int, manager_ip: str, uplink_dns: str) -> List[List[st
         ],
         ["action=reject", f"destination={uplink_dns}/32", "protocol=udp", "destination_port=53"],
         ["action=reject", f"destination={uplink_dns}/32", "protocol=tcp", "destination_port=53"],
+        ["action=reject", f"destination={pod_subnet(pod_id)}.1/32"],
     ]
 
 

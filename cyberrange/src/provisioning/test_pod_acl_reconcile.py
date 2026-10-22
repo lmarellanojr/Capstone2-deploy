@@ -136,6 +136,21 @@ def test_uplink_dns_failure_skips_refresh_keeps_cleanup(monkeypatch):
     assert _writes(calls) == [("network", "acl", "delete", "pod-3-egress")]
 
 
+def test_missing_gateway_reject_is_restored(monkeypatch):
+    # A rule with no protocol or port compares cleanly against LXD's output.
+    rules = [r for r in _rules(1) if r["destination"] != "10.0.51.1/32"]
+    for r in rules:
+        r.setdefault("protocol", "")
+        r.setdefault("destination_port", "")
+    calls = _setup(monkeypatch, {1}, [{"name": "pod-1-net", "config": GOOD_CFG}],
+                   [{"name": "pod-1-egress", "egress": rules}])
+    pod_net.reconcile_pod_networks(manager_ip=MGR)
+    assert _writes(calls) == [
+        ("network", "acl", "rule", "add", "pod-1-egress", "egress", "action=reject",
+         "destination=10.0.51.1/32"),
+    ]
+
+
 def test_sweep_ip_falls_back_to_env_then_default(monkeypatch):
     import provision
     monkeypatch.setattr(provision, "wazuh_manager_ip", lambda c: (_ for _ in ()).throw(RuntimeError("x")))
