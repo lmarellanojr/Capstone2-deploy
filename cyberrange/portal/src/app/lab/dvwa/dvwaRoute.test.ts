@@ -43,7 +43,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
   })
 
@@ -54,7 +54,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
   })
 
@@ -83,7 +83,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
     const body = await res.text()
     expect(body).toContain('href="/dvwa-theme/css/main.css"')
@@ -132,7 +132,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
     expect(res.headers.get('content-security-policy')).not.toMatch(/same-origin/)
     const body = await res.text()
@@ -167,7 +167,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
     expect(res.headers.get('content-security-policy')).not.toMatch(/same-origin/)
     const body = await res.text()

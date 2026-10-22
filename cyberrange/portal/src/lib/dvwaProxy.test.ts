@@ -73,7 +73,8 @@ describe('dvwaProxy access control', () => {
   })
 
   describe('dvwaContentSecurityPolicy & isVulnerableDvwaLabPath', () => {
-    const EXPECTED_CSP = 'sandbox allow-scripts allow-forms allow-modals'
+    const EXPECTED_CSP =
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
 
     it('identifies SQL injection and Reflected XSS paths as vulnerable', () => {
       expect(isVulnerableDvwaLabPath('/vulnerabilities/sqli')).toBe(true)
@@ -260,7 +261,7 @@ describe('dvwaProxy access control', () => {
 
     it('leaves CSP policy unchanged (no allow-same-origin)', () => {
       expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(
-        'sandbox allow-scripts allow-forms allow-modals'
+        "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
       )
       expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')!).not.toMatch(/same-origin/)
     })

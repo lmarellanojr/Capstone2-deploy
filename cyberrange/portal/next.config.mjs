@@ -5,6 +5,8 @@ const nextConfig = {
   skipTrailingSlashRedirect: true,
   // Do not put NEXTAUTH_URL in `env:` — that inlines it at build time and
   // Chapter 07 cannot flip HTTPS by editing .env.local + restarting the unit.
+  // CR-11 / #313: stop advertising the framework in responses.
+  poweredByHeader: false,
   // CR-10 / #312 interim: disable Image Optimization API until next is upgraded.
   // Local next/image assets under /public still render; optimizer advisories are deferred.
   images: { unoptimized: true },
@@ -20,6 +22,36 @@ const nextConfig = {
   // the client router then redirected mid-hydration and threw React #310 (#219).
   async redirects() {
     return [{ source: '/', destination: '/dashboard', permanent: false }]
+  },
+  // CR-11 / #313: path-scoped framing + baseline hardening headers.
+  // Next merges matching rules per header key; later rules win for the same key.
+  // Rule B must set CSP so /lab/dvwa/* does not keep Rule A's frame-ancestors 'none'.
+  async headers() {
+    const nosniff = { key: 'X-Content-Type-Options', value: 'nosniff' }
+    const referrer = {
+      key: 'Referrer-Policy',
+      value: 'strict-origin-when-cross-origin',
+    }
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          nosniff,
+          referrer,
+        ],
+      },
+      {
+        source: '/lab/dvwa/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          nosniff,
+          referrer,
+        ],
+      },
+    ]
   },
   async rewrites() {
     const apiBase = process.env.API_INTERNAL_URL || 'http://10.115.77.1:5000'

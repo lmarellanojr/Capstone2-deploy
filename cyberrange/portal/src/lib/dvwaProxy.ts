@@ -236,7 +236,11 @@ export function isVulnerableDvwaLabPath(path: string): boolean {
  */
 export function dvwaContentSecurityPolicy(path: string): string | null {
   if (isVulnerableDvwaLabPath(path)) {
-    return 'sandbox allow-scripts allow-forms allow-modals'
+    // CR-11 / #313: next.config also sends `frame-ancestors 'self'` on /lab/dvwa/*.
+    // This sandbox policy survives only because Next 14.2.x appends route headers
+    // next to config headers (newer Next may replace them). nextSendResponseCsp.test.ts
+    // guards this; revisit it before any Next major upgrade.
+    return "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
   }
   return null
 }
