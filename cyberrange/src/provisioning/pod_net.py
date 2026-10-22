@@ -223,7 +223,10 @@ def create_pod_network(pod_id: int, manager_ip: str = None, uplink_dns: str = No
         "--type=ovn",
         "network=vmbr1",
         f"ipv4.address={sub}.1/24",
-        "ipv4.nat=false",
+        # NAT stays on. With ipv4.nat=false LXD 5.21 requires the pod subnet in
+        # vmbr1's ipv4.routes, which our hosts don't set, so the create fails.
+        # The default egress reject already blocks internet egress.
+        "ipv4.nat=true",
         "ipv6.address=none",
         f"security.acls={acl}",
         "security.acls.default.egress.action=reject",
@@ -285,11 +288,35 @@ def _sweep_manager_ip(manager_ip: str = None):
     return _check_manager_ip(manager_ip)
 
 
-_RULE_KEYS = ("action", "destination", "protocol", "destination_port")
+# Every LXD rule field except description. Two rules that differ in any of
+# these (for example state=disabled or a narrowed source) are different rules.
+_RULE_KEYS = (
+    "action",
+    "source",
+    "destination",
+    "protocol",
+    "source_port",
+    "destination_port",
+    "icmp_type",
+    "icmp_code",
+    "state",
+)
+_RULE_DEFAULTS = {"state": "enabled"}  # lxc network acl rule add's default
 
 
 def _rule_key(rule: dict) -> tuple:
-    return tuple((k, str(rule.get(k) or "")) for k in _RULE_KEYS)
+    return tuple((k, str(rule.get(k) or _RULE_DEFAULTS.get(k, ""))) for k in _RULE_KEYS)
+
+
+def _remove_filter(rule: dict) -> List[str]:
+    """Every field of the rule as LXD returned it, empty ones as `key=`.
+
+    LXD's rule remove compares only the keys it is given and refuses when more
+    than one rule matches, so a partial filter can match several rules.
+    """
+    fields = [f"{k}={rule.get(k) or ''}" for k in _RULE_KEYS]
+    fields.append(f"description={rule.get('description') or ''}")
+    return fields
 
 
 def ensure_pod_acl(
@@ -298,7 +325,9 @@ def ensure_pod_acl(
     """Bring a live pod's egress ACL and its network attachment in line.
 
     acl_obj is the ACL from `network acl list` (None when missing); net_config is
-    the network's config from `network list`. Writes only what differs.
+    the network's config from `network list`. Writes only what differs. Rules
+    are compared on every field but description, and `security.acls` is set to
+    the pod ACL alone.
     """
     acl = pod_acl_name(pod_id)
     net = pod_net_name(pod_id)
@@ -313,11 +342,16 @@ def ensure_pod_acl(
 
     wanted_keys = {_rule_key(r) for r in wanted}
     current_keys = {_rule_key(r) for r in current}
+    removals = {}
     for rule in current:
         if _rule_key(rule) not in wanted_keys:
-            fields = [f"{k}={v}" for k, v in _rule_key(rule) if v]
-            logger.info(f"[reconciler] removing stale egress rule from {acl}: {' '.join(fields)}")
-            _lxc("network", "acl", "rule", "remove", acl, "egress", *fields, check=True)
+            fields = tuple(_remove_filter(rule))
+            removals[fields] = removals.get(fields, 0) + 1
+    for fields, count in removals.items():
+        # Only exact duplicates share a full filter; they are all stale.
+        force = ("--force",) if count > 1 else ()
+        logger.info(f"[reconciler] removing stale egress rule from {acl}: {' '.join(fields)}")
+        _lxc("network", "acl", "rule", "remove", *force, acl, "egress", *fields, check=True)
     for rule in wanted:
         if _rule_key(rule) not in current_keys:
             fields = [f"{k}={v}" for k, v in rule.items()]
@@ -326,8 +360,13 @@ def ensure_pod_acl(
 
     config = net_config or {}
     attached = [a.strip() for a in (config.get("security.acls") or "").split(",") if a.strip()]
+    # Only the pod's own ACL. LXD merges every attached ACL, so a foreign allow
+    # would outrank the default reject and the pod would not be default-deny.
+    dropped = [a for a in attached if a != acl]
+    if dropped:
+        logger.warning(f"[reconciler] {net}: detaching foreign ACLs {','.join(dropped)}")
     wanted_cfg = {
-        "security.acls": ",".join(attached + ([] if acl in attached else [acl])),
+        "security.acls": acl,
         "security.acls.default.egress.action": "reject",
         "security.acls.default.ingress.action": "allow",
     }
@@ -345,6 +384,19 @@ def _live_pod_ids() -> set:
         rows = conn.execute(
             "SELECT pod_id FROM pods WHERE status NOT IN ('DESTROYED','FAILED_ROLLBACK_COMPLETE')"
         ).fetchall()
+    finally:
+        conn.close()
+    return {r["pod_id"] for r in rows}
+
+
+def _active_pod_ids() -> set:
+    """Pods safe to refresh. PROVISIONING and DESTROYING pods are mid-change,
+    and a refresh then could recreate an ACL that teardown just removed."""
+    from db import get_db_connection
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute("SELECT pod_id FROM pods WHERE status='ACTIVE'").fetchall()
     finally:
         conn.close()
     return {r["pod_id"] for r in rows}
@@ -423,11 +475,17 @@ def reconcile_pod_networks(manager_ip: str = None, uplink_dns: str = None):
                 sweep_dns = uplink_dns_ip(uplink_dns)
             except Exception as e:
                 logger.error(f"[reconciler] sweep error: uplink DNS lookup failed, skipping egress ACL refresh: {e}")
+        active = set()
         if sweep_ip and sweep_dns:
+            try:
+                active = _active_pod_ids()
+            except Exception as e:
+                logger.error(f"[reconciler] sweep error: active pod lookup failed, skipping egress ACL refresh: {e}")
+        if active:
             acl_by_name = {a.get("name", ""): a for a in acls}
             net_by_name = {n.get("name", ""): n for n in nets}
             for pid, name in pod_nets:
-                if pid not in live or not 1 <= pid <= 6:
+                if pid not in active or not 1 <= pid <= 6:
                     continue
                 try:
                     ensure_pod_acl(

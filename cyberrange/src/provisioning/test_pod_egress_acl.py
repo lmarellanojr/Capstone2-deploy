@@ -97,9 +97,10 @@ def test_create_makes_acl_before_network_and_attaches_it(monkeypatch):
     assert "security.acls=pod-1-egress" in net
     assert "security.acls.default.egress.action=reject" in net
     assert "security.acls.default.ingress.action=allow" in net
-    # No NAT: the only allowed egress goes to the manager over the peer route.
-    assert "ipv4.nat=false" in net
-    assert "ipv4.nat=true" not in net
+    # NAT stays on: ipv4.nat=false needs vmbr1 ipv4.routes, which LXD 5.21
+    # checks at create time and our hosts don't set.
+    assert "ipv4.nat=true" in net
+    assert "ipv4.nat=false" not in net
 
 
 def test_create_uses_the_resolved_manager_ip(monkeypatch):
