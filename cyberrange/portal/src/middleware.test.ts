@@ -114,11 +114,11 @@ describe("manual URL attempts", () => {
 
 const PUBLIC_PAGES = new Set(["/", "/login", "/no-role", "/auth-error"])
 
-// Recorded decision (#289): /orientation is deliberately NOT in config.matcher. It is a static
-// page whose only API call needs a session, and it guards itself in the browser (it sends an
-// unauthenticated visitor to /login). Adding a server-side guard is an optional product change
-// tracked separately in #292; it is not made here. If the matcher ever covers /orientation,
-// the test below fails so that this list and that decision are updated together.
+// Deferred per #292 (defense window): /orientation is deliberately NOT in config.matcher. It is a
+// static page whose only API calls need a session, and it guards itself in the browser: it sends
+// a signed-out visitor to /login (tested in src/app/orientation/page.test.tsx). A server-side
+// guard is an optional product change tracked in #292 and is not made here. If the matcher ever
+// covers /orientation, the test below fails so that this list and that decision change together.
 const CLIENT_GUARDED_PAGES = new Set(["/orientation"])
 
 function pageRoutes(dir: string, prefix = ""): string[] {
@@ -160,14 +160,6 @@ describe("matcher inventory", () => {
     const listed = Array.from(CLIENT_GUARDED_PAGES)
     expect(listed.filter((r) => !routes.includes(r))).toEqual([])
     expect(listed.filter(matcherCovers)).toEqual([])
-  })
-
-  it("keeps a browser-side redirect on every client-guarded page", () => {
-    for (const route of Array.from(CLIENT_GUARDED_PAGES)) {
-      const source = fs.readFileSync(path.join(appDir, route, "page.tsx"), "utf8")
-      expect(source).toContain('status === "unauthenticated"')
-      expect(source).toContain('router.replace("/login')
-    }
   })
 
   it("does not put the public pages behind auth (would loop /login or /no-role)", () => {
