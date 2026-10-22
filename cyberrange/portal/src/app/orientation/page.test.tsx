@@ -55,6 +55,8 @@ it("shows instructors the instructor console steps instead of the lab steps", ()
   expect(screen.getByText("Decide reviews")).toBeInTheDocument()
   expect(screen.getByText("Continue to the instructor dashboard")).toBeInTheDocument()
   expect(screen.queryByText("Provision your pod")).not.toBeInTheDocument()
+  expect(screen.getByText(/student IDs are always anonymized/)).toBeInTheDocument()
+  expect(document.body.textContent).not.toContain("option to anonymize")
 })
 
 it("keeps the lab steps for students", () => {

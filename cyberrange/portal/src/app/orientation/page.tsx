@@ -29,7 +29,7 @@ const instructorOrientation = {
     ["Watch live labs", "Live labs shows who has a lab running right now and how far along each student is."],
     ["Check student progress", "Students lists the roster with each student's progress and pod status. Open a student to see their Wazuh alerts for the current and earlier labs."],
     ["Decide reviews", "When a student asks for review of work that was not credited, it appears in Reviews. Check the evidence and notes, then approve, reject, or ask for a retry. An approval records the task as passed."],
-    ["Export results", "Download progress and knowledge-gain data as CSV or JSON from the dashboard, with an option to anonymize student identifiers."],
+    ["Export results", "Download knowledge-gain data as CSV or JSON from the dashboard (student IDs are always anonymized), or one student's progress as CSV from their page."],
   ],
 }
 
