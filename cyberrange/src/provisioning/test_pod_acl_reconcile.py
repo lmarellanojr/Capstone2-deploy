@@ -5,6 +5,7 @@ import pod_net
 from test_pod_egress_acl import _record
 
 MGR = "10.0.40.10"
+DNS = "10.93.10.1"
 GOOD_CFG = {
     "security.acls": "pod-1-egress",
     "security.acls.default.egress.action": "reject",
@@ -12,13 +13,14 @@ GOOD_CFG = {
 }
 
 
-def _rules(pid, ip=MGR):
+def _rules(pid, ip=MGR, dns=DNS):
     return [dict(kv.split("=", 1) for kv in r) | {"state": "enabled", "description": ""}
-            for r in pod_net.pod_acl_rules(pid, ip)]
+            for r in pod_net.pod_acl_rules(pid, ip, dns)]
 
 
 def _setup(monkeypatch, live, nets, acls, fail_on=None):
     calls = _record(monkeypatch, fail_on=fail_on)
+    monkeypatch.delenv("UPLINK_DNS_IP", raising=False)
     pod_net._orphan_seen_last_sweep = set()
     monkeypatch.setattr(pod_net, "_live_pod_ids", lambda: set(live))
 
@@ -46,7 +48,7 @@ def test_missing_acl_is_created_and_attached(monkeypatch):
     pod_net.reconcile_pod_networks(manager_ip=MGR)
     assert ("network", "acl", "create", "pod-1-egress") in calls
     adds = [c[6:] for c in calls if c[:4] == ("network", "acl", "rule", "add")]
-    assert adds == [tuple(r) for r in pod_net.pod_acl_rules(1, MGR)]
+    assert adds == [tuple(r) for r in pod_net.pod_acl_rules(1, MGR, DNS)]
     assert ("network", "set", "pod-1-net", "security.acls=pod-1-egress") in calls
     assert ("network", "set", "pod-1-net", "security.acls.default.egress.action=reject") in calls
     assert ("network", "set", "pod-1-net", "security.acls.default.ingress.action=allow") in calls
@@ -110,6 +112,27 @@ def test_bad_manager_ip_skips_refresh(monkeypatch, bad):
                    [{"name": "pod-1-egress", "egress": _rules(1)}, {"name": "pod-3-egress"}])
     pod_net.reconcile_pod_networks(manager_ip=bad)
     # orphan cleanup still runs; no refresh writes for the live pod
+    assert _writes(calls) == [("network", "acl", "delete", "pod-3-egress")]
+
+
+def test_missing_dns_reject_is_restored(monkeypatch):
+    rules = [r for r in _rules(1) if not (r["action"] == "reject" and r.get("destination_port") == "53"
+                                          and r.get("protocol") == "udp")]
+    acl = {"name": "pod-1-egress", "egress": rules}
+    calls = _setup(monkeypatch, {1}, [{"name": "pod-1-net", "config": GOOD_CFG}], [acl])
+    pod_net.reconcile_pod_networks(manager_ip=MGR)
+    assert ("network", "get", "vmbr1", "ipv4.address") in calls
+    assert _writes(calls) == [
+        ("network", "acl", "rule", "add", "pod-1-egress", "egress", "action=reject",
+         "destination=10.93.10.1/32", "protocol=udp", "destination_port=53"),
+    ]
+
+
+def test_uplink_dns_failure_skips_refresh_keeps_cleanup(monkeypatch):
+    calls = _setup(monkeypatch, {1}, [{"name": "pod-1-net", "config": {}}],
+                   [{"name": "pod-1-egress", "egress": _rules(1)}, {"name": "pod-3-egress"}],
+                   fail_on=("network", "get", "vmbr1"))
+    pod_net.reconcile_pod_networks(manager_ip=MGR)
     assert _writes(calls) == [("network", "acl", "delete", "pod-3-egress")]
 
 

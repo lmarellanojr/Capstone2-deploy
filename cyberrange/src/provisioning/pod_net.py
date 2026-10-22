@@ -280,7 +280,9 @@ def _rule_key(rule: dict) -> tuple:
     return tuple((k, str(rule.get(k) or "")) for k in _RULE_KEYS)
 
 
-def ensure_pod_acl(pod_id: int, manager_ip: str, acl_obj: dict = None, net_config: dict = None):
+def ensure_pod_acl(
+    pod_id: int, manager_ip: str, uplink_dns: str, acl_obj: dict = None, net_config: dict = None
+):
     """Bring a live pod's egress ACL and its network attachment in line.
 
     acl_obj is the ACL from `network acl list` (None when missing); net_config is
@@ -288,7 +290,7 @@ def ensure_pod_acl(pod_id: int, manager_ip: str, acl_obj: dict = None, net_confi
     """
     acl = pod_acl_name(pod_id)
     net = pod_net_name(pod_id)
-    wanted = [dict(kv.split("=", 1) for kv in r) for r in pod_acl_rules(pod_id, manager_ip)]
+    wanted = [dict(kv.split("=", 1) for kv in r) for r in pod_acl_rules(pod_id, manager_ip, uplink_dns)]
 
     if acl_obj is None:
         logger.info(f"[reconciler] missing egress ACL {acl} — creating")
@@ -336,7 +338,7 @@ def _live_pod_ids() -> set:
     return {r["pod_id"] for r in rows}
 
 
-def reconcile_pod_networks(manager_ip: str = None):
+def reconcile_pod_networks(manager_ip: str = None, uplink_dns: str = None):
     global _orphan_seen_last_sweep
     try:
         live = _live_pod_ids()
@@ -401,7 +403,15 @@ def reconcile_pod_networks(manager_ip: str = None):
         except Exception as e:
             logger.error(f"[reconciler] sweep error: skipping egress ACL refresh: {e}")
             sweep_ip = None
+        sweep_dns = None
         if sweep_ip:
+            # Resolved once per sweep. Without it the DNS rejects can't be
+            # written, so skip the refresh rather than drop them.
+            try:
+                sweep_dns = uplink_dns_ip(uplink_dns)
+            except Exception as e:
+                logger.error(f"[reconciler] sweep error: uplink DNS lookup failed, skipping egress ACL refresh: {e}")
+        if sweep_ip and sweep_dns:
             acl_by_name = {a.get("name", ""): a for a in acls}
             net_by_name = {n.get("name", ""): n for n in nets}
             for pid, name in pod_nets:
@@ -411,6 +421,7 @@ def reconcile_pod_networks(manager_ip: str = None):
                     ensure_pod_acl(
                         pid,
                         sweep_ip,
+                        sweep_dns,
                         acl_by_name.get(pod_acl_name(pid)),
                         net_by_name.get(name, {}).get("config") or {},
                     )
