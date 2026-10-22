@@ -114,6 +114,13 @@ describe("manual URL attempts", () => {
 
 const PUBLIC_PAGES = new Set(["/", "/login", "/no-role", "/auth-error"])
 
+// Deferred per #292 (defense window): /orientation is deliberately NOT in config.matcher. It is a
+// static page whose only API calls need a session, and it guards itself in the browser: it sends
+// a signed-out visitor to /login (tested in src/app/orientation/page.test.tsx). A server-side
+// guard is an optional product change tracked in #292 and is not made here. If the matcher ever
+// covers /orientation, the test below fails so that this list and that decision change together.
+const CLIENT_GUARDED_PAGES = new Set(["/orientation"])
+
 function pageRoutes(dir: string, prefix = ""): string[] {
   const out: string[] = []
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -143,8 +150,16 @@ describe("matcher inventory", () => {
   })
 
   it("covers every non-public page", () => {
-    const uncovered = routes.filter((r) => !PUBLIC_PAGES.has(r) && !matcherCovers(r))
+    const uncovered = routes.filter(
+      (r) => !PUBLIC_PAGES.has(r) && !CLIENT_GUARDED_PAGES.has(r) && !matcherCovers(r),
+    )
     expect(uncovered).toEqual([])
+  })
+
+  it("lists only pages that exist and that the matcher really leaves out", () => {
+    const listed = Array.from(CLIENT_GUARDED_PAGES)
+    expect(listed.filter((r) => !routes.includes(r))).toEqual([])
+    expect(listed.filter(matcherCovers)).toEqual([])
   })
 
   it("does not put the public pages behind auth (would loop /login or /no-role)", () => {
