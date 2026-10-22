@@ -247,3 +247,35 @@ def test_create_fails_closed_when_uplink_lookup_errors(monkeypatch):
     with pytest.raises(RuntimeError):
         pod_net.create_pod_network(1, manager_ip="10.0.40.10")
     assert calls == [("network", "get", "vmbr1", "ipv4.address")]
+
+
+# R-2 targets from the risk assessment: portal, provisioning API, Keycloak,
+# the SSH bridge, and the manager's SSH and API ports. No pod may reach them.
+R2_TARGETS = [
+    ("10.115.77.1", 5000),
+    ("10.115.77.1", 3000),
+    ("10.115.77.1", 8765),
+    ("10.115.77.12", 80),
+    ("10.0.40.10", 22),
+    ("10.0.40.10", 55000),
+]
+
+
+def _allow_matches(rule, ip, port):
+    import ipaddress
+
+    r = dict(kv.split("=", 1) for kv in rule)
+    if r.get("action") != "allow":
+        return False
+    if "destination" in r and ipaddress.ip_address(ip) not in ipaddress.ip_network(r["destination"]):
+        return False
+    if "destination_port" in r and str(port) not in r["destination_port"].split(","):
+        return False
+    return True
+
+
+@pytest.mark.parametrize("pod_id", range(1, 7))
+@pytest.mark.parametrize("ip,port", R2_TARGETS)
+def test_no_allow_rule_reaches_r2_targets(pod_id, ip, port):
+    rules = pod_net.pod_acl_rules(pod_id, "10.0.40.10", "10.93.10.1")
+    assert [r for r in rules if _allow_matches(r, ip, port)] == []
