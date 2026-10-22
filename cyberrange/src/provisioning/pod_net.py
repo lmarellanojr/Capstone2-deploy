@@ -29,6 +29,31 @@ def pod_subnet(pod_id: int) -> str:
     return f"10.0.{50 + pod_id}"
 
 
+def pod_acl_name(pod_id: int) -> str:
+    assert 1 <= pod_id <= 6, f"pod_id must be 1-6, got {pod_id}"
+    return f"pod-{pod_id}-egress"
+
+
+# Agent enrolment (1515) and event delivery (1514). Everything else leaving a
+# pod that is not inside its own subnet is rejected: internet, host SSH, and
+# the Wazuh API on 55000 (#285).
+WAZUH_AGENT_PORTS = "1514,1515"
+DEFAULT_WAZUH_MANAGER_IP = "10.0.40.10"
+
+
+def pod_acl_rules(pod_id: int, manager_ip: str) -> List[List[str]]:
+    """Egress allow rules; the network's default egress action rejects the rest."""
+    return [
+        ["action=allow", f"destination={manager_pod_route(pod_id)}"],
+        [
+            "action=allow",
+            f"destination={manager_ip}/32",
+            "protocol=tcp",
+            f"destination_port={WAZUH_AGENT_PORTS}",
+        ],
+    ]
+
+
 # mon-net gateway. Manual 02 sets ipv4.address=10.0.40.1/24 and pins the
 # manager's own eth0 address at 10.0.40.10. The manager's default route is
 # lxdbr0 (eth1), so a pod packet arrives on eth0 and the reply is lost unless
@@ -123,10 +148,21 @@ def _lxc_json(*args) -> List:
         return []
 
 
-def create_pod_network(pod_id: int):
+def create_pod_network(pod_id: int, manager_ip: str = None):
     net = pod_net_name(pod_id)
     sub = pod_subnet(pod_id)
+    acl = pod_acl_name(pod_id)
+    manager_ip = manager_ip or os.getenv("WAZUH_MANAGER_IP", "").strip() or DEFAULT_WAZUH_MANAGER_IP
 
+    # ACL first, then the network created with it attached, so the network is
+    # never up without it. A failure here raises; delete_pod_network removes
+    # whatever was made.
+    _lxc("network", "acl", "create", acl, check=True)
+    for rule in pod_acl_rules(pod_id, manager_ip):
+        _lxc("network", "acl", "rule", "add", acl, "egress", *rule, check=True)
+
+    # Ingress stays open: consoles, the DVWA proxy and scoring reach in from
+    # the host, and replies to allowed egress are tracked by OVN.
     _lxc(
         "network",
         "create",
@@ -136,6 +172,9 @@ def create_pod_network(pod_id: int):
         f"ipv4.address={sub}.1/24",
         "ipv4.nat=true",
         "ipv6.address=none",
+        f"security.acls={acl}",
+        "security.acls.default.egress.action=reject",
+        "security.acls.default.ingress.action=allow",
         check=True,
     )
 
@@ -155,20 +194,21 @@ def create_pod_network(pod_id: int):
     # After the retry loop, not inside it. A route error must reach
     # cleanup_after_failure rather than being retried as a peer failure.
     ensure_manager_pod_route(pod_id)
-    logger.info(f"Pod network {net} created and peered to mon-net")
+    logger.info(f"Pod network {net} created with {acl} and peered to mon-net")
 
 
 def delete_pod_network(pod_id: int):
     net = pod_net_name(pod_id)
-    acl = f"pod-{pod_id}-egress"
+    acl = pod_acl_name(pod_id)
 
     delete_manager_pod_route(pod_id)
     _lxc_peer("delete", net, "to-mon")
     _lxc_peer("delete", "mon-net", f"from-pod-{pod_id}")
-    _lxc("network", "acl", "delete", acl)
+    # Network before ACL: LXD refuses to delete an ACL a network still uses.
     _lxc("network", "delete", net)
+    _lxc("network", "acl", "delete", acl)
 
-    logger.info(f"Pod network {net} and peers deleted")
+    logger.info(f"Pod network {net}, {acl} and peers deleted")
 
 
 def _live_pod_ids() -> set:

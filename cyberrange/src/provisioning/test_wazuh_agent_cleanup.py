@@ -237,7 +237,7 @@ def test_stale_name_does_not_start_the_agent_or_mark_active(monkeypatch):
 
     monkeypatch.setattr(provision.pylxd, "Client", _Client)
     monkeypatch.setattr(provision, "delete_pod_network", lambda pod_id: None)
-    monkeypatch.setattr(provision, "create_pod_network", lambda pod_id: None)
+    monkeypatch.setattr(provision, "create_pod_network", lambda pod_id, **kw: None)
     monkeypatch.setattr(provision, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(provision, "ensure_guest_nic_up", lambda *args, **kwargs: True)
     monkeypatch.setattr(provision, "ensure_dvwa_compose", lambda inst: True)
