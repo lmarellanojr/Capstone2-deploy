@@ -18,12 +18,12 @@ PULL = HOST / "pull_release.sh"
 
 def test_pull_release_routes_post_extract_smoke_through_fail_apply():
     text = PULL.read_text(encoding="utf-8")
-    assert 'smoke_wazuh_ca || fail_apply "Wazuh CA smoke failed"' in text
-    assert "  CERT_SYNC_RC=0\n  sync_wazuh_api_cert\n  if smoke_wazuh_ca; then" in text
+    assert 'run_wazuh_smoke\nif [ "$SMOKE_RC" -eq 1 ]; then\n  fail_apply "Wazuh CA smoke failed"' in text
+    assert "  sync_wazuh_api_cert\n  run_wazuh_smoke\n  if [ \"$SMOKE_RC\" -eq 1 ]; then" in text
     assert "recheck FAILED on unchanged release; the next pull retries\" >&2\n    exit 1" in text
     assert "-verify_hostname localhost" in text
     assert "/security/user/authenticate" in text
-    assert "[ $? -eq 0 ] || return 1" in text
+    assert '[ "$rc" -eq 0 ] || return 1' in text
 
 
 def test_require_mode_raises_runtime_error(tmp_path: Path, monkeypatch):
