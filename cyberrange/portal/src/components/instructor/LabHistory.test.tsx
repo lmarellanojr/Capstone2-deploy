@@ -11,7 +11,11 @@ import { instructor } from "@/lib/api"
 jest.mock("@/lib/api", () => ({
   instructor: { listStudentLabs: jest.fn(), getLabAlerts: jest.fn() },
 }))
-jest.mock("@/components/ui", () => ({ LoadingSpinner: ({ message }: { message: string }) => <p>{message}</p> }))
+jest.mock("@/components/ui", () => ({
+  LoadingSpinner: ({ message }: { message: string }) => <p>{message}</p>,
+  // The alert download control (AlertRowsDownload) renders the shared Button.
+  Button: ({ children, ...props }: any) => <button {...props}>{children}</button>,
+}))
 
 const listStudentLabs = instructor.listStudentLabs as jest.Mock
 const getLabAlerts = instructor.getLabAlerts as jest.Mock
