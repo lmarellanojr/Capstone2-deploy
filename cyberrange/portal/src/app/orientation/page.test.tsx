@@ -57,14 +57,16 @@ it("shows instructors the instructor console steps instead of the lab steps", ()
   expect(screen.queryByText("Provision your pod")).not.toBeInTheDocument()
 })
 
-it("keeps the lab steps for students, including student+instructor accounts routed as instructors", () => {
+it("keeps the lab steps for students", () => {
   sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["student"] } } })
-  const { unmount } = render(<OrientationPage />)
+  render(<OrientationPage />)
   expect(screen.getByText("Provision your pod")).toBeInTheDocument()
   expect(screen.queryByText("Decide reviews")).not.toBeInTheDocument()
-  unmount()
+})
 
+it("gives student+instructor accounts the instructor version", () => {
   sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["student", "instructor"] } } })
   render(<OrientationPage />)
   expect(screen.getByText("Welcome to the instructor console")).toBeInTheDocument()
+  expect(screen.queryByText("Provision your pod")).not.toBeInTheDocument()
 })
