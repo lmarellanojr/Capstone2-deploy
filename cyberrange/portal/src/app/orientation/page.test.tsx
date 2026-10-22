@@ -47,3 +47,24 @@ it("shows the orientation to a signed-in user without redirecting", () => {
   expect(replace).not.toHaveBeenCalled()
   expect(screen.getByText("Welcome to your lab orientation")).toBeInTheDocument()
 })
+
+it("shows instructors the instructor console steps instead of the lab steps", () => {
+  sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["instructor"] } } })
+  render(<OrientationPage />)
+  expect(screen.getByText("Welcome to the instructor console")).toBeInTheDocument()
+  expect(screen.getByText("Decide reviews")).toBeInTheDocument()
+  expect(screen.getByText("Continue to the instructor dashboard")).toBeInTheDocument()
+  expect(screen.queryByText("Provision your pod")).not.toBeInTheDocument()
+})
+
+it("keeps the lab steps for students, including student+instructor accounts routed as instructors", () => {
+  sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["student"] } } })
+  const { unmount } = render(<OrientationPage />)
+  expect(screen.getByText("Provision your pod")).toBeInTheDocument()
+  expect(screen.queryByText("Decide reviews")).not.toBeInTheDocument()
+  unmount()
+
+  sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["student", "instructor"] } } })
+  render(<OrientationPage />)
+  expect(screen.getByText("Welcome to the instructor console")).toBeInTheDocument()
+})
