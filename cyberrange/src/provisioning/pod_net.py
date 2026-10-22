@@ -218,7 +218,7 @@ def create_pod_network(pod_id: int, manager_ip: str = None, uplink_dns: str = No
         "--type=ovn",
         "network=vmbr1",
         f"ipv4.address={sub}.1/24",
-        "ipv4.nat=true",
+        "ipv4.nat=false",
         "ipv6.address=none",
         f"security.acls={acl}",
         "security.acls.default.egress.action=reject",
