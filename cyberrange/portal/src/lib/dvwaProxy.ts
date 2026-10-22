@@ -236,7 +236,9 @@ export function isVulnerableDvwaLabPath(path: string): boolean {
  */
 export function dvwaContentSecurityPolicy(path: string): string | null {
   if (isVulnerableDvwaLabPath(path)) {
-    return 'sandbox allow-scripts allow-forms allow-modals'
+    // CR-11 / #313: keep sandbox tokens and add framing in the same policy so
+    // vulnerable lab pages do not rely on a second config-only CSP header.
+    return "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
   }
   return null
 }
