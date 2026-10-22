@@ -6,7 +6,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ from models import (
     MilestoneRubricResponse,
     PodResponse,
     ProvisionRequest,
+    STUDENT_ID_PATTERN,
     ReviewResolveRequest,
     ReviewResolveResponse,
     ReviewResubmitRequest,
@@ -71,20 +72,26 @@ _BROWSER_LABELS = {
 }
 
 
+# Same shape rules as the student-facing models (R-8): only the portal proxy
+# calls these, but a body it would never send is rejected before the handler.
 class BrowserScoreIn(BaseModel):
-    student_id: str
-    pod_id: int
-    scenario_id: int
-    milestone_id: int
-    label: str
+    model_config = ConfigDict(extra="forbid")
+
+    student_id: str = Field(..., pattern=STUDENT_ID_PATTERN)
+    pod_id: int = Field(..., ge=1, le=2**63 - 1)
+    scenario_id: int = Field(..., ge=1, le=99)
+    milestone_id: int = Field(..., ge=1, le=10)
+    label: str = Field(..., min_length=1, max_length=64)
 
 
 class BrowserDiagnosticIn(BaseModel):
-    student_id: str
-    pod_id: int
-    scenario_id: int
-    milestone_id: int
-    reason: str
+    model_config = ConfigDict(extra="forbid")
+
+    student_id: str = Field(..., pattern=STUDENT_ID_PATTERN)
+    pod_id: int = Field(..., ge=1, le=2**63 - 1)
+    scenario_id: int = Field(..., ge=1, le=99)
+    milestone_id: int = Field(..., ge=1, le=10)
+    reason: str = Field(..., min_length=1, max_length=64)
 
 
 def _pod_scenario_is_06(raw) -> bool:

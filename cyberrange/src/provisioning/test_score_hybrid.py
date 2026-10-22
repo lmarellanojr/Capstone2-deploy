@@ -549,7 +549,7 @@ def test_tc_s12_10_conflict_routed_to_inst_03_queue_and_resolved(client, hybrid_
 # ---------------------------------------------------------------------------
 
 def test_flag_submit_cannot_impersonate_another_student(client, hybrid_db: str):
-    """Smuggling student_id in body must be ignored."""
+    """Smuggling student_id in the body is rejected (R-8 extra="forbid") and writes nothing."""
     set_caller(app, "student_shekinah", "student")
     insert_test_pod(hybrid_db, "student_shekinah", scenario_id=1, pod_id=101)
     insert_test_pod(hybrid_db, "student_victim", scenario_id=1, pod_id=999)
@@ -564,15 +564,24 @@ def test_flag_submit_cannot_impersonate_another_student(client, hybrid_db: str):
             "flag": flag_victim,
         },
     )
-    assert res.status_code == 200
+    assert res.status_code == 422
 
-    # Ensure review or verification row belongs to caller 'student_shekinah', NEVER 'student_victim'
-    conn = sqlite3.connect(hybrid_db)
-    victim_rev = conn.execute("SELECT * FROM review_cases WHERE student_id='student_victim'").fetchall()
-    assert len(victim_rev) == 0
-    victim_mv = conn.execute("SELECT * FROM milestone_verification WHERE student_id='student_victim'").fetchall()
-    assert len(victim_mv) == 0
-    conn.close()
+    def assert_no_victim_rows():
+        conn = sqlite3.connect(hybrid_db)
+        victim_rev = conn.execute("SELECT * FROM review_cases WHERE student_id='student_victim'").fetchall()
+        assert len(victim_rev) == 0
+        victim_mv = conn.execute("SELECT * FROM milestone_verification WHERE student_id='student_victim'").fetchall()
+        assert len(victim_mv) == 0
+        conn.close()
+
+    assert_no_victim_rows()
+
+    # Same victim flag without the smuggled field reaches the handler, which must
+    # score it against the caller only and never write rows for 'student_victim'.
+    res = client.post("/progress/1/flag", json={"milestone_id": 1, "flag": flag_victim})
+    assert res.status_code == 200
+    assert res.json()["outcome"] == "INCOMPLETE"
+    assert_no_victim_rows()
 
 
 def test_conflict_escalation_does_not_leak_expected_flag(client, hybrid_db: str):
@@ -1470,7 +1479,7 @@ def test_pure_flag_wrong_flag_no_score_no_review(client, hybrid_db: str):
 
     res = client.post("/progress/1/flag", json={"milestone_id": 5, "flag": "FLAG{WRONG}"})
     assert res.status_code == 200
-    assert res.json()["status"] == "INCOMPLETE"
+    assert res.json()["outcome"] == "INCOMPLETE"
 
     conn = sqlite3.connect(hybrid_db)
     passes = conn.execute(
