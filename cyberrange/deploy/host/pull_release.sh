@@ -87,6 +87,12 @@ smoke_wazuh_ca() {
   fi
   out=$(openssl s_client -connect localhost:55000 -servername localhost \
     -verify_hostname localhost -CAfile "$ca" </dev/null 2>&1 || true)
+  if ! printf '%s\n' "$out" | grep -q "CONNECTED("; then
+    # No TCP connection (e.g. manager stopped): no chain was checked, so this
+    # is "could not run", not a chain failure. Matches the helper's SyncSkip.
+    echo "pull-release: wazuh CA smoke skipped: localhost:55000 not accepting connections"
+    return 2
+  fi
   if ! printf '%s\n' "$out" | grep -q "Verify return code: 0"; then
     echo "pull-release: Wazuh TLS-Degraded: manager cert failed chain or hostname check against $ca" >&2
     return 1

@@ -211,12 +211,24 @@ def _install_cert_helper(host):
     (host.root / "deploy" / "host" / "sync_wazuh_api_cert.py").write_text(CERT_HELPER)
 
 
+# Like real s_client: CONNECTED( once TCP connects, then the verify result.
+# FAKE_REFUSED=1 mimics a stopped manager (connection refused, exit 1).
+OPENSSL_STUB = """#!/bin/bash
+if [ -n "$FAKE_REFUSED" ]; then
+  echo "connect:errno=111"
+  exit 1
+fi
+echo "CONNECTED(00000003)"
+echo "Verify return code: ${FAKE_VERIFY:-21}"
+"""
+
+
 def _install_ca_and_lxc(host):
     certs = host.root / "certs"
     certs.mkdir(exist_ok=True)
     (certs / "wazuh-api-ca.crt").write_text("CA\n")
     stubs = {"lxc": "#!/bin/bash\nexit 0\n",
-             "openssl": '#!/bin/bash\necho "Verify return code: ${FAKE_VERIFY:-21}"\n'}
+             "openssl": OPENSSL_STUB}
     for name, body in stubs.items():
         p = host.bin / name
         p.write_text(body)
@@ -337,3 +349,29 @@ def test_apply_rolls_back_when_ca_smoke_fails(host):
     res = host()  # openssl stub reports a failed verify
     assert res.returncode == 1
     assert (host.data / "rollback" / "bad-sha").read_text().strip() == SHA
+
+
+def test_unchanged_release_refused_connection_is_incomplete_not_failed(host):
+    # Manager stopped in CA mode: s_client never connects, so no chain was checked.
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    _install_auth_ok(host)
+    res = host(FAKE_SKIP="1", FAKE_REFUSED="1")
+    assert res.returncode == 0, res.stderr
+    assert "wazuh CA smoke skipped: localhost:55000 not accepting connections" in res.stdout
+    assert "recheck incomplete" in res.stderr
+    assert "recheck OK" not in res.stdout
+    assert "recheck FAILED" not in res.stderr
+    assert "TLS-Degraded" not in res.stderr
+
+
+def test_apply_does_not_roll_back_when_connection_is_refused(host):
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    _install_auth_ok(host)
+    res = host(FAKE_REFUSED="1")
+    assert res.returncode == 0, res.stderr
+    assert "not accepting connections" in res.stdout
+    assert "TLS-Degraded" not in res.stderr
+    assert (host.root / "DEPLOYED_SHA").read_text().strip() == SHA
+    assert not (host.data / "rollback" / "bad-sha").exists()
