@@ -1,4 +1,5 @@
 """Per-pod OVN network helpers (LXD CLI)."""
+import ipaddress
 import json
 import logging
 import os
@@ -27,6 +28,39 @@ def pod_net_name(pod_id: int) -> str:
 
 def pod_subnet(pod_id: int) -> str:
     return f"10.0.{50 + pod_id}"
+
+
+def pod_acl_name(pod_id: int) -> str:
+    assert 1 <= pod_id <= 6, f"pod_id must be 1-6, got {pod_id}"
+    return f"pod-{pod_id}-egress"
+
+
+# Agent enrolment (1515) and event delivery (1514). Everything else leaving a
+# pod that is not inside its own subnet is rejected: internet, host SSH, and
+# the Wazuh API on 55000 (#285).
+WAZUH_AGENT_PORTS = "1514,1515"
+DEFAULT_WAZUH_MANAGER_IP = "10.0.40.10"
+
+
+def pod_acl_rules(pod_id: int, manager_ip: str, uplink_dns: str) -> List[List[str]]:
+    """Egress rules; the network's default egress action rejects the rest.
+
+    LXD adds its own priority-200 allow for udp/tcp 53 to the uplink resolver,
+    which outranks the default reject. The explicit rejects below (priority
+    400) close that DNS path out of the pod. They target only the uplink /32,
+    so DNS to meta inside the pod subnet still works.
+    """
+    return [
+        ["action=allow", f"destination={manager_pod_route(pod_id)}"],
+        [
+            "action=allow",
+            f"destination={manager_ip}/32",
+            "protocol=tcp",
+            f"destination_port={WAZUH_AGENT_PORTS}",
+        ],
+        ["action=reject", f"destination={uplink_dns}/32", "protocol=udp", "destination_port=53"],
+        ["action=reject", f"destination={uplink_dns}/32", "protocol=tcp", "destination_port=53"],
+    ]
 
 
 # mon-net gateway. Manual 02 sets ipv4.address=10.0.40.1/24 and pins the
@@ -123,10 +157,60 @@ def _lxc_json(*args) -> List:
         return []
 
 
-def create_pod_network(pod_id: int):
+_MON_SUBNET = ipaddress.ip_network("10.0.40.0/24")
+_MON_GATEWAY = ipaddress.ip_address(MON_NET_GATEWAY)
+UPLINK_NETWORK = "vmbr1"
+
+
+def uplink_dns_ip(override: str = None) -> str:
+    """The uplink resolver pods are handed by LXD: vmbr1's ipv4.address.
+
+    An explicit override, then UPLINK_DNS_IP, replace the lookup. Raises if neither gives a single IPv4
+    address, so the DNS reject is never silently dropped.
+    """
+    raw = (override or os.getenv("UPLINK_DNS_IP", "")).strip()
+    if not raw:
+        r = _lxc("network", "get", UPLINK_NETWORK, "ipv4.address", check=True)
+        raw = (r.stdout or "").strip().split("/")[0]
+    try:
+        addr = ipaddress.ip_address(raw)
+    except ValueError:
+        raise ValueError(f"uplink DNS address {raw!r} is not a valid IPv4 address")
+    if addr.version != 4:
+        raise ValueError(f"uplink DNS address {raw} is not IPv4")
+    return str(addr)
+
+
+def _check_manager_ip(manager_ip: str) -> str:
+    """The 1514/1515 rule must target one host inside the monitoring subnet."""
+    try:
+        addr = ipaddress.ip_address(manager_ip)
+    except ValueError:
+        raise ValueError(f"manager address {manager_ip!r} is not a valid IPv4 address")
+    if addr.version != 4 or addr not in _MON_SUBNET:
+        raise ValueError(f"manager address {manager_ip} is outside {_MON_SUBNET}")
+    if addr in (_MON_GATEWAY, _MON_SUBNET.network_address, _MON_SUBNET.broadcast_address):
+        raise ValueError(f"manager address {manager_ip} is the gateway, network or broadcast address")
+    return str(addr)
+
+
+def create_pod_network(pod_id: int, manager_ip: str = None, uplink_dns: str = None):
     net = pod_net_name(pod_id)
     sub = pod_subnet(pod_id)
+    acl = pod_acl_name(pod_id)
+    manager_ip = manager_ip or os.getenv("WAZUH_MANAGER_IP", "").strip() or DEFAULT_WAZUH_MANAGER_IP
+    manager_ip = _check_manager_ip(manager_ip)
+    uplink_dns = uplink_dns_ip(uplink_dns)
 
+    # ACL first, then the network created with it attached, so the network is
+    # never up without it. A failure here raises; delete_pod_network removes
+    # whatever was made.
+    _lxc("network", "acl", "create", acl, check=True)
+    for rule in pod_acl_rules(pod_id, manager_ip, uplink_dns):
+        _lxc("network", "acl", "rule", "add", acl, "egress", *rule, check=True)
+
+    # Ingress stays open: consoles, the DVWA proxy and scoring reach in from
+    # the host, and replies to allowed egress are tracked by OVN.
     _lxc(
         "network",
         "create",
@@ -136,6 +220,9 @@ def create_pod_network(pod_id: int):
         f"ipv4.address={sub}.1/24",
         "ipv4.nat=true",
         "ipv6.address=none",
+        f"security.acls={acl}",
+        "security.acls.default.egress.action=reject",
+        "security.acls.default.ingress.action=allow",
         check=True,
     )
 
@@ -155,20 +242,21 @@ def create_pod_network(pod_id: int):
     # After the retry loop, not inside it. A route error must reach
     # cleanup_after_failure rather than being retried as a peer failure.
     ensure_manager_pod_route(pod_id)
-    logger.info(f"Pod network {net} created and peered to mon-net")
+    logger.info(f"Pod network {net} created with {acl} and peered to mon-net")
 
 
 def delete_pod_network(pod_id: int):
     net = pod_net_name(pod_id)
-    acl = f"pod-{pod_id}-egress"
+    acl = pod_acl_name(pod_id)
 
     delete_manager_pod_route(pod_id)
     _lxc_peer("delete", net, "to-mon")
     _lxc_peer("delete", "mon-net", f"from-pod-{pod_id}")
-    _lxc("network", "acl", "delete", acl)
+    # Network before ACL: LXD refuses to delete an ACL a network still uses.
     _lxc("network", "delete", net)
+    _lxc("network", "acl", "delete", acl)
 
-    logger.info(f"Pod network {net} and peers deleted")
+    logger.info(f"Pod network {net}, {acl} and peers deleted")
 
 
 def _live_pod_ids() -> set:

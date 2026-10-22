@@ -13,7 +13,13 @@ from dvwa_ready import ensure_dvwa_ready
 from guest_nic import ensure_guest_nic_up
 import lab_history
 from lab_proxy import add_dvwa_http_proxy, remove_dvwa_http_proxy
-from pod_net import create_pod_network, delete_pod_network, pod_net_name, pod_subnet
+from pod_net import (
+    DEFAULT_WAZUH_MANAGER_IP,
+    create_pod_network,
+    delete_pod_network,
+    pod_net_name,
+    pod_subnet,
+)
 from wazuh_client import (
     AgentNotConnected,
     abort_if_names_remain,
@@ -55,9 +61,6 @@ def vmids_for_pod(pod_id: int, student_id: str):
         "meta": f"pod-{student_id}-meta",
         "dvwa": f"pod-{student_id}-dvwa",
     }
-
-
-DEFAULT_WAZUH_MANAGER_IP = "10.0.40.10"
 
 
 def wazuh_manager_ip(client) -> str:
@@ -173,7 +176,9 @@ def perform_provisioning(student_id: str, pod_id: int, vmids: Dict[str, str], sc
         client = pylxd.Client(project=os.getenv("LXD_PROJECT", "default"))
 
         delete_pod_network(pod_id)
-        create_pod_network(pod_id)
+        # One lookup for both the ACL and the agent's ossec.conf, so they agree.
+        manager_ip = wazuh_manager_ip(client)
+        create_pod_network(pod_id, manager_ip=manager_ip)
         log_event("NET_CREATE_OK", student_id, pod_id, detail=f"{pod_net_name(pod_id)} ({sub}.0/24)")
 
         user_data = f"""#cloud-config
@@ -368,7 +373,6 @@ write_files:
             log_event("LAB_PROXY_FAIL", student_id, pod_id, detail=str(e))
 
         def _enroll():
-            manager_ip = wazuh_manager_ip(client)
             # Free this student's agent names first. A name the delete could
             # not purge makes authd reject the new key, so refuse the lab
             # before wazuh-agent starts.
