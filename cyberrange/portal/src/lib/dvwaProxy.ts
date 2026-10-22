@@ -236,8 +236,10 @@ export function isVulnerableDvwaLabPath(path: string): boolean {
  */
 export function dvwaContentSecurityPolicy(path: string): string | null {
   if (isVulnerableDvwaLabPath(path)) {
-    // CR-11 / #313: keep sandbox tokens and add framing in the same policy so
-    // vulnerable lab pages do not rely on a second config-only CSP header.
+    // CR-11 / #313: next.config also sends `frame-ancestors 'self'` on /lab/dvwa/*.
+    // This sandbox policy survives only because Next 14.2.x appends route headers
+    // next to config headers (newer Next may replace them). nextSendResponseCsp.test.ts
+    // guards this; revisit it before any Next major upgrade.
     return "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
   }
   return null
