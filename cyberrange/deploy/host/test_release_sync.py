@@ -220,6 +220,7 @@ def test_pull_release_health_covers_ssh_bridge():
     socket is down so IndentationError in bridge.py cannot go live again.
     """
     text = (HOST / "pull_release.sh").read_text(encoding="utf-8")
+    assert ":/usr/sbin:/snap/bin" in text
     assert "10.115.77.1:8765" in text
     assert "/api/ssh-websocket" in text
     assert '"101"' in text or "'101'" in text

@@ -80,6 +80,7 @@ def test_pull_release_unit_file():
     assert "Type=oneshot" in text
     assert "MemoryMax=1G" in text or "MemoryMax=1073741824" in text
     assert "pull_release.sh" in text
+    assert "/usr/sbin" in text
     assert "0.0.0.0" not in text
     assert "self-hosted" not in text
     timer = (HERE / "cyberrange-pull-release.timer").read_text(encoding="utf-8")
