@@ -259,6 +259,70 @@ def delete_pod_network(pod_id: int):
     logger.info(f"Pod network {net}, {acl} and peers deleted")
 
 
+def _sweep_manager_ip(manager_ip: str = None) -> str:
+    """Same order as provisioning: argument, live manager address, env, default."""
+    if not manager_ip:
+        try:
+            import pylxd
+            from provision import wazuh_manager_ip
+
+            manager_ip = wazuh_manager_ip(pylxd.Client(project=LXD_PROJECT))
+        except Exception as e:
+            logger.warning(f"[reconciler] manager address lookup failed, using env/default: {e}")
+            manager_ip = os.getenv("WAZUH_MANAGER_IP", "").strip() or DEFAULT_WAZUH_MANAGER_IP
+    return _check_manager_ip(manager_ip)
+
+
+_RULE_KEYS = ("action", "destination", "protocol", "destination_port")
+
+
+def _rule_key(rule: dict) -> tuple:
+    return tuple((k, str(rule.get(k) or "")) for k in _RULE_KEYS)
+
+
+def ensure_pod_acl(pod_id: int, manager_ip: str, acl_obj: dict = None, net_config: dict = None):
+    """Bring a live pod's egress ACL and its network attachment in line.
+
+    acl_obj is the ACL from `network acl list` (None when missing); net_config is
+    the network's config from `network list`. Writes only what differs.
+    """
+    acl = pod_acl_name(pod_id)
+    net = pod_net_name(pod_id)
+    wanted = [dict(kv.split("=", 1) for kv in r) for r in pod_acl_rules(pod_id, manager_ip)]
+
+    if acl_obj is None:
+        logger.info(f"[reconciler] missing egress ACL {acl} — creating")
+        _lxc("network", "acl", "create", acl, check=True)
+        current = []
+    else:
+        current = acl_obj.get("egress") or []
+
+    wanted_keys = {_rule_key(r) for r in wanted}
+    current_keys = {_rule_key(r) for r in current}
+    for rule in current:
+        if _rule_key(rule) not in wanted_keys:
+            fields = [f"{k}={v}" for k, v in _rule_key(rule) if v]
+            logger.info(f"[reconciler] removing stale egress rule from {acl}: {' '.join(fields)}")
+            _lxc("network", "acl", "rule", "remove", acl, "egress", *fields, check=True)
+    for rule in wanted:
+        if _rule_key(rule) not in current_keys:
+            fields = [f"{k}={v}" for k, v in rule.items()]
+            logger.info(f"[reconciler] adding egress rule to {acl}: {' '.join(fields)}")
+            _lxc("network", "acl", "rule", "add", acl, "egress", *fields, check=True)
+
+    config = net_config or {}
+    attached = [a.strip() for a in (config.get("security.acls") or "").split(",") if a.strip()]
+    wanted_cfg = {
+        "security.acls": ",".join(attached + ([] if acl in attached else [acl])),
+        "security.acls.default.egress.action": "reject",
+        "security.acls.default.ingress.action": "allow",
+    }
+    for key, value in wanted_cfg.items():
+        if config.get(key, "") != value:
+            logger.info(f"[reconciler] {net}: setting {key}={value}")
+            _lxc("network", "set", net, f"{key}={value}", check=True)
+
+
 def _live_pod_ids() -> set:
     from db import get_db_connection
 
@@ -272,7 +336,7 @@ def _live_pod_ids() -> set:
     return {r["pod_id"] for r in rows}
 
 
-def reconcile_pod_networks():
+def reconcile_pod_networks(manager_ip: str = None):
     global _orphan_seen_last_sweep
     try:
         live = _live_pod_ids()
@@ -331,5 +395,26 @@ def reconcile_pod_networks():
             if pid not in live:
                 logger.info(f"[reconciler] orphaned egress ACL pod-{pid}-egress — deleting")
                 _lxc("network", "acl", "delete", f"pod-{pid}-egress")
+
+        try:
+            sweep_ip = _sweep_manager_ip(manager_ip)
+        except Exception as e:
+            logger.error(f"[reconciler] sweep error: skipping egress ACL refresh: {e}")
+            sweep_ip = None
+        if sweep_ip:
+            acl_by_name = {a.get("name", ""): a for a in acls}
+            net_by_name = {n.get("name", ""): n for n in nets}
+            for pid, name in pod_nets:
+                if pid not in live or not 1 <= pid <= 6:
+                    continue
+                try:
+                    ensure_pod_acl(
+                        pid,
+                        sweep_ip,
+                        acl_by_name.get(pod_acl_name(pid)),
+                        net_by_name.get(name, {}).get("config") or {},
+                    )
+                except Exception as e:
+                    logger.error(f"[reconciler] sweep error: egress ACL for pod {pid}: {e}")
     except Exception as e:
         logger.error(f"[reconciler] sweep error: {e}")
