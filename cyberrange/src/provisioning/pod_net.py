@@ -1,4 +1,5 @@
 """Per-pod OVN network helpers (LXD CLI)."""
+import ipaddress
 import json
 import logging
 import os
@@ -148,11 +149,29 @@ def _lxc_json(*args) -> List:
         return []
 
 
+_MON_SUBNET = ipaddress.ip_network("10.0.40.0/24")
+_MON_GATEWAY = ipaddress.ip_address("10.0.40.1")
+
+
+def _check_manager_ip(manager_ip: str) -> str:
+    """The 1514/1515 rule must target one host inside the monitoring subnet."""
+    try:
+        addr = ipaddress.ip_address(manager_ip)
+    except ValueError:
+        raise ValueError(f"manager address {manager_ip!r} is not a valid IPv4 address")
+    if addr.version != 4 or addr not in _MON_SUBNET:
+        raise ValueError(f"manager address {manager_ip} is outside {_MON_SUBNET}")
+    if addr in (_MON_GATEWAY, _MON_SUBNET.network_address, _MON_SUBNET.broadcast_address):
+        raise ValueError(f"manager address {manager_ip} is the gateway, network or broadcast address")
+    return str(addr)
+
+
 def create_pod_network(pod_id: int, manager_ip: str = None):
     net = pod_net_name(pod_id)
     sub = pod_subnet(pod_id)
     acl = pod_acl_name(pod_id)
     manager_ip = manager_ip or os.getenv("WAZUH_MANAGER_IP", "").strip() or DEFAULT_WAZUH_MANAGER_IP
+    manager_ip = _check_manager_ip(manager_ip)
 
     # ACL first, then the network created with it attached, so the network is
     # never up without it. A failure here raises; delete_pod_network removes

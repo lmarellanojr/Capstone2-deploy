@@ -175,3 +175,20 @@ def test_reconcile_orphan_network_removes_its_acl_after_two_sweeps(monkeypatch):
     assert calls.index(("network", "delete", "pod-3-net")) < calls.index(
         ("network", "acl", "delete", "pod-3-egress")
     )
+
+
+def test_create_accepts_default_manager_ip(monkeypatch):
+    calls = _record(monkeypatch)
+    pod_net.create_pod_network(1, manager_ip="10.0.40.10")
+    assert any(c[:2] == ("network", "create") for c in calls)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["not-an-ip", "10.0.40.10/32", "10.0.41.10", "192.168.1.10", "10.0.40.1", "10.0.40.0", "10.0.40.255", "::1"],
+)
+def test_create_rejects_bad_manager_ip_before_any_lxc_call(monkeypatch, bad):
+    calls = _record(monkeypatch)
+    with pytest.raises(ValueError):
+        pod_net.create_pod_network(1, manager_ip=bad)
+    assert calls == []
