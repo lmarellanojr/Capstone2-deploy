@@ -227,3 +227,19 @@ def test_dns_localhost_regex_exact_token():
     assert not DNS_LOCALHOST_RE.search("DNS:localhost.localdomain")
     assert not DNS_LOCALHOST_RE.search("DNS:localhost6")
     assert not DNS_LOCALHOST_RE.search("DNS:notlocalhost")
+
+
+def test_missing_lxc_is_failed_and_names_the_path(tmp_path: Path, monkeypatch):
+    # #304: the pull unit PATH lacked /usr/sbin, and the journal only said
+    # FileNotFoundError. The default probe must name the binary and the PATH.
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+    result = sync_wazuh_api_cert(
+        root=tmp_path / "cyberrange",
+        data_dir=tmp_path / "data",
+        lxc_bin="lxc-not-installed",
+        best_effort=True,
+    )
+    assert result.status == "failed"
+    assert "lxc-not-installed not found on PATH=" in result.detail
+    assert "empty-bin" in result.detail
+    assert "FileNotFoundError" not in result.detail

@@ -66,6 +66,9 @@ exit 0
 SYNC = r"""import os, sys
 op = sys.argv[1]
 if op == "--check-apply":
+    if os.environ.get("FAKE_SKIP"):
+        print("already deployed " + os.environ["FAKE_SHA"])
+        sys.exit(2)
     print(os.environ["FAKE_SHA"])
 elif op == "--lock-hash":
     print("LOCK")
@@ -98,7 +101,7 @@ def host(tmp_path):
         e.update(env)
         return subprocess.run([BASH, str(SCRIPT), *args], capture_output=True, text=True, env=e, timeout=60)
 
-    run.root, run.data = root, data
+    run.root, run.data, run.state, run.bin = root, data, state, bin_dir
     return run
 
 
@@ -189,3 +192,82 @@ def test_no_provisioner_warning_when_set_or_wazuh_unused(host, env):
     res = host()
     assert res.returncode == 0, res.stderr
     assert "WAZUH_PROVISION_USER" not in res.stderr
+
+
+# #304: cert sync under the real unit PATH, and recovery when the SHA is unchanged.
+CERT_HELPER = r"""import os, sys
+with open(os.path.join(os.environ["FAKE_STATE"], "cert-sync"), "a") as f:
+    f.write(os.environ["PATH"] + "\n")
+rc = int(os.environ.get("FAKE_CERT_RC", "0"))
+if rc:
+    print("wazuh-api.crt sync failed: fake", file=sys.stderr)
+else:
+    print("wazuh-api.crt sync unchanged: fake")
+sys.exit(rc)
+"""
+
+
+def _install_cert_helper(host):
+    (host.root / "deploy" / "host" / "sync_wazuh_api_cert.py").write_text(CERT_HELPER)
+
+
+def _install_ca_and_lxc(host):
+    certs = host.root / "certs"
+    certs.mkdir(exist_ok=True)
+    (certs / "wazuh-api-ca.crt").write_text("CA\n")
+    stubs = {"lxc": "#!/bin/bash\nexit 0\n",
+             "openssl": '#!/bin/bash\necho "Verify return code: ${FAKE_VERIFY:-21}"\n'}
+    for name, body in stubs.items():
+        p = host.bin / name
+        p.write_text(body)
+        p.chmod(0o755)
+
+
+def _sync_paths(host):
+    return (host.state / "cert-sync").read_text().splitlines()
+
+
+def test_service_path_appends_sbin_for_cert_sync(host):
+    _install_cert_helper(host)
+    res = host(PATH=f"{host.bin}:/usr/bin:/bin", FAKE_SKIP="1")
+    assert res.returncode == 0, res.stderr
+    # The installed unit's PATH stays first (test stubs win); lxc dirs are appended.
+    assert _sync_paths(host) == [f"{host.bin}:/usr/bin:/bin:/usr/sbin:/snap/bin"]
+
+
+def test_unchanged_release_retries_a_failed_cert_sync(host):
+    _install_cert_helper(host)
+    first = host(FAKE_SKIP="1", FAKE_CERT_RC="2")
+    assert first.returncode == 0, first.stderr  # sync stays non-fatal
+    assert "wazuh-api.crt sync FAILED" in first.stderr
+    assert "recheck incomplete on unchanged release (sync exited 2)" in first.stderr
+    second = host(FAKE_SKIP="1")
+    assert second.returncode == 0, second.stderr
+    assert "wazuh cert recheck OK on unchanged release" in second.stdout
+    assert len(_sync_paths(host)) == 2  # retried without a new release SHA
+    assert (host.root / "DEPLOYED_SHA").read_text().strip() == "b" * 40
+
+
+def test_unchanged_release_ca_smoke_failure_is_loud_then_recovers(host):
+    _install_cert_helper(host)
+    _install_ca_and_lxc(host)
+    bad = host(FAKE_SKIP="1")
+    assert bad.returncode == 1
+    assert "TLS-Degraded" in bad.stderr
+    assert "recheck FAILED on unchanged release" in bad.stderr
+    assert (host.root / "certs" / "wazuh-api-ca.crt").read_text() == "CA\n"
+    good = host(FAKE_SKIP="1", FAKE_VERIFY="0")
+    assert good.returncode == 0, good.stderr
+    assert "wazuh cert recheck OK on unchanged release" in good.stdout
+    assert (host.root / "certs" / "wazuh-api-ca.crt").read_text() == "CA\n"
+
+
+@pytest.mark.skipif(any(Path(d, "lxc").exists() for d in ("/usr/bin", "/bin", "/usr/sbin", "/snap/bin")),
+                    reason="host has a real lxc")
+def test_ca_mode_without_lxc_logs_an_error(host):
+    certs = host.root / "certs"
+    certs.mkdir()
+    (certs / "wazuh-api-ca.crt").write_text("CA\n")
+    res = host(PATH=f"{host.bin}:/usr/bin:/bin", FAKE_SKIP="1")
+    assert res.returncode == 0, res.stderr
+    assert "ERROR: wazuh CA smoke cannot run: lxc not found on PATH=" in res.stderr

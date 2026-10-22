@@ -40,6 +40,7 @@ sync_wazuh_api_cert() {
   "$PY" "$helper" --root "$ROOT" --data "$DATA"
   rc=$?
   set -e
+  CERT_SYNC_RC=$rc
   # Helper: 0 ok/skipped/unchanged/installed; 2 = failed after validation (loud).
   # Never abort the pull — only surface the failure so operators notice.
   if [ "$rc" -eq 2 ]; then
@@ -62,7 +63,9 @@ smoke_wazuh_ca() {
     return 0
   fi
   if ! command -v lxc >/dev/null 2>&1; then
-    echo "pull-release: wazuh CA smoke skipped: lxc is not installed"
+    # Not silent (#304): with the CA installed this host expects lxc, so a miss
+    # means the unit PATH is wrong, not that Wazuh is absent.
+    echo "pull-release: ERROR: wazuh CA smoke cannot run: lxc not found on PATH=${PATH}" >&2
     return 0
   fi
   if ! lxc info wazuh-manager >/dev/null 2>&1; then
@@ -213,9 +216,21 @@ APPLY_RC=$?
 set -e
 if [ "$APPLY_RC" -eq 2 ]; then
   echo "pull-release skip: $APPLY_OUT"
-  # Still heal a mismatched host pin when the release SHA is unchanged.
+  # Still heal a mismatched host pin when the release SHA is unchanged, so a
+  # failed sync is retried by the next timer run instead of waiting for a new
+  # release (#304). A failed smoke exits 1 so the unit shows failed.
+  CERT_SYNC_RC=0
   sync_wazuh_api_cert
-  smoke_wazuh_ca
+  if smoke_wazuh_ca; then
+    if [ "$CERT_SYNC_RC" -eq 0 ]; then
+      echo "pull-release: wazuh cert recheck OK on unchanged release"
+    else
+      echo "pull-release: wazuh cert recheck incomplete on unchanged release (sync exited ${CERT_SYNC_RC}); the next pull retries" >&2
+    fi
+  else
+    echo "pull-release: wazuh cert recheck FAILED on unchanged release; the next pull retries" >&2
+    exit 1
+  fi
   exit 0
 fi
 if [ "$APPLY_RC" -ne 0 ]; then

@@ -119,6 +119,13 @@ def _live_server_pem(connect: str = DEFAULT_CONNECT, servername: str = "localhos
 
 
 def _manager_present(lxc_bin: str = "lxc") -> bool:
+    # A bare FileNotFoundError hid the cause on the primary Ampere (#304): the
+    # pull unit PATH lacked /usr/sbin. Name the PATH so the journal says why.
+    if shutil.which(lxc_bin) is None:
+        raise SyncError(
+            f"{lxc_bin} not found on PATH={os.environ.get('PATH', '')}; "
+            "cannot reach the wazuh-manager guest"
+        )
     proc = subprocess.run(
         [lxc_bin, "info", "wazuh-manager"],
         check=False,
