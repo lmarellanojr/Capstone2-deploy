@@ -14,6 +14,15 @@ describe("onboardingRedirectPath", () => {
     expect(onboardingRedirectPath("/dashboard", "", ["student"], true)).toBeNull()
     expect(onboardingRedirectPath("/dashboard", "", [], false)).toBeNull()
   })
+
+  it("skips admins but still sends new instructors and students", () => {
+    expect(onboardingRedirectPath("/admin", "", ["admin"], false)).toBeNull()
+    expect(onboardingRedirectPath("/instructor", "", ["instructor", "admin"], false)).toBeNull()
+    expect(onboardingRedirectPath("/instructor", "", ["instructor"], false))
+      .toBe("/orientation?returnTo=%2Finstructor")
+    expect(onboardingRedirectPath("/dashboard", "", ["student"], false))
+      .toBe("/orientation?returnTo=%2Fdashboard")
+  })
 })
 
 describe("redirectPathForRole", () => {

@@ -47,3 +47,36 @@ it("shows the orientation to a signed-in user without redirecting", () => {
   expect(replace).not.toHaveBeenCalled()
   expect(screen.getByText("Welcome to your lab orientation")).toBeInTheDocument()
 })
+
+it("shows instructors the instructor console steps instead of the lab steps", () => {
+  sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["instructor"] } } })
+  render(<OrientationPage />)
+  expect(screen.getByText("Welcome to the instructor console")).toBeInTheDocument()
+  expect(screen.getByText("Decide reviews")).toBeInTheDocument()
+  expect(screen.getByText("Continue to the instructor dashboard")).toBeInTheDocument()
+  expect(screen.queryByText("Provision your pod")).not.toBeInTheDocument()
+  expect(screen.getByText(/student IDs are always anonymized/)).toBeInTheDocument()
+  expect(document.body.textContent).not.toContain("option to anonymize")
+})
+
+it("keeps the lab steps for students", () => {
+  sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["student"] } } })
+  render(<OrientationPage />)
+  expect(screen.getByText("Provision your pod")).toBeInTheDocument()
+  expect(screen.queryByText("Decide reviews")).not.toBeInTheDocument()
+})
+
+it("gives student+instructor accounts the instructor version", () => {
+  sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["student", "instructor"] } } })
+  render(<OrientationPage />)
+  expect(screen.getByText("Welcome to the instructor console")).toBeInTheDocument()
+  expect(screen.queryByText("Provision your pod")).not.toBeInTheDocument()
+})
+
+it("sends an admin who opens /orientation to /admin without showing any orientation", () => {
+  sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["admin"] } } })
+  render(<OrientationPage />)
+  expect(replace).toHaveBeenCalledWith("/admin")
+  expect(screen.queryByText("Welcome to your lab orientation")).not.toBeInTheDocument()
+  expect(screen.queryByText("Welcome to the instructor console")).not.toBeInTheDocument()
+})
