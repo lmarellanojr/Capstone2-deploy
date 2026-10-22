@@ -3,6 +3,12 @@
 set -euo pipefail
 umask 077
 
+# User units ship PATH=/usr/bin:/bin. lxc is /usr/sbin/lxc (snap builds use
+# /snap/bin). Caller entries stay first so tests can stub curl and systemctl.
+# Without the append, cert sync raises FileNotFoundError and the CA smoke
+# logs "lxc is not installed", and a stale certs/wazuh-api.crt stays in place.
+export PATH="${PATH:-/usr/bin:/bin}:/usr/sbin:/snap/bin"
+
 ROOT="${HOME}/cyberrange"
 DATA="${HOME}/cyberrange-data"
 SYNC="${ROOT}/deploy/host/release_sync.py"

@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/llms_admin/cyberrange
-Environment=PATH=/home/llms_admin/opt/node/bin:/usr/bin:/bin
+Environment=PATH=/home/llms_admin/opt/node/bin:/usr/bin:/bin:/usr/sbin:/snap/bin
 ExecStart=/bin/bash /home/llms_admin/cyberrange/deploy/host/pull_release.sh
 Nice=10
 MemoryMax=1G
