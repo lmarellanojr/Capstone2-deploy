@@ -72,6 +72,10 @@ export function onboardingRedirectPath(
   roles: string[] | undefined,
   completed: boolean,
 ): string | null {
-  if (ONBOARDING_ALLOWLIST.has(pathname) || completed || !landingPathForRole(roles)) return null
+  const landing = landingPathForRole(roles)
+  if (ONBOARDING_ALLOWLIST.has(pathname) || completed || !landing) return null
+  // The orientation covers the lab and the instructor view. Admins land on
+  // /admin to manage accounts, so they skip it; new instructors still see it.
+  if (landing === "/admin") return null
   return `/orientation?returnTo=${encodeURIComponent(`${pathname}${search}`)}`
 }

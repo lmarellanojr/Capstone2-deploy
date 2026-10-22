@@ -7,6 +7,9 @@ const nextConfig = {
   // Chapter 07 cannot flip HTTPS by editing .env.local + restarting the unit.
   // CR-11 / #313: stop advertising the framework in responses.
   poweredByHeader: false,
+  // CR-10 / #312 interim: disable Image Optimization API until next is upgraded.
+  // Local next/image assets under /public still render; optimizer advisories are deferred.
+  images: { unoptimized: true },
   eslint: {
     ignoreDuringBuilds: true,
   },
