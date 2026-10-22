@@ -179,6 +179,8 @@ run
 
 **Expected result:** a session-open message for your meta target, followed by `meterpreter >`. A message saying the exploit completed without a session is not success.
 
+> **Scoring detail:** you may type `run` yourself or paste it at the `msf6 exploit(multi/http/tomcat_mgr_deploy) >` prompt in this Kali pane, and leave msfconsole open there. The checker credits only a session opened from that prompt, so a one-line `msfconsole -x "..."` command, a resource script, or a session started in another terminal is not credited. Keep this as the only terminal pane: do not split it or open extra panes, and do not press Enter again while the module runs, or you can lose the credit.
+
 #### 3. Inspect the remote identity
 
 At **Meterpreter**, open a remote command shell:
@@ -219,7 +221,7 @@ exit
 
 Check the prompt after each step; do not paste three exits blindly if you are already in Kali. Task 5 runs from the Kali account, not the remote `tomcat` account.
 
-> **Troubleshooting:** Connection failure: check **ACTIVE**, numeric RHOSTS and port 8180. Authentication failure: check `HttpUsername` and `HttpPassword` are both `tomcat`. No session: confirm `PATH /manager/text` and `TARGET 1` before `run`. If you closed the session before credit, rerun the configured module and keep the new session open. Persistent failures need an instructor check.
+> **Troubleshooting:** Connection failure: check **ACTIVE**, numeric RHOSTS and port 8180. Authentication failure: check `HttpUsername` and `HttpPassword` are both `tomcat`. No session: confirm `PATH /manager/text` and `TARGET 1` before `run`. If you closed the session before credit, rerun the configured module and keep the new session open. Persistent failures need an instructor check. If sessions keep closing, re-read the **Scoring detail** note above about keeping a single pane.
 
 **Why it matters:** in this lab, known default credentials allowed code deployment as a service account. Scenario 4 addresses that credential weakness.
 
