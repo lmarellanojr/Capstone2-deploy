@@ -1,5 +1,7 @@
 "use client";
 
+import { useParams } from 'next/navigation'
+
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
@@ -14,11 +16,8 @@ import { formatSqliteDate } from "@/lib/sqliteTime";
 import { adminPodBadgeVariant, canForceDestroy } from "@/lib/adminBadges";
 import { useToastContext } from "@/context/ToastContext";
 
-interface PageProps {
-  params: { id: string };
-}
-
-export default function AdminPodDetailPage({ params }: PageProps) {
+export default function AdminPodDetailPage() {
+  const params = useParams<{ id: string }>()
   const podId = Number(params.id);
   const { pod, loading, error, notFound, fetchedAtMs, refresh } = useAdminPodDetail(podId);
   const { success, error: showError } = useToastContext();

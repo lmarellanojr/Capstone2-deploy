@@ -4,6 +4,18 @@ import { getToken } from "next-auth/jwt"
 import { redirectPathForRole } from "@/lib/routeRoles"
 // Browser-facing origin, never 0.0.0.0 and never a hardcoded host (GAP-11).
 import { publicOrigin } from "@/lib/publicOrigin"
+import {
+  isDvwaRequest,
+  secureDefaultResponse,
+  secureDvwaResponse,
+} from "@/lib/dvwaSecurityPolicy"
+
+function finalizeMiddlewareResponse(pathname: string, response: NextResponse): NextResponse {
+  // Middleware redirects do not reliably inherit next.config headers() on Next 15.5.28.
+  return isDvwaRequest(pathname)
+    ? secureDvwaResponse(response)
+    : secureDefaultResponse(response)
+}
 
 export async function middleware(req: NextRequest) {
   const token = await getToken({
@@ -15,7 +27,7 @@ export async function middleware(req: NextRequest) {
     const origin = publicOrigin(req)
     const login = new URL("/login", origin)
     login.searchParams.set("callbackUrl", `${req.nextUrl.pathname}${req.nextUrl.search}`)
-    return NextResponse.redirect(login)
+    return finalizeMiddlewareResponse(req.nextUrl.pathname, NextResponse.redirect(login))
   }
 
   const roles = token.roles as string[] | undefined
@@ -37,7 +49,8 @@ export async function middleware(req: NextRequest) {
   // means "revoked instantly."
   const redirectPath = redirectPathForRole(req.nextUrl.pathname, roles)
   if (redirectPath) {
-    return NextResponse.redirect(new URL(redirectPath, publicOrigin(req)))
+    const response = NextResponse.redirect(new URL(redirectPath, publicOrigin(req)))
+    return finalizeMiddlewareResponse(req.nextUrl.pathname, response)
   }
 
   return NextResponse.next()

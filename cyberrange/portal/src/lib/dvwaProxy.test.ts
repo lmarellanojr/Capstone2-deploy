@@ -73,7 +73,8 @@ describe('dvwaProxy access control', () => {
   })
 
   describe('dvwaContentSecurityPolicy & isVulnerableDvwaLabPath', () => {
-    const EXPECTED_CSP = 'sandbox allow-scripts allow-forms allow-modals'
+    const EXPECTED_CSP =
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
 
     it('identifies SQL injection and Reflected XSS paths as vulnerable', () => {
       expect(isVulnerableDvwaLabPath('/vulnerabilities/sqli')).toBe(true)
@@ -104,12 +105,12 @@ describe('dvwaProxy access control', () => {
       expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(EXPECTED_CSP)
     })
 
-    it('returns null CSP for safe pages so portal origin is preserved', () => {
-      expect(dvwaContentSecurityPolicy('/')).toBeNull()
-      expect(dvwaContentSecurityPolicy('/security.php')).toBeNull()
-      expect(dvwaContentSecurityPolicy('/login.php')).toBeNull()
-      expect(dvwaContentSecurityPolicy('/favicon.ico')).toBeNull()
-      expect(dvwaContentSecurityPolicy('/dvwa/css/main.css')).toBeNull()
+    it('returns framing-only CSP for safe pages so portal origin is preserved', () => {
+      expect(dvwaContentSecurityPolicy('/')).toBe("frame-ancestors 'self'")
+      expect(dvwaContentSecurityPolicy('/security.php')).toBe("frame-ancestors 'self'")
+      expect(dvwaContentSecurityPolicy('/login.php')).toBe("frame-ancestors 'self'")
+      expect(dvwaContentSecurityPolicy('/favicon.ico')).toBe("frame-ancestors 'self'")
+      expect(dvwaContentSecurityPolicy('/dvwa/css/main.css')).toBe("frame-ancestors 'self'")
     })
   })
 
@@ -260,7 +261,7 @@ describe('dvwaProxy access control', () => {
 
     it('leaves CSP policy unchanged (no allow-same-origin)', () => {
       expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(
-        'sandbox allow-scripts allow-forms allow-modals'
+        "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
       )
       expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')!).not.toMatch(/same-origin/)
     })

@@ -13,7 +13,14 @@ jest.mock('react-markdown', () => {
 jest.mock('remark-gfm', () => () => {})
 jest.mock('rehype-sanitize', () => () => {})
 
+let mockRouteId = '01'
+function scenarioPage(id: string) {
+  mockRouteId = id
+  return <ScenarioDetailPage />
+}
+
 jest.mock('next/navigation', () => ({
+  useParams: () => ({ id: mockRouteId }),
   useRouter: () => ({ push: jest.fn() }),
   usePathname: () => '/scenario/01',
   notFound: jest.fn(),
@@ -150,7 +157,7 @@ describe('ScenarioDetailPage first-run walkthrough', () => {
   })
 
   it('auto-starts once per user, then only reopens from the ? button', () => {
-    const first = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    const first = render(scenarioPage('01'))
     expect(screen.queryByTestId('lab-tour-card')).toBeNull()
     act(() => {
       jest.advanceTimersByTime(600)
@@ -165,7 +172,7 @@ describe('ScenarioDetailPage first-run walkthrough', () => {
     expect(window.localStorage.getItem('cr.labTourSeen.student')).toBe('1')
     first.unmount()
 
-    render(<ScenarioDetailPage params={{ id: '06' }} />)
+    render(scenarioPage('06'))
     act(() => {
       jest.advanceTimersByTime(2000)
     })
@@ -178,7 +185,7 @@ describe('ScenarioDetailPage first-run walkthrough', () => {
   })
 
   it('replays from step 1 when ? is pressed mid-tour', () => {
-    render(<ScenarioDetailPage params={{ id: '01' }} />)
+    render(scenarioPage('01'))
     act(() => {
       jest.advanceTimersByTime(600)
     })
@@ -191,12 +198,12 @@ describe('ScenarioDetailPage first-run walkthrough', () => {
   })
 
   it('still auto-starts when the pod re-renders inside the start delay', () => {
-    const { rerender } = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    const { rerender } = render(scenarioPage('01'))
     act(() => {
       jest.advanceTimersByTime(300)
     })
     // useScenarioPod hands back a new pod object on every poll.
-    rerender(<ScenarioDetailPage params={{ id: '01' }} />)
+    rerender(scenarioPage('01'))
     act(() => {
       jest.advanceTimersByTime(300)
     })
@@ -218,14 +225,14 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
   })
 
   it('renders TerminalView for Scenario 1 (reconnaissance)', () => {
-    render(<ScenarioDetailPage params={{ id: '01' }} />)
+    render(scenarioPage('01'))
     expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument()
     expect(screen.queryByTestId('mock-dvwa-view')).not.toBeInTheDocument()
     expect(screen.getByTestId('mock-exercise-panel')).toBeInTheDocument()
   })
 
   it('renders DvwaView for Scenario 2 (SQL Injection & XSS)', () => {
-    render(<ScenarioDetailPage params={{ id: '06' }} />)
+    render(scenarioPage('06'))
     expect(screen.getByTestId('mock-dvwa-view')).toBeInTheDocument()
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument()
     expect(screen.getByTestId('mock-exercise-panel')).toBeInTheDocument()
@@ -237,7 +244,7 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
     useMilestonesMock.mockClear()
     isScenarioCompleteMock.mockClear()
 
-    render(<ScenarioDetailPage params={{ id: '09' }} />)
+    render(scenarioPage('09'))
 
     const scenario3 = SCENARIOS.find((scenario) => scenario.id === '09')!
     await waitFor(() => {
@@ -260,7 +267,7 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
     const useMilestonesMock = jest.requireMock('@/hooks/useScenarioMilestones').useScenarioMilestones as jest.Mock
     const base = useMilestonesMock.getMockImplementation()!()
 
-    const { unmount } = render(<ScenarioDetailPage params={{ id: '01' }} />)
+    const { unmount } = render(scenarioPage('01'))
     expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'true')
     expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-just-scored', '')
     unmount()
@@ -274,7 +281,7 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
       lastScoredId: 1,
     }))
     try {
-      render(<ScenarioDetailPage params={{ id: '01' }} />)
+      render(scenarioPage('01'))
       expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-task-id', '2')
       expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'false')
       expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-just-scored', '1')
@@ -286,7 +293,7 @@ describe('ScenarioDetailPage right-pane surface selection', () => {
   it('does not mark "Start here" on an expired lab', () => {
     mockPodPhase = 'expired'
     try {
-      render(<ScenarioDetailPage params={{ id: '01' }} />)
+      render(scenarioPage('01'))
       expect(screen.getByTestId('mock-exercise-panel')).toHaveAttribute('data-start-here', 'false')
     } finally {
       mockPodPhase = 'active'

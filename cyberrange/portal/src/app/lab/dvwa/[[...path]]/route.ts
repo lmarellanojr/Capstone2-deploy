@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { authOptions } from '@/lib/auth'
+import { secureDvwaResponse } from '@/lib/dvwaSecurityPolicy'
 import {
   DVWA_LAB_DENIED_HTML,
   cookiesForUpstream,
@@ -63,7 +64,7 @@ const HOP = new Set([
   'content-length',
 ])
 
-type RouteCtx = { params: Promise<{ path?: string[] }> | { path?: string[] } }
+type RouteCtx = { params: Promise<{ path?: string[] }> }
 
 /** Instructor-only near-miss code (Scenario 2 diagnostics). Not awaited: the page
  *  never waits on it, and a failure only loses the reason. The API stores nothing
@@ -95,7 +96,7 @@ async function ownerActivePodId(accessToken: string | undefined): Promise<number
   return active?.pod_id ?? null
 }
 
-async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
+async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
   const session = await getServerSession(authOptions)
   if (!session) {
     const login = new URL('/login', 'http://placeholder.invalid')
@@ -331,6 +332,14 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
 
   const buf = await up.arrayBuffer()
   return new NextResponse(buf, { status: up.status, headers: out })
+}
+
+// One finalization boundary covers upstream content and every local early return.
+async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
+  const response = await proxy(req, ctx)
+  const params = await ctx.params
+  const path = '/' + (params.path ?? []).join('/')
+  return secureDvwaResponse(response, isVulnerableDvwaLabPath(path))
 }
 
 export async function GET(req: NextRequest, ctx: RouteCtx) {

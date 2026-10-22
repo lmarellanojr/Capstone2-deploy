@@ -1,5 +1,7 @@
 'use client'
 
+import { useParams } from 'next/navigation'
+
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
@@ -33,11 +35,8 @@ import { hasSeenLabTour, markLabTourSeen } from '@/lib/labTourSeen'
 import { destroySession, sessionKey } from '@/components/terminal/terminalSessionManager'
 import { isScenarioComplete } from '@/lib/scenarioCompletion'
 
-interface PageProps {
-  params: { id: string }
-}
-
-export default function ScenarioDetailPage({ params }: PageProps) {
+export default function ScenarioDetailPage() {
+  const params = useParams<{ id: string }>()
   const { id: rawId } = params
   const id = rawId.padStart(2, '0')
   const { status: authStatus, data: session } = useSession()

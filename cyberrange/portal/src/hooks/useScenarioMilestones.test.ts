@@ -32,9 +32,12 @@ describe('useScenarioMilestones', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     jest.useFakeTimers()
+    jest.spyOn(global, 'setInterval')
+    jest.spyOn(global, 'clearInterval')
   })
 
   afterEach(() => {
+    jest.restoreAllMocks()
     jest.useRealTimers()
   })
 
@@ -62,7 +65,9 @@ describe('useScenarioMilestones', () => {
     expect(result.current.milestonesLoading).toBe(false)
     expect(result.current.completed.has(1)).toBe(true)
     expect(provisioning.getMilestones).toHaveBeenCalledTimes(1)
-    expect(jest.getTimerCount()).toBe(1)
+    // React's scheduler can own timers too; assert the hook's polling interval.
+    expect(setInterval).toHaveBeenCalledTimes(1)
+    expect(setInterval).toHaveBeenCalledWith(expect.any(Function), 3000)
 
     // Advance 3 seconds for 1 poll tick
     ;(provisioning.getMilestones as jest.Mock).mockResolvedValueOnce({
@@ -83,7 +88,9 @@ describe('useScenarioMilestones', () => {
 
     // Clean unmount clears interval
     unmount()
-    expect(jest.getTimerCount()).toBe(0)
+    expect(clearInterval).toHaveBeenCalledWith((setInterval as jest.Mock).mock.results[0].value)
+    await act(async () => { jest.advanceTimersByTime(6000) })
+    expect(provisioning.getMilestones).toHaveBeenCalledTimes(2)
   })
 
   it('discards late responses from previous podId', async () => {
@@ -123,7 +130,7 @@ describe('useScenarioMilestones', () => {
 
     renderHook(() => useScenarioMilestones(55, '01', scen1.milestones))
     await act(async () => {})
-    expect(jest.getTimerCount()).toBe(1)
+    expect(setInterval).toHaveBeenCalledTimes(1)
 
     ;(provisioning.getMilestones as jest.Mock).mockRejectedValueOnce({
       response: { status: 401 },
@@ -133,7 +140,10 @@ describe('useScenarioMilestones', () => {
       jest.advanceTimersByTime(3000)
     })
 
-    expect(jest.getTimerCount()).toBe(0)
+    expect(clearInterval).toHaveBeenCalledWith((setInterval as jest.Mock).mock.results[0].value)
+    expect(provisioning.getMilestones).toHaveBeenCalledTimes(2)
+    await act(async () => { jest.advanceTimersByTime(6000) })
+    expect(provisioning.getMilestones).toHaveBeenCalledTimes(2)
   })
 
   it('preserves optimistic completion during polling tick when backend response lacks it', async () => {

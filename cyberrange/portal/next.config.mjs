@@ -5,8 +5,9 @@ const nextConfig = {
   skipTrailingSlashRedirect: true,
   // Do not put NEXTAUTH_URL in `env:` — that inlines it at build time and
   // Chapter 07 cannot flip HTTPS by editing .env.local + restarting the unit.
-  // CR-10 / #312 interim: disable Image Optimization API until next is upgraded.
-  // Local next/image assets under /public still render; optimizer advisories are deferred.
+  // CR-11 / #313: stop advertising the framework in responses.
+  poweredByHeader: false,
+  // Keep the image optimizer unreachable; all portal images are local assets.
   images: { unoptimized: true },
   eslint: {
     ignoreDuringBuilds: true,
@@ -20,6 +21,44 @@ const nextConfig = {
   // the client router then redirected mid-hydration and threw React #310 (#219).
   async redirects() {
     return [{ source: '/', destination: '/dashboard', permanent: false }]
+  },
+  // CR-11 / #313: path-scoped framing + baseline hardening headers.
+  // DVWA owns its complete CSP in the route/middleware. Next 15 does not append
+  // a route CSP when config already set one, which would drop the XSS sandbox.
+  async headers() {
+    const nosniff = { key: 'X-Content-Type-Options', value: 'nosniff' }
+    const referrer = {
+      key: 'Referrer-Policy',
+      value: 'strict-origin-when-cross-origin',
+    }
+    return [
+      {
+        source: '/((?!lab/dvwa(?:/|$)).*)',
+        headers: [
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          nosniff,
+          referrer,
+        ],
+      },
+      {
+        // Exact /lab/dvwa and descendants; no CSP here (route/middleware own it).
+        source: '/lab/dvwa',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          nosniff,
+          referrer,
+        ],
+      },
+      {
+        source: '/lab/dvwa/:path*',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          nosniff,
+          referrer,
+        ],
+      },
+    ]
   },
   async rewrites() {
     const apiBase = process.env.API_INTERNAL_URL || 'http://10.115.77.1:5000'

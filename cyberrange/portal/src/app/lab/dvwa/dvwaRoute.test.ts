@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server'
 jest.mock('next-auth', () => ({ getServerSession: jest.fn() }))
 jest.mock('@/lib/auth', () => ({ authOptions: {} }))
 import { getServerSession } from 'next-auth'
-import { GET } from './[[...path]]/route'
+import { GET, HEAD } from './[[...path]]/route'
 
 const mockedSession = getServerSession as jest.MockedFunction<typeof getServerSession>
 const fetchMock = jest.fn()
@@ -36,6 +36,35 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     } as Response)
   }
 
+  it.each([307, 503, 404, 400, 403, 502])('finalizes the %s early response', async (status) => {
+    mockedSession.mockResolvedValue(status === 307 ? null : { accessToken: 'test-token' } as never)
+    if (status === 503) fetchMock.mockRejectedValueOnce(new Error('offline fixture'))
+    else if (status !== 307) fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ pods: status === 404 ? [] : [{ pod_id: 1, status: 'ACTIVE' }] }),
+    })
+    if (status === 502) fetchMock.mockRejectedValueOnce(new Error('upstream fixture'))
+    const path = status === 400 ? ['..'] : status === 403 ? ['setup.php'] : ['index.php']
+    const response = await GET(makeRequest('/lab/dvwa/' + path.join('/')), { params: Promise.resolve({ path }) })
+    expect(response.status).toBe(status)
+    expect(response.headers.get('content-security-policy')).toBe("frame-ancestors 'self'")
+    expect(response.headers.get('x-frame-options')).toBe('SAMEORIGIN')
+  })
+
+  it('keeps the sandbox for HEAD and overwrites hostile upstream policy', async () => {
+    mockedSession.mockResolvedValue({ accessToken: 'test-token' } as never)
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ pods: [{ pod_id: 1, status: 'ACTIVE' }] }) })
+    fetchMock.mockResolvedValueOnce(new Response(null, { headers: {
+      'content-security-policy': "sandbox allow-same-origin; frame-ancestors *",
+      'x-frame-options': 'ALLOWALL',
+    } }))
+    const response = await HEAD(makeRequest('/lab/dvwa/vulnerabilities/xss_r/'), {
+      params: Promise.resolve({ path: ['vulnerabilities', 'xss_r'] }),
+    })
+    expect(response.headers.get('content-security-policy')).toBe("sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'")
+    expect(response.headers.get('x-frame-options')).toBe('SAMEORIGIN')
+  })
+
   it('sets sandbox CSP header when serving /vulnerabilities/xss_r', async () => {
     mockActivePodAndUpstream('<html><body>Hello <script>alert(1)</script></body></html>')
     const req = makeRequest('/lab/dvwa/vulnerabilities/xss_r/')
@@ -43,7 +72,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
   })
 
@@ -54,7 +83,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
   })
 
@@ -64,7 +93,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     const res = await GET(req, { params: Promise.resolve({ path: ['security.php'] }) })
 
     expect(res.status).toBe(200)
-    expect(res.headers.get('content-security-policy')).toBeNull()
+    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'self'")
   })
 
   it('rewrites theme URLs to /dvwa-theme/ on vulnerable pages while preserving CSP sandbox', async () => {
@@ -83,7 +112,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
     const body = await res.text()
     expect(body).toContain('href="/dvwa-theme/css/main.css"')
@@ -104,7 +133,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     const res = await GET(req, { params: Promise.resolve({ path: ['security.php'] }) })
 
     expect(res.status).toBe(200)
-    expect(res.headers.get('content-security-policy')).toBeNull()
+    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'self'")
     const body = await res.text()
     expect(body).toContain('href="/lab/dvwa/dvwa/css/main.css"')
     expect(body).toContain('href="/dvwa-theme/css/embedded.css"')
@@ -132,7 +161,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
     expect(res.headers.get('content-security-policy')).not.toMatch(/same-origin/)
     const body = await res.text()
@@ -167,7 +196,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
 
     expect(res.status).toBe(200)
     expect(res.headers.get('content-security-policy')).toBe(
-      'sandbox allow-scripts allow-forms allow-modals'
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
     )
     expect(res.headers.get('content-security-policy')).not.toMatch(/same-origin/)
     const body = await res.text()
@@ -265,7 +294,7 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     const res = await GET(req, { params: Promise.resolve({ path: ['security.php'] }) })
 
     expect(res.status).toBe(200)
-    expect(res.headers.get('content-security-policy')).toBeNull()
+    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'self'")
     const body = await res.text()
     expect(body).toContain('href="../../dvwa/css/main.css"')
     expect(body).toContain('href="/dvwa-theme/css/embedded.css"')
