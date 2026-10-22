@@ -63,8 +63,11 @@ def vmids_for_pod(pod_id: int, student_id: str):
     }
 
 
-def wazuh_manager_ip(client) -> str:
+def wazuh_manager_ip(client, strict: bool = False) -> str:
     """Address agents enrol to: WAZUH_MANAGER_IP, else the manager's live mon-net IP.
+
+    strict=True raises instead of falling back to the .10 default, for callers
+    (the reconciler) that must never act on a guessed address.
 
     The manager's eth0 comes from mon-net DHCP unless pinned (Manual 02, Step 4a),
     so a host can hand it 10.0.40.2 instead of .10. A hardcoded .10 then leaves
@@ -80,7 +83,12 @@ def wazuh_manager_ip(client) -> str:
             if addr.get("family") == "inet" and addr.get("scope") == "global":
                 return addr["address"]
     except Exception as e:
+        if strict:
+            raise RuntimeError(f"wazuh manager IP lookup failed: {e}") from e
         logger.warning(f"wazuh manager IP lookup failed, using default: {e}")
+        return DEFAULT_WAZUH_MANAGER_IP
+    if strict:
+        raise RuntimeError(f"wazuh manager {name} has no global inet address on eth0")
     return DEFAULT_WAZUH_MANAGER_IP
 
 

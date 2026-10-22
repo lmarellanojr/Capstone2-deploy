@@ -151,11 +151,69 @@ def test_missing_gateway_reject_is_restored(monkeypatch):
     ]
 
 
-def test_sweep_ip_falls_back_to_env_then_default(monkeypatch):
+def _live_read(monkeypatch, fn):
     import provision
-    monkeypatch.setattr(provision, "wazuh_manager_ip", lambda c: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(provision, "wazuh_manager_ip", fn)
+    monkeypatch.setattr(pod_net, "LXD_PROJECT", "default", raising=False)
+    import pylxd
+    monkeypatch.setattr(pylxd, "Client", lambda **kw: object())
+
+
+def _boom(c, strict=False):
+    raise RuntimeError("lxd down")
+
+
+def test_failed_live_read_no_pin_skips_refresh_keeps_cleanup(monkeypatch):
+    _live_read(monkeypatch, _boom)
+    monkeypatch.delenv("WAZUH_MANAGER_IP", raising=False)
+    acl = {"name": "pod-1-egress", "egress": _rules(1, "10.0.40.2")}
+    calls = _setup(monkeypatch, {1}, [{"name": "pod-1-net", "config": {}}],
+                   [acl, {"name": "pod-3-egress"}])
+    pod_net.reconcile_pod_networks()
+    # the correct-for-the-live-manager .2 rule is never rewritten to a guess
+    assert _writes(calls) == [("network", "acl", "delete", "pod-3-egress")]
+    assert pod_net._sweep_manager_ip() is None
+
+
+def test_failed_live_read_uses_env_pin(monkeypatch):
+    _live_read(monkeypatch, _boom)
     monkeypatch.setenv("WAZUH_MANAGER_IP", "10.0.40.20")
     assert pod_net._sweep_manager_ip() == "10.0.40.20"
-    monkeypatch.delenv("WAZUH_MANAGER_IP")
-    assert pod_net._sweep_manager_ip() == MGR
     assert pod_net._sweep_manager_ip("10.0.40.30") == "10.0.40.30"
+
+
+def test_successful_live_read_is_used(monkeypatch):
+    seen = {}
+
+    def live(c, strict=False):
+        seen["strict"] = strict
+        return "10.0.40.2"
+
+    _live_read(monkeypatch, live)
+    monkeypatch.delenv("WAZUH_MANAGER_IP", raising=False)
+    assert pod_net._sweep_manager_ip() == "10.0.40.2"
+    assert seen["strict"] is True
+
+
+def test_default_fallback_is_never_used(monkeypatch):
+    # The real lookup with a failing state() call: non-strict returns .10,
+    # strict must raise, so the sweep skips instead of using .10.
+    import provision
+
+    class Inst:
+        def state(self):
+            raise RuntimeError("state failed")
+
+    class Client:
+        class instances:
+            @staticmethod
+            def get(name):
+                return Inst()
+
+    monkeypatch.delenv("WAZUH_MANAGER_IP", raising=False)
+    assert provision.wazuh_manager_ip(Client()) == MGR  # provisioning unchanged
+    with pytest.raises(RuntimeError):
+        provision.wazuh_manager_ip(Client(), strict=True)
+    import pylxd
+    monkeypatch.setattr(pylxd, "Client", lambda **kw: Client())
+    assert pod_net._sweep_manager_ip() is None

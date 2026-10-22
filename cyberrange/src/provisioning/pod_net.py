@@ -264,17 +264,24 @@ def delete_pod_network(pod_id: int):
     logger.info(f"Pod network {net}, {acl} and peers deleted")
 
 
-def _sweep_manager_ip(manager_ip: str = None) -> str:
-    """Same order as provisioning: argument, live manager address, env, default."""
+def _sweep_manager_ip(manager_ip: str = None):
+    """Manager address the sweep is sure of, or None.
+
+    Only an explicit argument, an operator pin (WAZUH_MANAGER_IP), or a
+    successful live read counts. No silent default: a guessed address would
+    rewrite every live pod's 1514/1515 rule and stop alerts.
+    """
+    if not manager_ip:
+        manager_ip = os.getenv("WAZUH_MANAGER_IP", "").strip()
     if not manager_ip:
         try:
             import pylxd
             from provision import wazuh_manager_ip
 
-            manager_ip = wazuh_manager_ip(pylxd.Client(project=LXD_PROJECT))
+            manager_ip = wazuh_manager_ip(pylxd.Client(project=LXD_PROJECT), strict=True)
         except Exception as e:
-            logger.warning(f"[reconciler] manager address lookup failed, using env/default: {e}")
-            manager_ip = os.getenv("WAZUH_MANAGER_IP", "").strip() or DEFAULT_WAZUH_MANAGER_IP
+            logger.warning(f"[reconciler] manager address unknown, skipping ACL refresh: {e}")
+            return None
     return _check_manager_ip(manager_ip)
 
 
