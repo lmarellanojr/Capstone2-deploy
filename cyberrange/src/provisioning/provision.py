@@ -176,7 +176,9 @@ def perform_provisioning(student_id: str, pod_id: int, vmids: Dict[str, str], sc
         client = pylxd.Client(project=os.getenv("LXD_PROJECT", "default"))
 
         delete_pod_network(pod_id)
-        create_pod_network(pod_id, manager_ip=wazuh_manager_ip(client))
+        # One lookup for both the ACL and the agent's ossec.conf, so they agree.
+        manager_ip = wazuh_manager_ip(client)
+        create_pod_network(pod_id, manager_ip=manager_ip)
         log_event("NET_CREATE_OK", student_id, pod_id, detail=f"{pod_net_name(pod_id)} ({sub}.0/24)")
 
         user_data = f"""#cloud-config
@@ -371,7 +373,6 @@ write_files:
             log_event("LAB_PROXY_FAIL", student_id, pod_id, detail=str(e))
 
         def _enroll():
-            manager_ip = wazuh_manager_ip(client)
             # Free this student's agent names first. A name the delete could
             # not purge makes authd reject the new key, so refuse the lab
             # before wazuh-agent starts.
