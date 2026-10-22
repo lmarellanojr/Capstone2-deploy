@@ -44,6 +44,12 @@ export default function OrientationPage() {
     if (status === "unauthenticated") router.replace("/login?callbackUrl=/orientation")
   }, [router, status])
 
+  // Admins skip the orientation. One who opens /orientation directly goes to /admin.
+  const isAdmin = landingPathForRole(session?.user?.roles) === "/admin"
+  useEffect(() => {
+    if (status === "authenticated" && isAdmin) router.replace("/admin")
+  }, [router, status, isAdmin])
+
   const finish = async () => {
     setSaving(true)
     setError(null)
@@ -61,7 +67,7 @@ export default function OrientationPage() {
   const orientation =
     landingPathForRole(session?.user?.roles) === "/instructor" ? instructorOrientation : studentOrientation
 
-  if (status === "loading" || status === "unauthenticated") {
+  if (status === "loading" || status === "unauthenticated" || isAdmin) {
     return <div className="min-h-screen flex items-center justify-center bg-primary"><LoadingSpinner message="Loading orientation..." /></div>
   }
 

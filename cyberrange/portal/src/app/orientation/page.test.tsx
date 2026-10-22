@@ -70,3 +70,11 @@ it("gives student+instructor accounts the instructor version", () => {
   expect(screen.getByText("Welcome to the instructor console")).toBeInTheDocument()
   expect(screen.queryByText("Provision your pod")).not.toBeInTheDocument()
 })
+
+it("sends an admin who opens /orientation to /admin without showing any orientation", () => {
+  sessionMock.mockReturnValue({ status: "authenticated", data: { user: { roles: ["admin"] } } })
+  render(<OrientationPage />)
+  expect(replace).toHaveBeenCalledWith("/admin")
+  expect(screen.queryByText("Welcome to your lab orientation")).not.toBeInTheDocument()
+  expect(screen.queryByText("Welcome to the instructor console")).not.toBeInTheDocument()
+})
