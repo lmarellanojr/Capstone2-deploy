@@ -5,6 +5,9 @@ const nextConfig = {
   skipTrailingSlashRedirect: true,
   // Do not put NEXTAUTH_URL in `env:` — that inlines it at build time and
   // Chapter 07 cannot flip HTTPS by editing .env.local + restarting the unit.
+  // CR-10 / #312 interim: disable Image Optimization API until next is upgraded.
+  // Local next/image assets under /public still render; optimizer advisories are deferred.
+  images: { unoptimized: true },
   eslint: {
     ignoreDuringBuilds: true,
   },
