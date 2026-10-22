@@ -18,6 +18,8 @@ def _record(monkeypatch, fail_on=None):
         calls.append(args)
         if fail_on and args[: len(fail_on)] == fail_on:
             raise RuntimeError(f"lxc {' '.join(args)} failed")
+        if args == ("network", "get", "vmbr1", "ipv4.address"):
+            return subprocess.CompletedProcess(args, 0, "10.93.10.1/24\n", "")
         return _completed(args)
 
     def fake_peer(action, *args, check=False, timeout=120):
@@ -42,7 +44,7 @@ def test_acl_name():
 
 
 def test_rules_allow_only_own_subnet_and_agent_ports():
-    rules = pod_net.pod_acl_rules(2, "10.0.40.10")
+    rules = pod_net.pod_acl_rules(2, "10.0.40.10", "10.93.10.1")
     assert rules == [
         ["action=allow", "destination=10.0.52.0/24"],
         [
@@ -51,10 +53,15 @@ def test_rules_allow_only_own_subnet_and_agent_ports():
             "protocol=tcp",
             "destination_port=1514,1515",
         ],
+        ["action=reject", "destination=10.93.10.1/32", "protocol=udp", "destination_port=53"],
+        ["action=reject", "destination=10.93.10.1/32", "protocol=tcp", "destination_port=53"],
     ]
-    flat = " ".join(" ".join(r) for r in rules)
-    for blocked in ("55000", "port=22", "0.0.0.0/0", "action=reject", "action=drop"):
-        assert blocked not in flat
+    allows = " ".join(" ".join(r) for r in rules if r[0] == "action=allow")
+    for blocked in ("55000", "port=22", "port=53", "0.0.0.0/0", "action=drop"):
+        assert blocked not in allows
+    # The DNS rejects hit only the uplink resolver, never meta's port 53.
+    rejects = [r for r in rules if r[0] == "action=reject"]
+    assert all(r[1] == "destination=10.93.10.1/32" for r in rejects)
 
 
 def test_create_makes_acl_before_network_and_attaches_it(monkeypatch):
@@ -65,7 +72,7 @@ def test_create_makes_acl_before_network_and_attaches_it(monkeypatch):
     acl_create = calls.index(("network", "acl", "create", "pod-1-egress"))
     net_create = calls.index(_net_create(calls))
     rule_adds = [i for i, c in enumerate(calls) if c[:3] == ("network", "acl", "rule")]
-    assert len(rule_adds) == 2
+    assert len(rule_adds) == 4
     assert acl_create < min(rule_adds) and max(rule_adds) < net_create
     assert all(calls[i][3:6] == ("add", "pod-1-egress", "egress") for i in rule_adds)
 
@@ -192,3 +199,51 @@ def test_create_rejects_bad_manager_ip_before_any_lxc_call(monkeypatch, bad):
     with pytest.raises(ValueError):
         pod_net.create_pod_network(1, manager_ip=bad)
     assert calls == []
+
+
+def test_uplink_dns_read_from_vmbr1(monkeypatch):
+    calls = _record(monkeypatch)
+    monkeypatch.delenv("UPLINK_DNS_IP", raising=False)
+    assert pod_net.uplink_dns_ip() == "10.93.10.1"
+    assert calls == [("network", "get", "vmbr1", "ipv4.address")]
+
+
+def test_uplink_dns_override_skips_lookup(monkeypatch):
+    calls = _record(monkeypatch)
+    monkeypatch.setenv("UPLINK_DNS_IP", "10.93.10.254")
+    assert pod_net.uplink_dns_ip() == "10.93.10.254"
+    assert pod_net.uplink_dns_ip("10.93.10.2") == "10.93.10.2"
+    assert calls == []
+
+
+def test_create_rejects_dns_to_the_uplink(monkeypatch):
+    calls = _record(monkeypatch)
+    monkeypatch.delenv("UPLINK_DNS_IP", raising=False)
+    pod_net.create_pod_network(1, manager_ip="10.0.40.10")
+    rules = [c for c in calls if c[:3] == ("network", "acl", "rule")]
+    for proto in ("udp", "tcp"):
+        assert ("network", "acl", "rule", "add", "pod-1-egress", "egress", "action=reject",
+                "destination=10.93.10.1/32", f"protocol={proto}", "destination_port=53") in rules
+
+
+@pytest.mark.parametrize("stdout", ["", "garbage", "10.93.10/24", "fd42::1/64"])
+def test_create_fails_closed_without_a_valid_uplink(monkeypatch, stdout):
+    calls = []
+
+    def fake_lxc(*args, check=False, timeout=120):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(pod_net, "_lxc", fake_lxc)
+    monkeypatch.delenv("UPLINK_DNS_IP", raising=False)
+    with pytest.raises(ValueError):
+        pod_net.create_pod_network(1, manager_ip="10.0.40.10")
+    assert calls == [("network", "get", "vmbr1", "ipv4.address")]
+
+
+def test_create_fails_closed_when_uplink_lookup_errors(monkeypatch):
+    calls = _record(monkeypatch, fail_on=("network", "get"))
+    monkeypatch.delenv("UPLINK_DNS_IP", raising=False)
+    with pytest.raises(RuntimeError):
+        pod_net.create_pod_network(1, manager_ip="10.0.40.10")
+    assert calls == [("network", "get", "vmbr1", "ipv4.address")]

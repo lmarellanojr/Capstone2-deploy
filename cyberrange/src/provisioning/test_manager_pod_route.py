@@ -61,6 +61,7 @@ def test_create_calls_ensure_once_after_both_peers(monkeypatch):
 
     monkeypatch.setattr(pod_net, "_lxc", fake_lxc)
     monkeypatch.setattr(pod_net, "_lxc_peer", fake_peer)
+    monkeypatch.setenv("UPLINK_DNS_IP", "10.93.10.1")
 
     pod_net.create_pod_network(1)
 
@@ -87,6 +88,7 @@ def test_create_does_not_retry_a_route_error(monkeypatch):
 
     monkeypatch.setattr(pod_net, "_lxc", fake_lxc)
     monkeypatch.setattr(pod_net, "_lxc_peer", fake_peer)
+    monkeypatch.setenv("UPLINK_DNS_IP", "10.93.10.1")
 
     with pytest.raises(RuntimeError, match="route down"):
         pod_net.create_pod_network(1)

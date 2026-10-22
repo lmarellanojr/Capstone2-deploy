@@ -42,8 +42,14 @@ WAZUH_AGENT_PORTS = "1514,1515"
 DEFAULT_WAZUH_MANAGER_IP = "10.0.40.10"
 
 
-def pod_acl_rules(pod_id: int, manager_ip: str) -> List[List[str]]:
-    """Egress allow rules; the network's default egress action rejects the rest."""
+def pod_acl_rules(pod_id: int, manager_ip: str, uplink_dns: str) -> List[List[str]]:
+    """Egress rules; the network's default egress action rejects the rest.
+
+    LXD adds its own priority-200 allow for udp/tcp 53 to the uplink resolver,
+    which outranks the default reject. The explicit rejects below (priority
+    400) close that DNS path out of the pod. They target only the uplink /32,
+    so DNS to meta inside the pod subnet still works.
+    """
     return [
         ["action=allow", f"destination={manager_pod_route(pod_id)}"],
         [
@@ -52,6 +58,8 @@ def pod_acl_rules(pod_id: int, manager_ip: str) -> List[List[str]]:
             "protocol=tcp",
             f"destination_port={WAZUH_AGENT_PORTS}",
         ],
+        ["action=reject", f"destination={uplink_dns}/32", "protocol=udp", "destination_port=53"],
+        ["action=reject", f"destination={uplink_dns}/32", "protocol=tcp", "destination_port=53"],
     ]
 
 
@@ -150,7 +158,27 @@ def _lxc_json(*args) -> List:
 
 
 _MON_SUBNET = ipaddress.ip_network("10.0.40.0/24")
-_MON_GATEWAY = ipaddress.ip_address("10.0.40.1")
+_MON_GATEWAY = ipaddress.ip_address(MON_NET_GATEWAY)
+UPLINK_NETWORK = "vmbr1"
+
+
+def uplink_dns_ip(override: str = None) -> str:
+    """The uplink resolver pods are handed by LXD: vmbr1's ipv4.address.
+
+    An explicit override, then UPLINK_DNS_IP, replace the lookup. Raises if neither gives a single IPv4
+    address, so the DNS reject is never silently dropped.
+    """
+    raw = (override or os.getenv("UPLINK_DNS_IP", "")).strip()
+    if not raw:
+        r = _lxc("network", "get", UPLINK_NETWORK, "ipv4.address", check=True)
+        raw = (r.stdout or "").strip().split("/")[0]
+    try:
+        addr = ipaddress.ip_address(raw)
+    except ValueError:
+        raise ValueError(f"uplink DNS address {raw!r} is not a valid IPv4 address")
+    if addr.version != 4:
+        raise ValueError(f"uplink DNS address {raw} is not IPv4")
+    return str(addr)
 
 
 def _check_manager_ip(manager_ip: str) -> str:
@@ -166,18 +194,19 @@ def _check_manager_ip(manager_ip: str) -> str:
     return str(addr)
 
 
-def create_pod_network(pod_id: int, manager_ip: str = None):
+def create_pod_network(pod_id: int, manager_ip: str = None, uplink_dns: str = None):
     net = pod_net_name(pod_id)
     sub = pod_subnet(pod_id)
     acl = pod_acl_name(pod_id)
     manager_ip = manager_ip or os.getenv("WAZUH_MANAGER_IP", "").strip() or DEFAULT_WAZUH_MANAGER_IP
     manager_ip = _check_manager_ip(manager_ip)
+    uplink_dns = uplink_dns_ip(uplink_dns)
 
     # ACL first, then the network created with it attached, so the network is
     # never up without it. A failure here raises; delete_pod_network removes
     # whatever was made.
     _lxc("network", "acl", "create", acl, check=True)
-    for rule in pod_acl_rules(pod_id, manager_ip):
+    for rule in pod_acl_rules(pod_id, manager_ip, uplink_dns):
         _lxc("network", "acl", "rule", "add", acl, "egress", *rule, check=True)
 
     # Ingress stays open: consoles, the DVWA proxy and scoring reach in from
