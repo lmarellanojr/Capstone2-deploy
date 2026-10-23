@@ -105,12 +105,12 @@ describe('dvwaProxy access control', () => {
       expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(EXPECTED_CSP)
     })
 
-    it('returns null CSP for safe pages so portal origin is preserved', () => {
-      expect(dvwaContentSecurityPolicy('/')).toBeNull()
-      expect(dvwaContentSecurityPolicy('/security.php')).toBeNull()
-      expect(dvwaContentSecurityPolicy('/login.php')).toBeNull()
-      expect(dvwaContentSecurityPolicy('/favicon.ico')).toBeNull()
-      expect(dvwaContentSecurityPolicy('/dvwa/css/main.css')).toBeNull()
+    it('returns framing-only CSP for safe pages so portal origin is preserved', () => {
+      expect(dvwaContentSecurityPolicy('/')).toBe("frame-ancestors 'self'")
+      expect(dvwaContentSecurityPolicy('/security.php')).toBe("frame-ancestors 'self'")
+      expect(dvwaContentSecurityPolicy('/login.php')).toBe("frame-ancestors 'self'")
+      expect(dvwaContentSecurityPolicy('/favicon.ico')).toBe("frame-ancestors 'self'")
+      expect(dvwaContentSecurityPolicy('/dvwa/css/main.css')).toBe("frame-ancestors 'self'")
     })
   })
 

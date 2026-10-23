@@ -1,5 +1,7 @@
 "use client";
 
+import { useParams } from 'next/navigation'
+
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { LayoutWrapper } from "@/components/layout/LayoutWrapper";
@@ -20,10 +22,6 @@ import { StudentAlertsPanel } from "@/components/instructor/StudentAlertsPanel";
 import { StudentProgressDownload } from "@/components/instructor/StudentProgressDownload";
 import { ScoringDiagnostics } from "@/components/instructor/ScoringDiagnostics";
 
-interface PageProps {
-  params: { id: string };
-}
-
 function milestoneBadgeVariant(status: string): "success" | "danger" | "warning" {
   if (status === "PASS") return "success";
   if (status === "FAIL") return "danger";
@@ -37,7 +35,8 @@ function reviewBadgeVariant(status: string): "success" | "danger" | "warning" | 
   return "warning";
 }
 
-export default function InstructorStudentDetailPage({ params }: PageProps) {
+export default function InstructorStudentDetailPage() {
+  const params = useParams<{ id: string }>()
   const { id: studentId } = params;
   const { student, loading, error, forbidden, notFound } = useStudentProgress(studentId);
   const [showBackground, setShowBackground] = useState(false);

@@ -1,4 +1,5 @@
 /** Same-origin DVWA prefix and rewrite helpers (no Next rewrite — session is required). */
+import { DVWA_FRAME_POLICY, DVWA_SANDBOX_POLICY } from './dvwaSecurityPolicy'
 
 export const DVWA_PREFIX = '/lab/dvwa'
 export const LAB_PROXY_PORT_BASE = 18300
@@ -234,15 +235,12 @@ export function isVulnerableDvwaLabPath(path: string): boolean {
  * or calling authenticated portal APIs (e.g. /api/auth/session) while allowing script execution,
  * modal dialogs (alert/confirm/prompt), and GET form submissions.
  */
-export function dvwaContentSecurityPolicy(path: string): string | null {
+export function dvwaContentSecurityPolicy(path: string): string {
   if (isVulnerableDvwaLabPath(path)) {
-    // CR-11 / #313: next.config also sends `frame-ancestors 'self'` on /lab/dvwa/*.
-    // This sandbox policy survives only because Next 14.2.x appends route headers
-    // next to config headers (newer Next may replace them). nextSendResponseCsp.test.ts
-    // guards this; revisit it before any Next major upgrade.
-    return "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
+    // The DVWA route owns the full CSP; config does not compete for this header.
+    return DVWA_SANDBOX_POLICY
   }
-  return null
+  return DVWA_FRAME_POLICY
 }
 
 /** Public, unauthenticated Next.js static prefix for DVWA theme assets. */

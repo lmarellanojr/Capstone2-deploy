@@ -3,7 +3,7 @@ import { proxyToApi } from "@/lib/apiProxy"
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> | { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
   if (!/^\d+$/.test(id)) {

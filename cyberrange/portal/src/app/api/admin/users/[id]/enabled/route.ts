@@ -7,7 +7,7 @@ const USER_ID = /^[0-9a-fA-F-]{36}$/
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> | { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
   if (!USER_ID.test(id)) {

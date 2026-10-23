@@ -11,6 +11,40 @@ import { getToken } from "next-auth/jwt"
 import { config, middleware } from "./middleware"
 
 const mockedGetToken = getToken as jest.MockedFunction<typeof getToken>
+
+describe('DVWA redirects before the proxy handler', () => {
+  it.each(['/lab/dvwa', '/lab/dvwa/vulnerabilities/xss_r/', '/lab/dvwa/vulnerabilities/sqli/'])(
+    'protects unauthenticated and no-role redirects for %s', async (pathname) => {
+      for (const token of [null, { roles: [] }]) {
+        mockedGetToken.mockResolvedValue(token as never)
+        const response = await middleware(new NextRequest(`https://example.test${pathname}`))
+        expect(response.status).toBe(307)
+        expect(response.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'self'")
+        expect(response.headers.get('X-Frame-Options')).toBe('SAMEORIGIN')
+      }
+    },
+  )
+})
+
+describe('non-DVWA middleware redirects carry default DENY headers', () => {
+  it('denies framing on unauthenticated /dashboard redirect', async () => {
+    mockedGetToken.mockResolvedValue(null)
+    const response = await middleware(new NextRequest('https://example.test/dashboard'))
+    expect(response.status).toBe(307)
+    expect(response.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'none'")
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY')
+    expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin')
+  })
+
+  it('denies framing on student /admin role redirect', async () => {
+    mockedGetToken.mockResolvedValue({ roles: ['student'] } as never)
+    const response = await middleware(new NextRequest('https://example.test/admin/users'))
+    expect(response.status).toBe(307)
+    expect(response.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'none'")
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY')
+  })
+})
 const NOISE = ["offline_access", "uma_authorization", "default-roles-cyber-range"]
 
 type Caller = "unauthenticated" | "no_role" | "student" | "instructor" | "admin"

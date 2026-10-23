@@ -7,8 +7,7 @@ const nextConfig = {
   // Chapter 07 cannot flip HTTPS by editing .env.local + restarting the unit.
   // CR-11 / #313: stop advertising the framework in responses.
   poweredByHeader: false,
-  // CR-10 / #312 interim: disable Image Optimization API until next is upgraded.
-  // Local next/image assets under /public still render; optimizer advisories are deferred.
+  // Keep the image optimizer unreachable; all portal images are local assets.
   images: { unoptimized: true },
   eslint: {
     ignoreDuringBuilds: true,
@@ -24,8 +23,8 @@ const nextConfig = {
     return [{ source: '/', destination: '/dashboard', permanent: false }]
   },
   // CR-11 / #313: path-scoped framing + baseline hardening headers.
-  // Next merges matching rules per header key; later rules win for the same key.
-  // Rule B must set CSP so /lab/dvwa/* does not keep Rule A's frame-ancestors 'none'.
+  // DVWA owns its complete CSP in the route/middleware. Next 15 does not append
+  // a route CSP when config already set one, which would drop the XSS sandbox.
   async headers() {
     const nosniff = { key: 'X-Content-Type-Options', value: 'nosniff' }
     const referrer = {
@@ -34,7 +33,9 @@ const nextConfig = {
     }
     return [
       {
-        source: '/:path*',
+        // Review image uploads are excluded too: apiProxy sets their full
+        // sandbox CSP, which a config CSP would replace on Next 15.
+        source: '/((?!lab/dvwa(?:/|$)|api/reviews/[^/]+/images/[^/]+/?$).*)',
         headers: [
           { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
           { key: 'X-Frame-Options', value: 'DENY' },
@@ -43,9 +44,22 @@ const nextConfig = {
         ],
       },
       {
+        // Uploaded review images; no CSP here (apiProxy binary branch owns it).
+        source: '/api/reviews/:id/images/:imageId',
+        headers: [{ key: 'X-Frame-Options', value: 'DENY' }, nosniff, referrer],
+      },
+      {
+        // Exact /lab/dvwa and descendants; no CSP here (route/middleware own it).
+        source: '/lab/dvwa',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          nosniff,
+          referrer,
+        ],
+      },
+      {
         source: '/lab/dvwa/:path*',
         headers: [
-          { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           nosniff,
           referrer,

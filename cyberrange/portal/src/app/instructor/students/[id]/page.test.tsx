@@ -5,6 +5,8 @@ import { render, screen, within, fireEvent } from "@testing-library/react"
 import type { InstructorMilestone } from "@/lib/api"
 import Page from "./page"
 
+jest.mock("next/navigation", () => ({ useParams: () => ({ id: "srivera" }) }))
+
 jest.mock("@/components/layout/LayoutWrapper", () => ({
   LayoutWrapper: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
@@ -44,7 +46,7 @@ beforeEach(() => {
 })
 
 it("shows catalog points with detection scores and offers CSV download", () => {
-  render(<Page params={{ id: "srivera" }} />)
+  render(<Page />)
   expect(screen.getByRole("columnheader", { name: "Points" })).toBeInTheDocument()
   expect(screen.getByRole("columnheader", { name: "Detection score" })).toBeInTheDocument()
   expect(screen.getByRole("columnheader", { name: "SIEM detection" })).toBeInTheDocument()
@@ -67,7 +69,7 @@ it("shows catalog points with detection scores and offers CSV download", () => {
 })
 
 it("hides auto FAIL rows by default and reveals them with the toggle", () => {
-  render(<Page params={{ id: "srivera" }} />)
+  render(<Page />)
   expect(screen.getByRole("button", { name: /Show background checks \(2\)/i })).toBeInTheDocument()
   // Default table has Scenario 2 PASS + Scenario 3 manual FAIL only (no Scenario 1 auto FAIL).
   expect(screen.queryByText("Scenario 1")).not.toBeInTheDocument()
@@ -87,7 +89,7 @@ it("shows only-background empty copy and omits the strip when every row is auto 
     { scenario_id: 1, milestone_id: 2, status: "FAIL", detection_score: 0, source: "auto" },
     { scenario_id: 1, milestone_id: 2, status: "FAIL", detection_score: 0, source: "auto" },
   ]
-  render(<Page params={{ id: "srivera" }} />)
+  render(<Page />)
   expect(screen.getByText(/Only background checks \(3\)/i)).toBeInTheDocument()
   expect(screen.queryByText(/No milestone activity yet/i)).not.toBeInTheDocument()
   expect(screen.getByRole("button", { name: /Show background checks \(3\)/i })).toBeInTheDocument()
@@ -100,7 +102,7 @@ it("hides the background-checks toggle when there are no auto FAILs", () => {
     { scenario_id: 6, milestone_id: 4, status: "PASS", detection_score: 0, source: "browser" },
     { scenario_id: 1, milestone_id: 1, status: "FAIL", detection_score: 0, source: "manual" },
   ]
-  render(<Page params={{ id: "srivera" }} />)
+  render(<Page />)
   expect(screen.queryByRole("button", { name: /background checks/i })).not.toBeInTheDocument()
   expect(screen.getByTestId("alerts-panel")).toHaveTextContent("strip-count-2")
 })

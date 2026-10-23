@@ -1,19 +1,46 @@
-// CR-11 / #313: next.config sends `frame-ancestors 'self'` on /lab/dvwa/*, and the
-// DVWA route sends its own sandbox CSP on vulnerable pages. On Next 14.2.x the
-// route header is appended next to the config one, so the sandbox survives.
-// This pins that behaviour so a Next upgrade that replaces headers fails here.
+// CR-11: the route owns DVWA CSP; Next must deliver it without a config collision.
+import { execFileSync } from "child_process"
 import http from "http"
+import path from "path"
+import { pathToFileURL } from "url"
 import type { AddressInfo } from "net"
 import { sendResponse } from "next/dist/server/send-response"
 import { NodeNextRequest, NodeNextResponse } from "next/dist/server/base-http/node"
 import { dvwaContentSecurityPolicy } from "./lib/dvwaProxy"
 
+type HeaderRule = { source: string; headers: { key: string; value: string }[] }
+
+// Load the real config rules (ts-jest cannot import .mjs directly).
+function loadHeaderRules(): HeaderRule[] {
+  const configUrl = pathToFileURL(path.join(__dirname, "..", "next.config.mjs")).href
+  const out = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `const c = (await import(${JSON.stringify(configUrl)})).default;` +
+        `process.stdout.write(JSON.stringify(c.headers ? await c.headers() : []))`,
+    ],
+    { encoding: "utf8" },
+  )
+  return JSON.parse(out)
+}
+
+const { getPathMatch } = require("next/dist/shared/lib/router/utils/path-match")
+const headerRules = loadHeaderRules()
+
 async function sentCspHeaders(dvwaPath: string): Promise<string[]> {
   const csp = dvwaContentSecurityPolicy(dvwaPath)
   if (!csp) throw new Error(`no sandbox CSP for ${dvwaPath}`)
   const server = http.createServer(async (req, res) => {
-    // What next.config Rule B has already set before the route answers.
-    res.setHeader("Content-Security-Policy", "frame-ancestors 'self'")
+    // Precondition: apply every config header whose rule matches this path,
+    // as Next does before the route runs. A config CSP here must not win.
+    // Next's built header routes accept an optional trailing slash.
+    const pathname = req.url!.split("?")[0].replace(/(.)\/$/, "$1")
+    for (const rule of headerRules) {
+      if (getPathMatch(rule.source, { strict: true })(pathname) === false) continue
+      for (const h of rule.headers) res.setHeader(h.key, h.value)
+    }
     const response = new Response("ok", {
       headers: { "content-security-policy": csp },
     })
@@ -50,6 +77,7 @@ describe("Next sendResponse keeps the DVWA sandbox CSP", () => {
     "%s still sends the sandbox policy",
     async (dvwaPath) => {
       const values = await sentCspHeaders(dvwaPath)
+      expect(values).toHaveLength(1)
       expect(values.some((v) => v.includes("sandbox allow-scripts allow-forms allow-modals"))).toBe(true)
       expect(values.join(";")).not.toContain("allow-same-origin")
       expect(values.every((v) => v.includes("frame-ancestors 'self'"))).toBe(true)

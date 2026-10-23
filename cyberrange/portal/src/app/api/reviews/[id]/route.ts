@@ -5,7 +5,7 @@ import { proxyToApi } from "@/lib/apiProxy"
 // someone else's case and for any SCORING_CONFLICT case seen by a student.
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> | { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
   if (!/^\d+$/.test(id)) {

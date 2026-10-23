@@ -9,7 +9,7 @@ const USER_ID = /^[0-9a-fA-F-]{36}$/
 // URL, so it can't land in access logs) and the backend never returns it.
 export async function PUT(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> | { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
   if (!USER_ID.test(id)) {

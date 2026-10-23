@@ -36,10 +36,12 @@ describe("next.config security headers (CR-11 / #313)", () => {
     const { poweredByHeader, headerRules } = loadNextConfig()
     expect(poweredByHeader).toBe(false)
 
-    const defaultRule = headerRules.find((r) => r.source === "/:path*")
-    const labRule = headerRules.find((r) => r.source === "/lab/dvwa/:path*")
+    const defaultRule = headerRules.find((r) => r.source.startsWith("/((?!lab/dvwa(?:/|$)"))
+    const labExact = headerRules.find((r) => r.source === "/lab/dvwa")
+    const labNested = headerRules.find((r) => r.source === "/lab/dvwa/:path*")
     expect(defaultRule).toBeDefined()
-    expect(labRule).toBeDefined()
+    expect(labExact).toBeDefined()
+    expect(labNested).toBeDefined()
 
     expect(defaultRule!.headers).toEqual(
       expect.arrayContaining([
@@ -51,17 +53,29 @@ describe("next.config security headers (CR-11 / #313)", () => {
     )
     expect(defaultRule!.headers).toHaveLength(4)
 
-    expect(labRule!.headers).toEqual(
-      expect.arrayContaining([
-        { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
-        { key: "X-Frame-Options", value: "SAMEORIGIN" },
-        { key: "X-Content-Type-Options", value: "nosniff" },
-        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-      ])
-    )
-    expect(labRule!.headers).toHaveLength(4)
+    for (const labRule of [labExact!, labNested!]) {
+      expect(labRule.headers).toEqual(
+        expect.arrayContaining([
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ])
+      )
+      expect(labRule.headers).toHaveLength(3)
+      expect(labRule.headers.some((h) => h.key.toLowerCase() === "content-security-policy")).toBe(false)
+    }
 
-    // Lab override must appear after the default rule so per-key last-wins applies.
-    expect(headerRules.indexOf(defaultRule!)).toBeLessThan(headerRules.indexOf(labRule!))
+    // Use Next's matcher to verify the exclusion is segment-bounded.
+    const { getPathMatch } = require("next/dist/shared/lib/router/utils/path-match")
+    const matches = getPathMatch(defaultRule!.source, { strict: true })
+    for (const p of ["/lab/dvwa", "/lab/dvwa/", "/lab/dvwa/vulnerabilities/xss_r/"]) expect(matches(p)).toBe(false)
+    for (const p of ["/login", "/lab/dvwaevil", "/lab/dvwa-theme", "/dashboard/"]) expect(matches(p)).not.toBe(false)
+    for (const p of ["/api/reviews/1/images/2", "/api/reviews/abc/images/9/"]) expect(matches(p)).toBe(false)
+    for (const p of ["/api/reviews/1", "/api/reviews/1/images", "/api/reviews/1/images/2/extra"]) expect(matches(p)).not.toBe(false)
+    const imageRule = headerRules.find((r) => r.source === "/api/reviews/:id/images/:imageId")
+    expect(imageRule).toBeDefined()
+    expect(imageRule!.headers.some((h) => h.key.toLowerCase() === "content-security-policy")).toBe(false)
+    expect(imageRule!.headers).toEqual(expect.arrayContaining([{ key: "X-Frame-Options", value: "DENY" }, { key: "X-Content-Type-Options", value: "nosniff" }]))
+    expect(headerRules.indexOf(defaultRule!)).toBeLessThan(headerRules.indexOf(labExact!))
   })
 })

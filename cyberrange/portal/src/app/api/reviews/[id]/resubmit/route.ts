@@ -4,7 +4,7 @@ import { proxyToApi } from "@/lib/apiProxy"
 // POST /reviews/{id}/resubmit: only the owner, only while the case is RETRY.
 export async function POST(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> | { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
   if (!/^\d+$/.test(id)) {
