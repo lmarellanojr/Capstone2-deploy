@@ -10,6 +10,7 @@ GOOD_CFG = {
     "security.acls": "pod-1-egress",
     "security.acls.default.egress.action": "reject",
     "security.acls.default.ingress.action": "allow",
+    "dns.nameservers": "10.0.51.1",
 }
 
 
@@ -53,6 +54,7 @@ def test_missing_acl_is_created_and_attached(monkeypatch):
     assert ("network", "set", "pod-1-net", "security.acls=pod-1-egress") in calls
     assert ("network", "set", "pod-1-net", "security.acls.default.egress.action=reject") in calls
     assert ("network", "set", "pod-1-net", "security.acls.default.ingress.action=allow") in calls
+    assert ("network", "set", "pod-1-net", "dns.nameservers=10.0.51.1") in calls
     assert calls.index(("network", "acl", "create", "pod-1-egress")) < calls.index(
         ("network", "set", "pod-1-net", "security.acls=pod-1-egress"))
 
@@ -78,6 +80,7 @@ def test_existing_unattached_acl_gets_attached(monkeypatch):
     assert _writes(calls) == [
         ("network", "set", "pod-1-net", "security.acls=pod-1-egress"),
         ("network", "set", "pod-1-net", "security.acls.default.egress.action=reject"),
+        ("network", "set", "pod-1-net", "dns.nameservers=10.0.51.1"),
     ]
 
 

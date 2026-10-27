@@ -35,6 +35,20 @@ def pod_acl_name(pod_id: int) -> str:
     return f"pod-{pod_id}-egress"
 
 
+def pod_dns_nameservers(pod_id: int) -> str:
+    """Resolver advertised to the pod via DHCP.
+
+    Defaults to the pod's own gateway (<sub>.1). The egress ACL rejects .1/32
+    and that reject fails fast, so a lookup errors immediately instead of
+    stalling the way it does against the uplink resolver LXD would otherwise
+    hand out (10.93.10.1), which silently drops DNS and makes nmap's reverse-DNS
+    hang for minutes (#318). POD_DNS_NAMESERVERS overrides it for every pod if a
+    reachable internal resolver is ever introduced -- keep it off anything that
+    answers DNS, or #285's deny-by-design (R-1) reopens.
+    """
+    return os.getenv("POD_DNS_NAMESERVERS", "").strip() or f"{pod_subnet(pod_id)}.1"
+
+
 # Agent enrolment (1515) and event delivery (1514). Everything else leaving a
 # pod that is not inside its own subnet is rejected: internet, host SSH, and
 # the Wazuh API on 55000 (#285).
@@ -228,6 +242,9 @@ def create_pod_network(pod_id: int, manager_ip: str = None, uplink_dns: str = No
         # The default egress reject already blocks internet egress.
         "ipv4.nat=true",
         "ipv6.address=none",
+        # Resolver for the pod. Not the uplink LXD would otherwise advertise
+        # (10.93.10.1), which blackholes DNS and hangs nmap's reverse-DNS (#318).
+        f"dns.nameservers={pod_dns_nameservers(pod_id)}",
         f"security.acls={acl}",
         "security.acls.default.egress.action=reject",
         "security.acls.default.ingress.action=allow",
@@ -369,6 +386,10 @@ def ensure_pod_acl(
         "security.acls": acl,
         "security.acls.default.egress.action": "reject",
         "security.acls.default.ingress.action": "allow",
+        # Correct pods created before #318: replace the blackholing uplink
+        # resolver with the gateway the ACL rejects fast. Last so security.acls
+        # stays the first write.
+        "dns.nameservers": pod_dns_nameservers(pod_id),
     }
     for key, value in wanted_cfg.items():
         if config.get(key, "") != value:

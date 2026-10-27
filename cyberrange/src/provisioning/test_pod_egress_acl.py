@@ -103,6 +103,27 @@ def test_create_makes_acl_before_network_and_attaches_it(monkeypatch):
     assert "ipv4.nat=false" not in net
 
 
+def test_create_advertises_the_gateway_resolver_not_the_uplink(monkeypatch):
+    # #318: the pod must be handed its own gateway as the resolver (the ACL
+    # rejects it fast), never the uplink 10.93.10.1, which blackholes DNS.
+    calls = _record(monkeypatch)
+
+    pod_net.create_pod_network(2, manager_ip="10.0.40.10")
+
+    net = _net_create(calls)
+    assert "dns.nameservers=10.0.52.1" in net
+    assert not any("10.93.10.1" in part for part in net)
+
+
+def test_create_honours_pod_dns_nameservers_override(monkeypatch):
+    calls = _record(monkeypatch)
+    monkeypatch.setenv("POD_DNS_NAMESERVERS", "10.0.51.53")
+
+    pod_net.create_pod_network(1, manager_ip="10.0.40.10")
+
+    assert "dns.nameservers=10.0.51.53" in _net_create(calls)
+
+
 def test_create_uses_the_resolved_manager_ip(monkeypatch):
     calls = _record(monkeypatch)
 
