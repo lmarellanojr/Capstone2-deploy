@@ -97,22 +97,12 @@ describe('dvwaProxy access control', () => {
       expect(isVulnerableDvwaLabPath('/dvwa/css/main.css')).toBe(false)
     })
 
-    it('returns sandbox CSP header for vulnerable modules only when iframe=true', () => {
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r', { iframe: true })).toBe(EXPECTED_CSP)
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r/', { iframe: true })).toBe(EXPECTED_CSP)
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r/?name=<script>alert(1)</script>', { iframe: true })).toBe(EXPECTED_CSP)
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli', { iframe: true })).toBe(EXPECTED_CSP)
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/', { iframe: true })).toBe(EXPECTED_CSP)
-    })
-
-    it('returns framing-only CSP for vulnerable modules opened top-level (Task 1 new tab)', () => {
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe("frame-ancestors 'self'")
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/', { iframe: false })).toBe(
-        "frame-ancestors 'self'",
-      )
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r/', { iframe: false })).toBe(
-        "frame-ancestors 'self'",
-      )
+    it('returns sandbox CSP header for vulnerable modules', () => {
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r')).toBe(EXPECTED_CSP)
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r/')).toBe(EXPECTED_CSP)
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/xss_r/?name=<script>alert(1)</script>')).toBe(EXPECTED_CSP)
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli')).toBe(EXPECTED_CSP)
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(EXPECTED_CSP)
     })
 
     it('returns framing-only CSP for safe pages so portal origin is preserved', () => {
@@ -269,13 +259,11 @@ describe('dvwaProxy access control', () => {
       expect(out).not.toContain('../../dvwa/js/dvwaPage.js')
     })
 
-    it('leaves iframe sandbox CSP without allow-same-origin', () => {
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/', { iframe: true })).toBe(
+    it('leaves CSP policy unchanged (no allow-same-origin)', () => {
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')).toBe(
         "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
       )
-      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/', { iframe: true })!).not.toMatch(
-        /same-origin/,
-      )
+      expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')!).not.toMatch(/same-origin/)
     })
   })
 })

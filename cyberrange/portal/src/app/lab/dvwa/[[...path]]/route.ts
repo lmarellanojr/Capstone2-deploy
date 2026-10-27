@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { authOptions } from '@/lib/auth'
-import { secureDvwaResponse, shouldSandboxDvwaResponse } from '@/lib/dvwaSecurityPolicy'
+import { secureDvwaResponse } from '@/lib/dvwaSecurityPolicy'
 import {
   DVWA_LAB_DENIED_HTML,
   cookiesForUpstream,
@@ -238,11 +238,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     out.append('set-cookie', c)
   }
 
-  const sandbox = shouldSandboxDvwaResponse(
-    upstreamPath,
-    req.headers.get('sec-fetch-dest'),
-  )
-  const csp = dvwaContentSecurityPolicy(upstreamPath, { iframe: sandbox })
+  const csp = dvwaContentSecurityPolicy(upstreamPath)
   if (csp) {
     out.set('content-security-policy', csp)
   }
@@ -343,12 +339,7 @@ async function handle(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
   const response = await proxy(req, ctx)
   const params = await ctx.params
   const path = '/' + (params.path ?? []).join('/')
-  // Sandbox only when Sec-Fetch-Dest is iframe/nested-document. Top-level Task 1
-  // new tabs send Dest=document and must keep DigiNinja session cookies working.
-  return secureDvwaResponse(
-    response,
-    shouldSandboxDvwaResponse(path, req.headers.get('sec-fetch-dest')),
-  )
+  return secureDvwaResponse(response, isVulnerableDvwaLabPath(path))
 }
 
 export async function GET(req: NextRequest, ctx: RouteCtx) {

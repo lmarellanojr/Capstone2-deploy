@@ -30,9 +30,8 @@ const { getPathMatch } = require("next/dist/shared/lib/router/utils/path-match")
 const headerRules = loadHeaderRules()
 
 async function sentCspHeaders(dvwaPath: string): Promise<string[]> {
-  // Simulate an iframe request: sandbox applies only for Sec-Fetch-Dest iframe.
-  const csp = dvwaContentSecurityPolicy(dvwaPath, { iframe: true })
-  if (!csp.includes('sandbox')) throw new Error(`no sandbox CSP for ${dvwaPath}`)
+  const csp = dvwaContentSecurityPolicy(dvwaPath)
+  if (!csp) throw new Error(`no sandbox CSP for ${dvwaPath}`)
   const server = http.createServer(async (req, res) => {
     // Precondition: apply every config header whose rule matches this path,
     // as Next does before the route runs. A config CSP here must not win.
