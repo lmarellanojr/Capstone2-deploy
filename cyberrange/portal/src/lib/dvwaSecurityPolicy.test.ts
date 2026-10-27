@@ -1,4 +1,10 @@
-import { isDvwaRequest, secureDefaultResponse, secureDvwaResponse } from './dvwaSecurityPolicy'
+import {
+  isDvwaIframeFetch,
+  isDvwaRequest,
+  secureDefaultResponse,
+  secureDvwaResponse,
+  shouldSandboxDvwaResponse,
+} from './dvwaSecurityPolicy'
 
 describe('DVWA policy finalization', () => {
   it.each(['/lab/dvwa', '/lab/dvwa/', '/lab/dvwa/vulnerabilities/xss_r/'])(
@@ -30,5 +36,36 @@ describe('DVWA policy finalization', () => {
     expect(result.headers.get('X-Frame-Options')).toBe('DENY')
     expect(result.headers.get('X-Content-Type-Options')).toBe('nosniff')
     expect(result.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin')
+  })
+})
+
+describe('iframe-only sandbox (Task 1 new-tab)', () => {
+  it.each(['iframe', 'nested-document', 'IFRAME'])(
+    'treats Sec-Fetch-Dest %s as an iframe fetch',
+    (dest) => expect(isDvwaIframeFetch(dest)).toBe(true),
+  )
+
+  it.each(['document', 'empty', '', null, undefined, 'image', 'script'])(
+    'does not treat Sec-Fetch-Dest %s as an iframe fetch',
+    (dest) => expect(isDvwaIframeFetch(dest as string | null | undefined)).toBe(false),
+  )
+
+  it('sandboxes vulnerable paths only for iframe fetches', () => {
+    expect(shouldSandboxDvwaResponse('/vulnerabilities/sqli/', 'iframe')).toBe(true)
+    expect(shouldSandboxDvwaResponse('/vulnerabilities/xss_r/', 'nested-document')).toBe(true)
+  })
+
+  it('does not sandbox vulnerable paths for top-level document navigations', () => {
+    // Task 1 opens SQL Injection in a new tab (Sec-Fetch-Dest: document).
+    // Sandbox without allow-same-origin on that top-level document causes
+    // "refused to connect" / broken DigiNinja modules.
+    expect(shouldSandboxDvwaResponse('/vulnerabilities/sqli/', 'document')).toBe(false)
+    expect(shouldSandboxDvwaResponse('/vulnerabilities/sqli/', null)).toBe(false)
+    expect(shouldSandboxDvwaResponse('/vulnerabilities/sqli/', '')).toBe(false)
+  })
+
+  it('never sandboxes safe pages even inside an iframe', () => {
+    expect(shouldSandboxDvwaResponse('/index.php', 'iframe')).toBe(false)
+    expect(shouldSandboxDvwaResponse('/login.php', 'iframe')).toBe(false)
   })
 })

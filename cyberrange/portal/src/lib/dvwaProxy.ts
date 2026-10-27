@@ -230,13 +230,16 @@ export function isVulnerableDvwaLabPath(path: string): boolean {
 }
 
 /**
- * Security: Serves vulnerable module pages in an opaque origin (origin: null) via CSP sandbox.
- * Prevents reflected XSS or SQLi payloads from accessing portal cookies, local storage,
- * or calling authenticated portal APIs (e.g. /api/auth/session) while allowing script execution,
- * modal dialogs (alert/confirm/prompt), and GET form submissions.
+ * Security: Vulnerable modules may get an opaque-origin CSP sandbox when loaded
+ * inside an iframe (`opts.iframe`). Top-level new-tab navigations (Task 1 SQL
+ * Injection) must stay on frame-ancestors only — sandbox without allow-same-origin
+ * on a top-level document breaks DigiNinja ("refused to connect").
  */
-export function dvwaContentSecurityPolicy(path: string): string {
-  if (isVulnerableDvwaLabPath(path)) {
+export function dvwaContentSecurityPolicy(
+  path: string,
+  opts?: { iframe?: boolean },
+): string {
+  if (isVulnerableDvwaLabPath(path) && opts?.iframe) {
     // The DVWA route owns the full CSP; config does not compete for this header.
     return DVWA_SANDBOX_POLICY
   }
