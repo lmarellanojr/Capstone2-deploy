@@ -87,6 +87,19 @@ describe('/lab/dvwa route handler Content-Security-Policy sandbox', () => {
     )
   })
 
+  it('keeps sandbox CSP on a top-level document fetch (Sec-Fetch-Dest: document)', async () => {
+    mockActivePodAndUpstream('<html><body>XSS</body></html>')
+    const req = new NextRequest(new URL('/lab/dvwa/vulnerabilities/xss_r/', 'http://localhost:3000'), {
+      headers: { 'sec-fetch-dest': 'document' },
+    })
+    const res = await GET(req, { params: Promise.resolve({ path: ['vulnerabilities', 'xss_r'] }) })
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-security-policy')).toBe(
+      "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
+    )
+  })
+
   it('does NOT set sandbox CSP header on safe pages like security.php or home', async () => {
     mockActivePodAndUpstream('<html><body>DVWA Security</body></html>')
     const req = makeRequest('/lab/dvwa/security.php')
