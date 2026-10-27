@@ -271,15 +271,22 @@ describe('dvwaProxy access control', () => {
 })
 
 describe('rewriteCookie (#322)', () => {
-  it('renames PHPSESSID, scopes it to the lab and makes it SameSite=None; Secure', () => {
-    expect(rewriteCookie('PHPSESSID=abc; path=/; HttpOnly')).toBe(
+  it('on an https portal, renames PHPSESSID, scopes it to the lab and makes it SameSite=None; Secure', () => {
+    expect(rewriteCookie('PHPSESSID=abc; path=/; HttpOnly', undefined, true)).toBe(
       'cr_dvwa_sid=abc; Path=/lab/dvwa/; HttpOnly; Secure; SameSite=None'
     )
   })
 
-  it('replaces any SameSite/Secure/Domain DVWA sent', () => {
-    expect(rewriteCookie('security=low; domain=10.115.77.1; SameSite=Strict; secure')).toBe(
+  it('on an https portal, replaces any SameSite/Secure DVWA sent', () => {
+    expect(rewriteCookie('security=low; domain=10.115.77.1; SameSite=Strict; secure', undefined, true)).toBe(
       'security=low; Path=/lab/dvwa/; Secure; SameSite=None'
+    )
+  })
+
+  it('on an http portal, keeps the cookie as before (no Secure added)', () => {
+    expect(rewriteCookie('PHPSESSID=abc; path=/; HttpOnly')).toBe('cr_dvwa_sid=abc; Path=/lab/dvwa/; HttpOnly')
+    expect(rewriteCookie('security=low; domain=10.115.77.1; SameSite=Lax')).toBe(
+      'security=low; SameSite=Lax; Path=/lab/dvwa/'
     )
   })
 })

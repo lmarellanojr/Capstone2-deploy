@@ -37,8 +37,10 @@ import {
   needsDvwaLogin,
   withDvwaSession,
 } from '@/lib/dvwaAutoLogin'
+import { publicOrigin } from '@/lib/publicOrigin'
 import {
   DVWA_LAB_COOKIE,
+  allowsCrossSiteCookies,
   dvwaLabSetCookie,
   isDvwaLabCookieMethod,
   verifyDvwaLabValue,
@@ -163,6 +165,8 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     )
   }
 
+  const crossSite = allowsCrossSiteCookies(publicOrigin(req))
+
   const params = await Promise.resolve(ctx.params)
   let upstreamPath: string
   try {
@@ -223,7 +227,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
       upstreamCookie = withDvwaSession(upstreamCookie, sid)
       try {
         up = await fetchUp(upstreamCookie)
-        loginCookies = dvwaSessionBrowserCookies(sid)
+        loginCookies = dvwaSessionBrowserCookies(sid, crossSite)
       } catch (err) {
         console.error('dvwa proxy: replay after sign-in failed', upstream, err)
         return new NextResponse(
@@ -270,7 +274,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     if (single) setCookies.push(single)
   }
   for (const c of setCookies) {
-    out.append('set-cookie', rewriteCookie(c))
+    out.append('set-cookie', rewriteCookie(c, undefined, crossSite))
   }
   for (const c of stalePhpSessionClearCookies()) {
     out.append('set-cookie', c)
@@ -279,9 +283,10 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
   for (const c of loginCookies) {
     out.append('set-cookie', c)
   }
-  // Sliding: each served page renews it, so a long run of in-pane submits keeps working.
+  // Issued and renewed only with a live session, so it ends at most 30 minutes
+  // after the student's last session-authenticated page in the lab.
   const labSecrets = labCookieSecrets()
-  if (labSecrets && studentName) {
+  if (session && crossSite && labSecrets && studentName) {
     out.append('set-cookie', await dvwaLabSetCookie(labSecrets.auth, studentName, podId))
   }
 

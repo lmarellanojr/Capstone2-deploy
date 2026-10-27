@@ -472,8 +472,8 @@ describe('/lab/dvwa signed lab cookie for sandboxed submits (#322)', () => {
     const diag = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/internal/browser-diagnostic'))
     expect(diag).toBeDefined()
     expect(JSON.parse(diag![1].body)).toMatchObject({ student_id: 'student_demo', pod_id: 3 })
-    const renewed = res.headers.getSetCookie().find((c) => c.startsWith('cr_dvwa_lab='))
-    expect(renewed).toMatch(/; Path=\/lab\/dvwa\/; Max-Age=1800; HttpOnly; Secure; SameSite=None$/)
+    // Never renewed without a session: the cookie keeps the exp it was minted with.
+    expect(res.headers.getSetCookie().some((c) => c.startsWith('cr_dvwa_lab='))).toBe(false)
   })
 
   it.each([403, 404, 409, 503])('sends the submit to /login when the pod check returns %s', async (status) => {
@@ -527,6 +527,46 @@ describe('/lab/dvwa signed lab cookie for sandboxed submits (#322)', () => {
     expect(header).toBeDefined()
     const value = header!.split(';')[0].slice('cr_dvwa_lab='.length)
     await expect(verifyDvwaLabValue(AUTH, value)).resolves.toMatchObject({ sub: 'student_demo', pod: 2 })
+  })
+
+  it('on an http portal, issues no lab cookie and keeps DVWA cookies Lax', async () => {
+    mockedSession.mockResolvedValue({ accessToken: 't', user: { name: 'student_demo' } } as never)
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ pods: [{ pod_id: 2, status: 'ACTIVE' }] }) })
+    fetchMock.mockResolvedValueOnce(
+      new Response('<html><body>Home</body></html>', {
+        status: 200,
+        headers: [['content-type', 'text/html'], ['set-cookie', 'PHPSESSID=s9; path=/']],
+      })
+    )
+    delete process.env.NEXTAUTH_URL
+    const req = new NextRequest(new URL('/lab/dvwa/index.php', 'http://10.115.77.12'))
+
+    const res = await GET(req, { params: Promise.resolve({ path: ['index.php'] }) })
+
+    const cookies = res.headers.getSetCookie()
+    expect(cookies.some((c) => c.startsWith('cr_dvwa_lab='))).toBe(false)
+    expect(cookies).toContain('cr_dvwa_sid=s9; Path=/lab/dvwa/')
+    expect(cookies.join(' | ')).not.toMatch(/Secure|SameSite=None/)
+  })
+
+  it('on an https portal, issues the lab cookie and SameSite=None DVWA cookies', async () => {
+    mockedSession.mockResolvedValue({ accessToken: 't', user: { name: 'student_demo' } } as never)
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ pods: [{ pod_id: 2, status: 'ACTIVE' }] }) })
+    fetchMock.mockResolvedValueOnce(
+      new Response('<html><body>Home</body></html>', {
+        status: 200,
+        headers: [['content-type', 'text/html'], ['set-cookie', 'PHPSESSID=s9; path=/']],
+      })
+    )
+    const req = new NextRequest(new URL('/lab/dvwa/index.php', 'https://range.example.test'), {
+      headers: { host: 'range.example.test', 'x-forwarded-proto': 'https' },
+    })
+
+    const res = await GET(req, { params: Promise.resolve({ path: ['index.php'] }) })
+
+    const cookies = res.headers.getSetCookie()
+    expect(cookies.find((c) => c.startsWith('cr_dvwa_lab='))).toMatch(/; Secure; SameSite=None$/)
+    expect(cookies).toContain('cr_dvwa_sid=s9; Path=/lab/dvwa/; Secure; SameSite=None')
   })
 
   it('issues no cookie when the session has no student name', async () => {

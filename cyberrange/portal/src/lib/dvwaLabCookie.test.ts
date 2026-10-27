@@ -1,5 +1,6 @@
 import {
   DVWA_LAB_COOKIE_MAX_AGE,
+  allowsCrossSiteCookies,
   dvwaLabSetCookie,
   isDvwaLabCookieMethod,
   signDvwaLabValue,
@@ -64,6 +65,17 @@ describe('signed DVWA lab cookie (#322)', () => {
       pod: 3,
       exp: Math.floor(NOW / 1000) + DVWA_LAB_COOKIE_MAX_AGE,
     })
+  })
+
+  it.each([
+    ['https://range.example.test', true],
+    ['http://localhost:3000', true],
+    ['http://127.0.0.1:3000', true],
+    ['http://10.115.77.12', false],
+    ['http://range.example.test', false],
+    ['not a url', false],
+  ])('allowsCrossSiteCookies(%s) is %s', (origin, expected) => {
+    expect(allowsCrossSiteCookies(origin)).toBe(expected)
   })
 
   it('only lets page loads and GET form submits use it', () => {

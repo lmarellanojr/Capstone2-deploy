@@ -98,6 +98,21 @@ export async function dvwaLabSetCookie(
   return `${DVWA_LAB_COOKIE}=${value}; Path=${DVWA_PREFIX}/; Max-Age=${DVWA_LAB_COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=None`
 }
 
+/**
+ * True when the browser will keep a `Secure; SameSite=None` cookie from this
+ * portal origin: https, or a localhost dev server. On a plain-http portal the
+ * lab cookie is not issued and DVWA's cookies stay `SameSite=Lax` as before.
+ */
+export function allowsCrossSiteCookies(origin: string): boolean {
+  try {
+    const u = new URL(origin)
+    if (u.protocol === 'https:') return true
+    return ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)
+  } catch {
+    return false
+  }
+}
+
 /** Only page loads and GET form submits may ride on the lab cookie. */
 export function isDvwaLabCookieMethod(method: string): boolean {
   return method === 'GET' || method === 'HEAD'
