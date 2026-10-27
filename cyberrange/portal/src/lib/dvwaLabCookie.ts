@@ -15,7 +15,8 @@ export const DVWA_LAB_COOKIE = 'cr_dvwa_lab'
 export const DVWA_LAB_COOKIE_MAX_AGE = 30 * 60
 
 const VERSION = 'v1'
-const encoder = new TextEncoder()
+// Created per call, not at module load: jsdom tests import this file through dvwaProxy.ts.
+const utf8 = (text: string) => new TextEncoder().encode(text)
 
 export type DvwaLabClaims = { sub: string; pod: number; exp: number }
 
@@ -40,7 +41,7 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> | null {
 function hmacKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
-    encoder.encode(secret),
+    utf8(secret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign', 'verify']
@@ -49,8 +50,8 @@ function hmacKey(secret: string): Promise<CryptoKey> {
 
 /** Signs `v1.<payload>` so this MAC can never be mistaken for another use of the secret. */
 export async function signDvwaLabValue(secret: string, claims: DvwaLabClaims): Promise<string> {
-  const payload = toBase64Url(encoder.encode(JSON.stringify(claims)))
-  const mac = await crypto.subtle.sign('HMAC', await hmacKey(secret), encoder.encode(`${VERSION}.${payload}`))
+  const payload = toBase64Url(utf8(JSON.stringify(claims)))
+  const mac = await crypto.subtle.sign('HMAC', await hmacKey(secret), utf8(`${VERSION}.${payload}`))
   return `${VERSION}.${payload}.${toBase64Url(new Uint8Array(mac))}`
 }
 
@@ -70,7 +71,7 @@ export async function verifyDvwaLabValue(
     'HMAC',
     await hmacKey(secret),
     mac,
-    encoder.encode(`${VERSION}.${parts[1]}`)
+    utf8(`${VERSION}.${parts[1]}`)
   )
   if (!ok) return null
   let claims: unknown

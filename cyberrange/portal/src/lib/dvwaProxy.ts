@@ -1,5 +1,6 @@
 /** Same-origin DVWA prefix and rewrite helpers (no Next rewrite — session is required). */
 import { DVWA_FRAME_POLICY, DVWA_SANDBOX_POLICY } from './dvwaSecurityPolicy'
+import { DVWA_LAB_COOKIE } from './dvwaLabCookie'
 
 export const DVWA_PREFIX = '/lab/dvwa'
 export const LAB_PROXY_PORT_BASE = 18300
@@ -157,7 +158,7 @@ export function cookiesForUpstream(cookieHeader: string): string {
     // Port is not cookie-isolated: :18301 PHPSESSID is also sent to :3000.
     if (name === 'PHPSESSID') continue
     // Portal-only lab credential (#322); DVWA never needs it.
-    if (name === 'cr_dvwa_lab') continue
+    if (name === DVWA_LAB_COOKIE) continue
     if (name === DVWA_SID_COOKIE) {
       forwarded.push(`PHPSESSID=${value}`)
       continue
