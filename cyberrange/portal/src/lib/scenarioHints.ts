@@ -26,15 +26,15 @@ const HINTS: Record<string, Hint[]> = {
   // Scenario 1 — Network Reconnaissance & Exploitation (terminal, Kali)
   "01:1": [
     { kind: "nudge", text: "Discover which hosts respond in your assigned subnet — no port scan yet. Which Nmap flag does host discovery only?" },
-    { kind: "command", text: "nmap -sn $TARGET_SUBNET", note: "Run in the Kali shell. -sn is discovery without a port scan." },
+    { kind: "command", text: "nmap -sn -n $TARGET_SUBNET", note: "Run in the Kali shell. -sn is discovery without a port scan; -n skips name resolution to keep it fast." },
   ],
   "01:2": [
     { kind: "nudge", text: "Scan meta for the specific ports this lab exposes (21, 22, 80, 8180). Use -p with a port list." },
-    { kind: "command", text: "nmap -p 21,22,80,8180 $TARGET_META" },
+    { kind: "command", text: "nmap -n -p 21,22,80,8180 $TARGET_META" },
   ],
   "01:3": [
     { kind: "nudge", text: "Add service/version detection to the same port scan of meta." },
-    { kind: "command", text: "nmap -sV -p 21,22,80,8180 $TARGET_META", note: "-sV probes services for product and version." },
+    { kind: "command", text: "nmap -sV -n -p 21,22,80,8180 $TARGET_META", note: "-sV probes services for product and version; -n skips name resolution." },
   ],
   "01:4": [
     { kind: "nudge", text: "Use Metasploit's Tomcat Manager deploy module against meta on 8180 with the default tomcat / tomcat credentials, then open a shell. Keep the session open until the task is credited." },

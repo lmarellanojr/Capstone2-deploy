@@ -108,6 +108,8 @@ def _m4(pane_info="4100|ruby", pane=PANE_OK, sockets=SOCKET_OK):
 CASES = [
     # M1 host discovery: [[ prefix ]] && nmap …0/24 && route
     ("m1-pass", 1, dict(history="nmap -sn 10.0.51.0/24\n"), None),
+    # The guide/hint use -n (skip DNS; #318). It must still credit M1.
+    ("m1-pass-n", 1, dict(history="nmap -sn -n 10.0.51.0/24\n"), None),
     ("m1-no-address", 1, dict(history="nmap -sn 10.0.51.0/24\n", addr=False), "NO_POD_ADDRESS"),
     ("m1-no-history", 1, dict(), "COMMAND_NOT_FOUND"),
     ("m1-not-nmap", 1, dict(history="ping -c1 10.0.51.20\n"), "COMMAND_NOT_FOUND"),
@@ -127,6 +129,7 @@ CASES = [
     ("m1-no-route-no-cmd", 1, dict(route=False), "COMMAND_NOT_FOUND"),
     # M2 port enumeration: address and route first, then nmap -p/-F on .20/.30
     ("m2-pass-p", 2, dict(history="nmap -p 21,22,80,8180 10.0.51.20\n"), None),
+    ("m2-pass-n", 2, dict(history="nmap -n -p 21,22,80,8180 10.0.51.20\n"), None),
     ("m2-pass-F", 2, dict(history="nmap 10.0.51.30 -F\n"), None),
     ("m2-no-address", 2, dict(history="nmap -p 22 10.0.51.20\n", addr=False), "NO_POD_ADDRESS"),
     ("m2-no-route", 2, dict(history="nmap -p 22 10.0.51.20\n", route=False), "NO_SUBNET_ROUTE"),
@@ -136,6 +139,7 @@ CASES = [
     ("m2-no-history", 2, dict(), "COMMAND_NOT_FOUND"),
     # M3 service versions: [[ prefix ]] && nmap -sV .20/.30 && route
     ("m3-pass", 3, dict(history="nmap -sV 10.0.51.20\n"), None),
+    ("m3-pass-n", 3, dict(history="nmap -sV -n -p 21,22,80,8180 10.0.51.20\n"), None),
     ("m3-pass-order", 3, dict(history="nmap 10.0.51.30 -sV -p 80\n"), None),
     ("m3-no-sV", 3, dict(history="nmap -p 80 10.0.51.20\n"), "COMMAND_NOT_MATCHED"),
     ("m3-other-pod", 3, dict(history="nmap -sV 10.0.52.20\n"), "COMMAND_NOT_MATCHED"),

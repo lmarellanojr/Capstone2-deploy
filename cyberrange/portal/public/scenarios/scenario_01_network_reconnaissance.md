@@ -57,10 +57,10 @@ Task 5 checks the FLAG token from `/opt/cyberrange/flags/scenario1.txt`. Automat
 1. Run in the Kali shell:
 
 ```bash
-nmap -sn $TARGET_SUBNET
+nmap -sn -n $TARGET_SUBNET
 ```
 
-2. Find the report for meta `$TARGET_META` and read its host status. `-sn` requests discovery without a port scan. Nmap can use different probes, including local-network discovery; this is not limited to one kind of ping.
+2. Find the report for meta `$TARGET_META` and read its host status. `-sn` requests discovery without a port scan. `-n` skips name resolution, which keeps the scan fast in this lab. Nmap can use different probes, including local-network discovery; this is not limited to one kind of ping.
 
 **Expected result — do not type this:** a responding host's report includes `Host is up`. Your `/24` contains 256 addresses (`.0` through `.255`); conventional IPv4 subnets reserve network and broadcast addresses, leaving 254 ordinary host addresses. A scan does not mean every address will respond.
 
@@ -75,7 +75,7 @@ nmap -sn $TARGET_SUBNET
 1. Run the targeted scan in the Kali shell:
 
 ```bash
-nmap -p 21,22,80,8180 $TARGET_META
+nmap -n -p 21,22,80,8180 $TARGET_META
 ```
 
 2. Read the columns: **PORT** is the port/protocol; **STATE** describes the response; **SERVICE** is Nmap's service label. Without version detection, the label is not proof of the exact software.
@@ -85,7 +85,7 @@ nmap -p 21,22,80,8180 $TARGET_META
 
 > **Troubleshooting:** If 8180 is missing, confirm you used `-p 21,22,80,8180` and meta's assigned address. Wait for startup and retry once. A fast scan may omit 8180; persistent missing services need an instructor check.
 
-**Optional — Kali shell:** `nmap -F $TARGET_META` scans common ports and may omit 8180. It can satisfy the command-history check, but you still need to observe 8180 for Tasks 3–4; the targeted `-p 21,22,80,8180` scan shows it directly. `nmap -p- $TARGET_META` scans all 65,535 TCP ports and takes longer.
+**Optional — Kali shell:** `nmap -n -F $TARGET_META` scans common ports and may omit 8180. It can satisfy the command-history check, but you still need to observe 8180 for Tasks 3–4; the targeted `-p 21,22,80,8180` scan shows it directly. `nmap -n -p- $TARGET_META` scans all 65,535 TCP ports and takes longer.
 
 ### Task 3: Service Version Detection
 
@@ -96,7 +96,7 @@ nmap -p 21,22,80,8180 $TARGET_META
 1. Run in the Kali shell:
 
 ```bash
-nmap -sV -p 21,22,80,8180 $TARGET_META
+nmap -sV -n -p 21,22,80,8180 $TARGET_META
 ```
 
 2. Compare with Task 2. `-sV` probes services to add product/version information, rather than relying only on a port's usual service name.
@@ -246,4 +246,4 @@ cat /opt/cyberrange/flags/scenario1.txt
 
 ## 5. Recon playground (optional, not scored)
 
-After the required tasks, use the Kali shell against your assigned meta address: `nmap -sV -sC $TARGET_META` adds default scripts; `nmap -p- $TARGET_META` checks all TCP ports. Compare observations without assuming every probe creates a Wazuh alert. DVWA `$TARGET_DVWA` is optional if available. Keep exploration within assigned lab scope.
+After the required tasks, use the Kali shell against your assigned meta address: `nmap -sV -sC -n $TARGET_META` adds default scripts; `nmap -n -p- $TARGET_META` checks all TCP ports. Compare observations without assuming every probe creates a Wazuh alert. DVWA `$TARGET_DVWA` is optional if available. Keep exploration within assigned lab scope.

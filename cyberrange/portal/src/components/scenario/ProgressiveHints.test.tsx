@@ -36,10 +36,10 @@ describe('ProgressiveHints', () => {
     fireEvent.click(screen.getByRole('button', { name: /Show a hint/i }))
     expect(screen.getByText(/Which Nmap flag/i)).toBeInTheDocument()
     // Exact command not shown yet.
-    expect(screen.queryByText('nmap -sn $TARGET_SUBNET')).not.toBeInTheDocument()
+    expect(screen.queryByText('nmap -sn -n $TARGET_SUBNET')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /exact step/i }))
-    expect(screen.getByText('nmap -sn $TARGET_SUBNET')).toBeInTheDocument()
+    expect(screen.getByText('nmap -sn -n $TARGET_SUBNET')).toBeInTheDocument()
   })
 
   it('substitutes this pod\'s address into command hints', () => {
@@ -47,7 +47,7 @@ describe('ProgressiveHints', () => {
     fireEvent.click(screen.getByRole('button', { name: /Show a hint/i })) // nudge
     fireEvent.click(screen.getByRole('button', { name: /exact step/i })) // command
     // podId 1 → meta 10.0.51.20
-    expect(screen.getByText('nmap -p 21,22,80,8180 10.0.51.20')).toBeInTheDocument()
+    expect(screen.getByText('nmap -n -p 21,22,80,8180 10.0.51.20')).toBeInTheDocument()
   })
 
   it('keeps the variable warning literal while substituting the command', () => {
@@ -71,7 +71,7 @@ describe('ProgressiveHints', () => {
     expect(container.querySelector('li')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Show a hint/i }))
     expect(screen.getByText(/Which Nmap flag/i)).toBeInTheDocument()
-    expect(screen.queryByText('nmap -sn $TARGET_SUBNET')).not.toBeInTheDocument()
+    expect(screen.queryByText('nmap -sn -n $TARGET_SUBNET')).not.toBeInTheDocument()
   })
 
   it('reveals a concrete browser step after the DVWA flag nudge', () => {
