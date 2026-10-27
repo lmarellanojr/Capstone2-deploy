@@ -78,6 +78,12 @@ ROUTE_POLICY = {
             "label": "browser:sqli-m1",
         },
     ),
+    # Same secret; ownership re-check for cookie-only DVWA requests (#322).
+    ("POST", "/internal/browser-pod-check"): (
+        PUBLIC,
+        "/internal/browser-pod-check",
+        {"student_id": "student_demo", "pod_id": POD},
+    ),
     # Same secret; instructor-only near-miss code for Scenario 2.
     ("POST", "/internal/browser-diagnostic"): (
         PUBLIC,
@@ -201,7 +207,11 @@ def _insert_pod(pod_id, owner, status="DESTROYED"):
 
 def _request(client, method, url, body):
     kwargs = {"json": body} if body is not None else {}
-    if url in ("/internal/browser-score", "/internal/browser-diagnostic"):
+    if url in (
+        "/internal/browser-score",
+        "/internal/browser-pod-check",
+        "/internal/browser-diagnostic",
+    ):
         kwargs["headers"] = {
             "X-Browser-Score-Secret": os.environ.get(
                 "BROWSER_SCORE_SECRET", "sec01-matrix-secret"

@@ -9,6 +9,20 @@ import {
   secureDefaultResponse,
   secureDvwaResponse,
 } from "@/lib/dvwaSecurityPolicy"
+import {
+  DVWA_LAB_COOKIE,
+  isDvwaLabCookieMethod,
+  verifyDvwaLabValue,
+} from "@/lib/dvwaLabCookie"
+
+async function hasDvwaLabCookie(req: NextRequest): Promise<boolean> {
+  if (!isDvwaRequest(req.nextUrl.pathname) || !isDvwaLabCookieMethod(req.method)) return false
+  const claims = await verifyDvwaLabValue(
+    process.env.NEXTAUTH_SECRET || "",
+    req.cookies.get(DVWA_LAB_COOKIE)?.value,
+  )
+  return claims !== null
+}
 
 function finalizeMiddlewareResponse(pathname: string, response: NextResponse): NextResponse {
   // Middleware redirects do not reliably inherit next.config headers() on Next 15.5.28.
@@ -24,6 +38,11 @@ export async function middleware(req: NextRequest) {
   })
 
   if (!token) {
+    // #322: a sandboxed DVWA submit has no session cookie. Let a signed lab
+    // cookie through to the proxy, which re-checks the pod before serving.
+    if (await hasDvwaLabCookie(req)) {
+      return NextResponse.next()
+    }
     const origin = publicOrigin(req)
     const login = new URL("/login", origin)
     login.searchParams.set("callbackUrl", `${req.nextUrl.pathname}${req.nextUrl.search}`)

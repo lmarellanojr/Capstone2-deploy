@@ -102,10 +102,15 @@ export function withDvwaSession(upstreamCookie: string, sid: string): string {
   return [...rest, `PHPSESSID=${sid}`, DVWA_SECURITY_COOKIE].join('; ')
 }
 
-/** Browser cookies that keep the student on the session we just opened. */
-export function dvwaSessionBrowserCookies(sid: string): string[] {
+/**
+ * Browser cookies that keep the student on the session we just opened.
+ * `crossSite` (#322, https only): a submit from a sandboxed module in the lab
+ * pane is cross-site, and a Lax DVWA session would drop and force a new sign-in.
+ */
+export function dvwaSessionBrowserCookies(sid: string, crossSite = false): string[] {
+  const site = crossSite ? 'Secure; SameSite=None' : 'SameSite=Lax'
   return [
-    `${DVWA_SID_COOKIE}=${sid}; Path=${DVWA_PREFIX}/; HttpOnly; SameSite=Lax`,
-    `${DVWA_SECURITY_COOKIE}; Path=${DVWA_PREFIX}/; SameSite=Lax`,
+    `${DVWA_SID_COOKIE}=${sid}; Path=${DVWA_PREFIX}/; HttpOnly; ${site}`,
+    `${DVWA_SECURITY_COOKIE}; Path=${DVWA_PREFIX}/; ${site}`,
   ]
 }

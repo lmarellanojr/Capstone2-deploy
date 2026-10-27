@@ -37,6 +37,14 @@ import {
   needsDvwaLogin,
   withDvwaSession,
 } from '@/lib/dvwaAutoLogin'
+import { publicOrigin } from '@/lib/publicOrigin'
+import {
+  DVWA_LAB_COOKIE,
+  allowsCrossSiteCookies,
+  dvwaLabSetCookie,
+  isDvwaLabCookieMethod,
+  verifyDvwaLabValue,
+} from '@/lib/dvwaLabCookie'
 
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || 'http://10.115.77.1:5000'
 
@@ -96,23 +104,59 @@ async function ownerActivePodId(accessToken: string | undefined): Promise<number
   return active?.pod_id ?? null
 }
 
+/** Both secrets the lab cookie needs: one signs it, one authenticates the pod re-check. */
+function labCookieSecrets(): { auth: string; check: string } | null {
+  const auth = process.env.NEXTAUTH_SECRET
+  const check = process.env.BROWSER_SCORE_SECRET
+  return auth && check ? { auth, check } : null
+}
+
+/** #322: student and pod from a signed lab cookie, re-checked with the API, or null. */
+async function labCookieOwner(req: NextRequest): Promise<{ student: string; podId: number } | null> {
+  const secrets = labCookieSecrets()
+  if (!secrets || !isDvwaLabCookieMethod(req.method)) return null
+  const claims = await verifyDvwaLabValue(secrets.auth, req.cookies.get(DVWA_LAB_COOKIE)?.value)
+  if (!claims) return null
+  try {
+    // Pod ids are reused: the cookie's pod must still be this student's ACTIVE Scenario 2 pod.
+    const res = await fetch(`${API_URL}/internal/browser-pod-check`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-browser-score-secret': secrets.check },
+      body: JSON.stringify({ student_id: claims.sub, pod_id: claims.pod }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
+    })
+    return res.ok ? { student: claims.sub, podId: claims.pod } : null
+  } catch (err) {
+    console.warn('dvwa proxy: lab cookie pod check failed', err)
+    return null
+  }
+}
+
 async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
   const session = await getServerSession(authOptions)
-  if (!session) {
-    const login = new URL('/login', 'http://placeholder.invalid')
-    login.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`)
-    return new NextResponse(null, {
-      status: 307,
-      headers: { Location: `${login.pathname}${login.search}` },
-    })
-  }
-
   let podId: number | null
-  try {
-    podId = await ownerActivePodId(session.accessToken as string | undefined)
-  } catch (err) {
-    console.error('dvwa proxy: list pods failed', err)
-    return NextResponse.json({ error: 'API unreachable' }, { status: 503 })
+  let studentName: string | undefined
+  if (session) {
+    studentName = session.user?.name ?? undefined
+    try {
+      podId = await ownerActivePodId(session.accessToken as string | undefined)
+    } catch (err) {
+      console.error('dvwa proxy: list pods failed', err)
+      return NextResponse.json({ error: 'API unreachable' }, { status: 503 })
+    }
+  } else {
+    const owner = await labCookieOwner(req)
+    if (!owner) {
+      const login = new URL('/login', 'http://placeholder.invalid')
+      login.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`)
+      return new NextResponse(null, {
+        status: 307,
+        headers: { Location: `${login.pathname}${login.search}` },
+      })
+    }
+    studentName = owner.student
+    podId = owner.podId
   }
   if (!podId) {
     return new NextResponse(
@@ -120,6 +164,8 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
       { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } }
     )
   }
+
+  const crossSite = allowsCrossSiteCookies(publicOrigin(req))
 
   const params = await Promise.resolve(ctx.params)
   let upstreamPath: string
@@ -181,7 +227,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
       upstreamCookie = withDvwaSession(upstreamCookie, sid)
       try {
         up = await fetchUp(upstreamCookie)
-        loginCookies = dvwaSessionBrowserCookies(sid)
+        loginCookies = dvwaSessionBrowserCookies(sid, crossSite)
       } catch (err) {
         console.error('dvwa proxy: replay after sign-in failed', upstream, err)
         return new NextResponse(
@@ -228,7 +274,7 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
     if (single) setCookies.push(single)
   }
   for (const c of setCookies) {
-    out.append('set-cookie', rewriteCookie(c))
+    out.append('set-cookie', rewriteCookie(c, undefined, crossSite))
   }
   for (const c of stalePhpSessionClearCookies()) {
     out.append('set-cookie', c)
@@ -236,6 +282,12 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
   // After DVWA's own cookies so the session we opened is the one that sticks.
   for (const c of loginCookies) {
     out.append('set-cookie', c)
+  }
+  // Issued and renewed only with a live session, so it ends at most 30 minutes
+  // after the student's last session-authenticated page in the lab.
+  const labSecrets = labCookieSecrets()
+  if (session && crossSite && labSecrets && studentName) {
+    out.append('set-cookie', await dvwaLabSetCookie(labSecrets.auth, studentName, podId))
   }
 
   const csp = dvwaContentSecurityPolicy(upstreamPath)
@@ -259,7 +311,6 @@ async function proxy(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
           })
         : null
     const secret = process.env.BROWSER_SCORE_SECRET
-    const studentName = session.user?.name
     if (milestone && !secret && !warnedMissingBrowserScoreSecret) {
       warnedMissingBrowserScoreSecret = true
       console.warn(

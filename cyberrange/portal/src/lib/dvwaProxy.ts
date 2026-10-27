@@ -1,5 +1,6 @@
 /** Same-origin DVWA prefix and rewrite helpers (no Next rewrite — session is required). */
 import { DVWA_FRAME_POLICY, DVWA_SANDBOX_POLICY } from './dvwaSecurityPolicy'
+import { DVWA_LAB_COOKIE } from './dvwaLabCookie'
 
 export const DVWA_PREFIX = '/lab/dvwa'
 export const LAB_PROXY_PORT_BASE = 18300
@@ -102,17 +103,20 @@ export function rewriteLocation(value: string, upstreamOrigin: string, requestPa
 /** Browser cookie for DVWA PHP session. Isolates from host-wide PHPSESSID set on :18301. */
 export const DVWA_SID_COOKIE = 'cr_dvwa_sid'
 
-export function rewriteCookie(setCookie: string, prefix = DVWA_PREFIX): string {
+export function rewriteCookie(setCookie: string, prefix = DVWA_PREFIX, crossSite = false): string {
   let out = setCookie
   if (/^PHPSESSID=/i.test(out)) {
     out = out.replace(/^PHPSESSID=/i, `${DVWA_SID_COOKIE}=`)
   }
   // Host header is the LXD listen IP; Domain=10.115.77.1 is not valid on :3000.
   out = out.replace(/;\s*domain=[^;]*/gi, '')
+  // Same cross-site rule as dvwaSessionBrowserCookies (#322); https only.
+  const site = crossSite ? '; Secure; SameSite=None' : ''
+  if (crossSite) out = out.replace(/;\s*(samesite=[^;]*|secure)(?=;|$)/gi, '')
   if (/;\s*path=/i.test(out)) {
-    return out.replace(/;\s*path=[^;]*/i, `; Path=${prefix}/`)
+    return `${out.replace(/;\s*path=[^;]*/i, `; Path=${prefix}/`)}${site}`
   }
-  return `${out}; Path=${prefix}/`
+  return `${out}; Path=${prefix}/${site}`
 }
 
 /** Expire the host-wide PHPSESSID left by the old :18301 Open DVWA URL. */
@@ -153,6 +157,8 @@ export function cookiesForUpstream(cookieHeader: string): string {
     }
     // Port is not cookie-isolated: :18301 PHPSESSID is also sent to :3000.
     if (name === 'PHPSESSID') continue
+    // Portal-only lab credential (#322); DVWA never needs it.
+    if (name === DVWA_LAB_COOKIE) continue
     if (name === DVWA_SID_COOKIE) {
       forwarded.push(`PHPSESSID=${value}`)
       continue

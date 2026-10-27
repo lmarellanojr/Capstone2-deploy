@@ -1,6 +1,7 @@
 import { getToken } from "next-auth/jwt"
 import { NextRequest, NextResponse } from "next/server"
 import { publicOrigin } from "@/lib/publicOrigin"
+import { DVWA_LAB_COOKIE } from "@/lib/dvwaLabCookie"
 
 function trimSlash(v: string | undefined): string {
   return (v || "").replace(/\/$/, "")
@@ -28,6 +29,15 @@ function logoutRedirect(req: NextRequest, target: string): NextResponse {
       })
     }
   }
+  // #322: the lab cookie outlives the session cookie, so end it with the session.
+  // Always cleared: it is scoped to /lab/dvwa/, so this request never carries it.
+  res.cookies.set(DVWA_LAB_COOKIE, "", {
+    path: "/lab/dvwa/",
+    maxAge: 0,
+    httpOnly: true,
+    sameSite: "none",
+    secure: true,
+  })
   return res
 }
 

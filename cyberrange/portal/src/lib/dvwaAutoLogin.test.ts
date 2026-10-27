@@ -97,10 +97,17 @@ describe('session cookies', () => {
     expect(withDvwaSession('', 'new')).toBe('PHPSESSID=new; security=low')
   })
 
-  it('scopes the browser cookies to the DVWA proxy path', () => {
+  it('scopes the browser cookies to the DVWA proxy path (Lax on an http portal)', () => {
     expect(dvwaSessionBrowserCookies('abc')).toEqual([
       'cr_dvwa_sid=abc; Path=/lab/dvwa/; HttpOnly; SameSite=Lax',
       'security=low; Path=/lab/dvwa/; SameSite=Lax',
+    ])
+  })
+
+  it('makes them SameSite=None; Secure when the portal allows cross-site cookies (#322)', () => {
+    expect(dvwaSessionBrowserCookies('abc', true)).toEqual([
+      'cr_dvwa_sid=abc; Path=/lab/dvwa/; HttpOnly; Secure; SameSite=None',
+      'security=low; Path=/lab/dvwa/; Secure; SameSite=None',
     ])
   })
 })
