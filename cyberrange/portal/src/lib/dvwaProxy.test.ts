@@ -9,6 +9,7 @@ import {
   injectDvwaEmbeddedStyles,
   rewriteSandboxedThemeUrls,
   rewriteCookie,
+  cookiesForUpstream,
 } from './dvwaProxy'
 
 describe('dvwaProxy access control', () => {
@@ -280,5 +281,13 @@ describe('rewriteCookie (#322)', () => {
     expect(rewriteCookie('security=low; domain=10.115.77.1; SameSite=Strict; secure')).toBe(
       'security=low; Path=/lab/dvwa/; Secure; SameSite=None'
     )
+  })
+})
+
+describe('cookiesForUpstream (#322)', () => {
+  it('never forwards the lab cookie or the portal session to DVWA', () => {
+    expect(
+      cookiesForUpstream('cr_dvwa_sid=s1; security=low; cr_dvwa_lab=v1.a.b; next-auth.session-token=t')
+    ).toBe('PHPSESSID=s1; security=low')
   })
 })

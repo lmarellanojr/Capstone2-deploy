@@ -155,6 +155,8 @@ export function cookiesForUpstream(cookieHeader: string): string {
     }
     // Port is not cookie-isolated: :18301 PHPSESSID is also sent to :3000.
     if (name === 'PHPSESSID') continue
+    // Portal-only lab credential (#322); DVWA never needs it.
+    if (name === 'cr_dvwa_lab') continue
     if (name === DVWA_SID_COOKIE) {
       forwarded.push(`PHPSESSID=${value}`)
       continue

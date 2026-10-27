@@ -46,7 +46,11 @@ describe("federated logout", () => {
     const res = await logout(
       "__Secure-next-auth.session-token.0=a; __Secure-next-auth.session-token.1=b; next-auth.callback-url=x; theme=dark"
     )
-    const cleared = res.cookies.getAll().filter((c) => c.value === "" && c.maxAge === 0).map((c) => c.name).sort()
+    const cleared = res.cookies
+      .getAll()
+      .filter((c) => c.value === "" && c.maxAge === 0 && c.name !== "cr_dvwa_lab")
+      .map((c) => c.name)
+      .sort()
     expect(cleared).toEqual(["__Secure-next-auth.session-token.0", "__Secure-next-auth.session-token.1"])
     // unrelated cookies are left alone
     expect(res.cookies.get("theme")).toBeUndefined()
@@ -54,7 +58,8 @@ describe("federated logout", () => {
 
   it("ends the DVWA lab cookie with the session (#322)", async () => {
     mockedGetToken.mockResolvedValue(null)
-    const res = await logout("next-auth.session-token=a; cr_dvwa_lab=v1.x.y")
+    // The browser never sends the /lab/dvwa/-scoped cookie here, so it must be cleared blind.
+    const res = await logout("next-auth.session-token=a")
     const lab = res.headers.getSetCookie().find((c) => c.startsWith("cr_dvwa_lab="))
     expect(lab).toMatch(/^cr_dvwa_lab=; Path=\/lab\/dvwa\/; Max-Age=0;/)
     expect(lab).toMatch(/HttpOnly/)

@@ -30,15 +30,14 @@ function logoutRedirect(req: NextRequest, target: string): NextResponse {
     }
   }
   // #322: the lab cookie outlives the session cookie, so end it with the session.
-  if (req.cookies.has(DVWA_LAB_COOKIE)) {
-    res.cookies.set(DVWA_LAB_COOKIE, "", {
-      path: "/lab/dvwa/",
-      maxAge: 0,
-      httpOnly: true,
-      sameSite: "none",
-      secure: true,
-    })
-  }
+  // Always cleared: it is scoped to /lab/dvwa/, so this request never carries it.
+  res.cookies.set(DVWA_LAB_COOKIE, "", {
+    path: "/lab/dvwa/",
+    maxAge: 0,
+    httpOnly: true,
+    sameSite: "none",
+    secure: true,
+  })
   return res
 }
 
