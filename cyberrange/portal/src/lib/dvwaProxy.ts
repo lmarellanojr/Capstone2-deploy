@@ -109,10 +109,12 @@ export function rewriteCookie(setCookie: string, prefix = DVWA_PREFIX): string {
   }
   // Host header is the LXD listen IP; Domain=10.115.77.1 is not valid on :3000.
   out = out.replace(/;\s*domain=[^;]*/gi, '')
+  // Same cross-site rule as dvwaSessionBrowserCookies (#322); scoped to the lab path below.
+  out = out.replace(/;\s*(samesite=[^;]*|secure)(?=;|$)/gi, '')
   if (/;\s*path=/i.test(out)) {
-    return out.replace(/;\s*path=[^;]*/i, `; Path=${prefix}/`)
+    return `${out.replace(/;\s*path=[^;]*/i, `; Path=${prefix}/`)}; Secure; SameSite=None`
   }
-  return `${out}; Path=${prefix}/`
+  return `${out}; Path=${prefix}/; Secure; SameSite=None`
 }
 
 /** Expire the host-wide PHPSESSID left by the old :18301 Open DVWA URL. */

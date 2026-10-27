@@ -84,6 +84,13 @@ class BrowserScoreIn(BaseModel):
     label: str = Field(..., min_length=1, max_length=64)
 
 
+class BrowserPodCheckIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    student_id: str = Field(..., pattern=STUDENT_ID_PATTERN)
+    pod_id: int = Field(..., ge=1, le=2**63 - 1)
+
+
 class BrowserDiagnosticIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -151,6 +158,26 @@ def browser_score(
     if scoring_diagnostics.applies_to(6):
         scoring_diagnostics.record_safely(pod, 6, body.milestone_id, "PASS", None)
     return {"status": "PASS", "milestone_id": body.milestone_id}
+
+
+@internal_router.post("/internal/browser-pod-check")
+def browser_pod_check(
+    body: BrowserPodCheckIn,
+    x_browser_score_secret: str = Header(default=""),
+):
+    """Re-check a cookie-only DVWA request against the pods table (#322).
+
+    A sandboxed DVWA form submit carries the signed lab cookie but not the
+    portal session, so the proxy cannot list pods as the student. Pod ids are
+    reused, so the cookie's pod is checked here on every such request.
+    """
+    _require_browser_secret(x_browser_score_secret)
+    conn = get_db_connection()
+    try:
+        _browser_pod(conn, body.pod_id, body.student_id)
+    finally:
+        conn.close()
+    return {"status": "OK"}
 
 
 @internal_router.post("/internal/browser-diagnostic")

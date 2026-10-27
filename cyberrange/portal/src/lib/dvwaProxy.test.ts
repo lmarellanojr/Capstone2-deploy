@@ -8,6 +8,7 @@ import {
   DVWA_EMBEDDED_CSS_HREF,
   injectDvwaEmbeddedStyles,
   rewriteSandboxedThemeUrls,
+  rewriteCookie,
 } from './dvwaProxy'
 
 describe('dvwaProxy access control', () => {
@@ -265,5 +266,19 @@ describe('dvwaProxy access control', () => {
       )
       expect(dvwaContentSecurityPolicy('/vulnerabilities/sqli/')!).not.toMatch(/same-origin/)
     })
+  })
+})
+
+describe('rewriteCookie (#322)', () => {
+  it('renames PHPSESSID, scopes it to the lab and makes it SameSite=None; Secure', () => {
+    expect(rewriteCookie('PHPSESSID=abc; path=/; HttpOnly')).toBe(
+      'cr_dvwa_sid=abc; Path=/lab/dvwa/; HttpOnly; Secure; SameSite=None'
+    )
+  })
+
+  it('replaces any SameSite/Secure/Domain DVWA sent', () => {
+    expect(rewriteCookie('security=low; domain=10.115.77.1; SameSite=Strict; secure')).toBe(
+      'security=low; Path=/lab/dvwa/; Secure; SameSite=None'
+    )
   })
 })

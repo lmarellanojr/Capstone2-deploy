@@ -354,3 +354,65 @@ def test_reused_pod_slot_records_browser_pass_per_student(client):
     assert _pass_count(3, 1, student_id="student_a") == 1
     assert _pass_count(3, 1, student_id="student_b") == 1
     assert _pass_count(3, 1) == 2
+
+
+# --- /internal/browser-pod-check (#322) -------------------------------------
+
+
+def _check(client, headers=None, **over):
+    body = {"student_id": "student_demo", "pod_id": 10}
+    body.update(over)
+    return client.post(
+        "/internal/browser-pod-check",
+        json=body,
+        headers=_headers() if headers is None else headers,
+    )
+
+
+def test_pod_check_accepts_owner_of_active_scenario_06_pod(client):
+    _insert_pod()
+    r = _check(client)
+    assert r.status_code == 200
+    assert r.json() == {"status": "OK"}
+
+
+@pytest.mark.parametrize("headers, status", [({}, 401), (_headers("wrong"), 401)])
+def test_pod_check_requires_secret(client, headers, status):
+    _insert_pod()
+    assert _check(client, headers=headers).status_code == status
+
+
+def test_pod_check_unset_secret_is_503(client, monkeypatch):
+    monkeypatch.delenv("BROWSER_SCORE_SECRET", raising=False)
+    _insert_pod()
+    assert _check(client).status_code == 503
+
+
+@pytest.mark.parametrize(
+    "pod, status",
+    [
+        ({"status": "DESTROYED"}, 409),
+        ({"student_id": "other_student"}, 403),
+        ({"scenario_id": "01"}, 409),
+    ],
+)
+def test_pod_check_rejects_stale_or_foreign_pod(client, pod, status):
+    _insert_pod(**pod)
+    assert _check(client).status_code == status
+
+
+def test_pod_check_missing_pod_is_404(client):
+    assert _check(client, pod_id=11).status_code == 404
+
+
+def test_pod_check_rejects_extra_fields(client):
+    _insert_pod()
+    assert _check(client, milestone_id=1).status_code == 422
+
+
+def test_pod_check_follows_reused_pod_slot(client):
+    """A cookie minted for the old owner fails once the slot is reassigned."""
+    _insert_pod()
+    _reassign_pod(10, "student_next")
+    assert _check(client).status_code == 403
+    assert _check(client, student_id="student_next").status_code == 200

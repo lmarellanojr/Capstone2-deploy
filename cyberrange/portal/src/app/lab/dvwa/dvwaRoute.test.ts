@@ -3,7 +3,8 @@ import { NextRequest } from 'next/server'
 jest.mock('next-auth', () => ({ getServerSession: jest.fn() }))
 jest.mock('@/lib/auth', () => ({ authOptions: {} }))
 import { getServerSession } from 'next-auth'
-import { GET, HEAD } from './[[...path]]/route'
+import { GET, HEAD, POST } from './[[...path]]/route'
+import { signDvwaLabValue, verifyDvwaLabValue } from '@/lib/dvwaLabCookie'
 
 const mockedSession = getServerSession as jest.MockedFunction<typeof getServerSession>
 const fetchMock = jest.fn()
@@ -345,8 +346,8 @@ describe('/lab/dvwa automatic sign-in', () => {
     expect(urls[4]).toBe(urls[1])
     expect(fetchMock.mock.calls[4][1].headers.get('cookie')).toBe('PHPSESSID=s1; security=low')
     const cookies = res.headers.getSetCookie()
-    expect(cookies).toContain('cr_dvwa_sid=s1; Path=/lab/dvwa/; HttpOnly; SameSite=Lax')
-    expect(cookies).toContain('security=low; Path=/lab/dvwa/; SameSite=Lax')
+    expect(cookies).toContain('cr_dvwa_sid=s1; Path=/lab/dvwa/; HttpOnly; Secure; SameSite=None')
+    expect(cookies).toContain('security=low; Path=/lab/dvwa/; Secure; SameSite=None')
   })
 
   it("falls back to DVWA's own login redirect when sign-in fails", async () => {
@@ -411,4 +412,133 @@ describe('/lab/dvwa automatic sign-in', () => {
       process.env.BROWSER_SCORE_SECRET = prevSecret
     }
   })
+})
+
+describe('/lab/dvwa signed lab cookie for sandboxed submits (#322)', () => {
+  const ENV = { ...process.env }
+  const AUTH = 'route-lab-auth-secret'
+  const SANDBOX = "sandbox allow-scripts allow-forms allow-modals; frame-ancestors 'self'"
+  const SQLI = ['vulnerabilities', 'sqli']
+
+  beforeEach(() => {
+    fetchMock.mockReset()
+    mockedSession.mockReset()
+    mockedSession.mockResolvedValue(null)
+    process.env = { ...ENV, NEXTAUTH_SECRET: AUTH, BROWSER_SCORE_SECRET: 'test-secret' }
+  })
+  afterAll(() => {
+    process.env = ENV
+  })
+
+  async function labCookie(sub = 'student_demo', pod = 3, secret = AUTH) {
+    const value = await signDvwaLabValue(secret, { sub, pod, exp: Math.floor(Date.now() / 1000) + 600 })
+    return `cr_dvwa_lab=${value}`
+  }
+
+  function submit(cookie: string, method = 'GET') {
+    return new NextRequest(
+      new URL("/lab/dvwa/vulnerabilities/sqli/?id=1'+OR+'1'%3D'1&Submit=Submit", 'http://localhost:3000'),
+      { method, headers: { cookie, 'sec-fetch-site': 'cross-site', 'sec-fetch-dest': 'iframe' } }
+    )
+  }
+
+  function upstreamHtml() {
+    return new Response('<html><body>ID: 1 First name: admin</body></html>', {
+      status: 200,
+      headers: [['content-type', 'text/html']],
+    })
+  }
+
+  it('serves a cookieless in-pane submit on the pod the API confirms, still sandboxed', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{"status":"OK"}', { status: 200 }))
+    fetchMock.mockResolvedValueOnce(upstreamHtml())
+    // Near-miss diagnostic (fire-and-forget) for this non-scoring page.
+    fetchMock.mockResolvedValue(new Response('{}', { status: 200 }))
+
+    const res = await GET(submit(await labCookie()), { params: Promise.resolve({ path: SQLI }) })
+
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('First name: admin')
+    expect(res.headers.get('content-security-policy')).toBe(SANDBOX)
+    const [checkUrl, checkInit] = fetchMock.mock.calls[0]
+    expect(String(checkUrl)).toMatch(/\/internal\/browser-pod-check$/)
+    expect(checkInit.headers['x-browser-score-secret']).toBe('test-secret')
+    expect(JSON.parse(checkInit.body)).toEqual({ student_id: 'student_demo', pod_id: 3 })
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/:18303\/vulnerabilities\/sqli\/\?id=/)
+    // No /pods call: the cookie path never has (or needs) a Keycloak token.
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.some((u) => /\/pods$/.test(u))).toBe(false)
+    // Diagnostics run as the cookie's student, as they would with a session.
+    const diag = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/internal/browser-diagnostic'))
+    expect(diag).toBeDefined()
+    expect(JSON.parse(diag![1].body)).toMatchObject({ student_id: 'student_demo', pod_id: 3 })
+    const renewed = res.headers.getSetCookie().find((c) => c.startsWith('cr_dvwa_lab='))
+    expect(renewed).toMatch(/; Path=\/lab\/dvwa\/; Max-Age=1800; HttpOnly; Secure; SameSite=None$/)
+  })
+
+  it.each([403, 404, 409, 503])('sends the submit to /login when the pod check returns %s', async (status) => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status }))
+
+    const res = await GET(submit(await labCookie()), { params: Promise.resolve({ path: SQLI }) })
+
+    expect(res.status).toBe(307)
+    expect(res.headers.get('location')).toMatch(/^\/login\?callbackUrl=/)
+    expect(res.headers.get('content-security-policy')).toBe(SANDBOX)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends the submit to /login when the pod check is unreachable', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('api offline'))
+    const res = await GET(submit(await labCookie()), { params: Promise.resolve({ path: SQLI }) })
+    expect(res.status).toBe(307)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a cookie signed with another secret, without calling the API', async () => {
+    const res = await GET(submit(await labCookie('student_demo', 3, 'not-the-secret')), {
+      params: Promise.resolve({ path: SQLI }),
+    })
+    expect(res.status).toBe(307)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('ignores the cookie for POST', async () => {
+    const res = await POST(submit(await labCookie(), 'POST'), { params: Promise.resolve({ path: SQLI }) })
+    expect(res.status).toBe(307)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('ignores the cookie when BROWSER_SCORE_SECRET is unset (no way to re-check the pod)', async () => {
+    delete process.env.BROWSER_SCORE_SECRET
+    const res = await GET(submit(await labCookie()), { params: Promise.resolve({ path: SQLI }) })
+    expect(res.status).toBe(307)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('issues the cookie for the signed-in student and their active pod', async () => {
+    mockedSession.mockResolvedValue({ accessToken: 't', user: { name: 'student_demo' } } as never)
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ pods: [{ pod_id: 2, status: 'ACTIVE' }] }) })
+    fetchMock.mockResolvedValueOnce(upstreamHtml())
+
+    const res = await GET(makeRequest('/lab/dvwa/index.php'), { params: Promise.resolve({ path: ['index.php'] }) })
+
+    expect(res.status).toBe(200)
+    const header = res.headers.getSetCookie().find((c) => c.startsWith('cr_dvwa_lab='))
+    expect(header).toBeDefined()
+    const value = header!.split(';')[0].slice('cr_dvwa_lab='.length)
+    await expect(verifyDvwaLabValue(AUTH, value)).resolves.toMatchObject({ sub: 'student_demo', pod: 2 })
+  })
+
+  it('issues no cookie when the session has no student name', async () => {
+    mockActivePodAndUpstreamForLab()
+    const res = await GET(makeRequest('/lab/dvwa/index.php'), { params: Promise.resolve({ path: ['index.php'] }) })
+    expect(res.status).toBe(200)
+    expect(res.headers.getSetCookie().some((c) => c.startsWith('cr_dvwa_lab='))).toBe(false)
+  })
+
+  function mockActivePodAndUpstreamForLab() {
+    mockedSession.mockResolvedValue({ accessToken: 't' } as never)
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ pods: [{ pod_id: 1, status: 'ACTIVE' }] }) })
+    fetchMock.mockResolvedValueOnce(upstreamHtml())
+  }
 })

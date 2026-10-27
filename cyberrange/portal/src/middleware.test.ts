@@ -9,6 +9,7 @@ import { NextRequest } from "next/server"
 jest.mock("next-auth/jwt", () => ({ getToken: jest.fn() }))
 import { getToken } from "next-auth/jwt"
 import { config, middleware } from "./middleware"
+import { signDvwaLabValue } from "@/lib/dvwaLabCookie"
 
 const mockedGetToken = getToken as jest.MockedFunction<typeof getToken>
 
@@ -24,6 +25,59 @@ describe('DVWA redirects before the proxy handler', () => {
       }
     },
   )
+})
+
+describe('signed DVWA lab cookie lets a sandboxed submit reach the proxy (#322)', () => {
+  const ENV = { ...process.env }
+  beforeEach(() => {
+    process.env = { ...ENV, NEXTAUTH_SECRET: 'mw-lab-secret' }
+    mockedGetToken.mockResolvedValue(null)
+  })
+  afterAll(() => {
+    process.env = ENV
+  })
+
+  async function cookie(secret = 'mw-lab-secret', expInSec = 600) {
+    const exp = Math.floor(Date.now() / 1000) + expInSec
+    return `cr_dvwa_lab=${await signDvwaLabValue(secret, { sub: 'student_demo', pod: 3, exp })}`
+  }
+
+  function req(pathname: string, cookieHeader: string, method = 'GET') {
+    return new NextRequest(`https://example.test${pathname}`, { method, headers: { cookie: cookieHeader } })
+  }
+
+  it.each(['GET', 'HEAD'])('passes a %s to /lab/dvwa through to the route', async (method) => {
+    const response = await middleware(req('/lab/dvwa/vulnerabilities/sqli/?id=1', await cookie(), method))
+    expect(response.status).toBe(200)
+    expect(response.headers.get('x-middleware-next')).toBe('1')
+  })
+
+  it.each([
+    ['POST to the lab', '/lab/dvwa/vulnerabilities/sqli/', 'POST'],
+    ['any other page', '/dashboard', 'GET'],
+    ['another lab path', '/lab/other', 'GET'],
+  ])('still redirects %s to /login', async (_label, pathname, method) => {
+    const response = await middleware(req(pathname, await cookie(), method))
+    expect(response.status).toBe(307)
+    expect(new URL(response.headers.get('location')!).pathname).toBe('/login')
+  })
+
+  it.each([
+    ['forged', () => cookie('other-secret')],
+    ['expired', () => cookie('mw-lab-secret', -1)],
+    ['garbage', async () => 'cr_dvwa_lab=v1.x.y'],
+  ])('redirects a %s cookie to /login', async (_label, make) => {
+    const response = await middleware(req('/lab/dvwa/vulnerabilities/sqli/', await make()))
+    expect(response.status).toBe(307)
+    expect(response.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'self'")
+  })
+
+  it('redirects when NEXTAUTH_SECRET is unset', async () => {
+    const value = await cookie()
+    delete process.env.NEXTAUTH_SECRET
+    const response = await middleware(req('/lab/dvwa/vulnerabilities/sqli/', value))
+    expect(response.status).toBe(307)
+  })
 })
 
 describe('non-DVWA middleware redirects carry default DENY headers', () => {

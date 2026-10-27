@@ -99,8 +99,8 @@ describe('session cookies', () => {
 
   it('scopes the browser cookies to the DVWA proxy path', () => {
     expect(dvwaSessionBrowserCookies('abc')).toEqual([
-      'cr_dvwa_sid=abc; Path=/lab/dvwa/; HttpOnly; SameSite=Lax',
-      'security=low; Path=/lab/dvwa/; SameSite=Lax',
+      'cr_dvwa_sid=abc; Path=/lab/dvwa/; HttpOnly; Secure; SameSite=None',
+      'security=low; Path=/lab/dvwa/; Secure; SameSite=None',
     ])
   })
 })

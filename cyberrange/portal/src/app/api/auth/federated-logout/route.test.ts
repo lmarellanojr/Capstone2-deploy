@@ -51,4 +51,14 @@ describe("federated logout", () => {
     // unrelated cookies are left alone
     expect(res.cookies.get("theme")).toBeUndefined()
   })
+
+  it("ends the DVWA lab cookie with the session (#322)", async () => {
+    mockedGetToken.mockResolvedValue(null)
+    const res = await logout("next-auth.session-token=a; cr_dvwa_lab=v1.x.y")
+    const lab = res.headers.getSetCookie().find((c) => c.startsWith("cr_dvwa_lab="))
+    expect(lab).toMatch(/^cr_dvwa_lab=; Path=\/lab\/dvwa\/; Max-Age=0;/)
+    expect(lab).toMatch(/HttpOnly/)
+    expect(lab).toMatch(/Secure/)
+    expect(lab).toMatch(/SameSite=none/i)
+  })
 })
