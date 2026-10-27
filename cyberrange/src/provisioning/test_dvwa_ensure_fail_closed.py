@@ -205,12 +205,13 @@ def test_perform_provisioning_s2_cleans_up_when_dvwa_ensure_fails(monkeypatch):
     monkeypatch.setattr(
         provision, "create_pod_network", lambda pod_id, manager_ip=None: None
     )
-    events: list[str] = []
+    # (event_type, detail) — detail pins fail-closed wiring (review finding 1).
+    events: list[tuple[str, object]] = []
     monkeypatch.setattr(
         provision,
         "log_event",
         lambda event_type, student_id=None, pod_id=None, vmid=None, result=None, detail=None: events.append(
-            event_type
+            (event_type, detail)
         ),
     )
     monkeypatch.setattr(provision, "ensure_guest_nic_up", lambda *args, **kwargs: True)
@@ -229,10 +230,13 @@ def test_perform_provisioning_s2_cleans_up_when_dvwa_ensure_fails(monkeypatch):
         provision, "cleanup_after_failure", lambda *args: cleaned.append(args)
     )
 
-    def fail_db():
+    db_calls: list[str] = []
+
+    def track_db():
+        db_calls.append("get_db_connection")
         raise AssertionError("pod row must not be updated to ACTIVE")
 
-    monkeypatch.setattr(provision, "get_db_connection", fail_db)
+    monkeypatch.setattr(provision, "get_db_connection", track_db)
 
     provision.perform_provisioning(
         "alice",
@@ -241,7 +245,14 @@ def test_perform_provisioning_s2_cleans_up_when_dvwa_ensure_fails(monkeypatch):
         "6",
     )
 
+    event_types = [e[0] for e in events]
     assert cleaned == [("alice", 1, None, None)]
-    assert "PROVISION_FAILED" in events
-    assert "PROVISION_SUCCESS" not in events
-    assert "DVWA_COMPOSE_FAIL" in events
+    assert (
+        "PROVISION_FAILED",
+        provision.DVWA_ENSURE_GENERIC_ERROR,
+    ) in events
+    assert "PROVISION_SUCCESS" not in event_types
+    assert "DVWA_COMPOSE_FAIL" in event_types
+    # Past-DVWA steps must not run — these would still fire on a fail-open path.
+    assert "LAB_PROXY_OK" not in event_types
+    assert db_calls == []
