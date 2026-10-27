@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import time
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 import pylxd
 
@@ -33,6 +33,103 @@ from wazuh_client import (
 logger = logging.getLogger("provision_api")
 
 _TERMINAL = frozenset({"DESTROYED", "FAILED_ROLLBACK_COMPLETE"})
+
+# Scenario 2 (catalog id 6) must not go ACTIVE when nested DVWA is unhealthy (#317).
+DVWA_ENSURE_GENERIC_ERROR = "DVWA lab failed health checks; lab was not started"
+_DVWA_FAIL_CLOSED_SCENARIO_IDS = frozenset({6})
+_DVWA_ENSURE_DEFAULT_RETRIES = 1
+_DVWA_ENSURE_RETRY_DELAY_S = 5.0
+
+
+def _scenario_int(scenario_id) -> int:
+    return int(str(scenario_id).strip())
+
+
+def ensure_dvwa_during_provision(
+    dvwa_inst,
+    student_id: str,
+    pod_id: int,
+    scenario_id,
+    *,
+    vmid: Optional[str] = None,
+    compose_fn: Optional[Callable] = None,
+    ready_fn: Optional[Callable] = None,
+    retries: Optional[int] = None,
+    retry_delay_s: Optional[float] = None,
+) -> None:
+    """Run nested DVWA compose + ready checks during provision.
+
+    Scenario 2 (id 6) is fail-closed: a failed compose/ready (after a bounded
+    retry) raises RuntimeError so the pod never becomes ACTIVE. Other scenarios
+    keep the historical fail-open behaviour (log and continue).
+    """
+    compose = compose_fn or ensure_dvwa_compose
+    ready = ready_fn or ensure_dvwa_ready
+    scen = _scenario_int(scenario_id)
+    fail_closed = scen in _DVWA_FAIL_CLOSED_SCENARIO_IDS
+    attempt_retries = (
+        _DVWA_ENSURE_DEFAULT_RETRIES if retries is None else max(0, int(retries))
+    )
+    delay = (
+        _DVWA_ENSURE_RETRY_DELAY_S
+        if retry_delay_s is None
+        else max(0.0, float(retry_delay_s))
+    )
+    # Fail-open scenarios do not retry; one pass matches the old path.
+    max_attempts = 1 + attempt_retries if fail_closed else 1
+    container = vmid or getattr(dvwa_inst, "name", None)
+
+    last_error: Exception | None = None
+    for attempt in range(max_attempts):
+        compose_ok = False
+        ready_ok = False
+        last_error = None
+        try:
+            compose_ok = bool(compose(dvwa_inst))
+            if compose_ok:
+                log_event("DVWA_COMPOSE_OK", student_id, pod_id, vmid=container)
+            else:
+                log_event(
+                    "DVWA_COMPOSE_FAIL",
+                    student_id,
+                    pod_id,
+                    vmid=container,
+                    detail="DB_SERVER=db health check failed",
+                )
+
+            ready_ok = bool(ready(dvwa_inst))
+            if ready_ok:
+                log_event("DVWA_READY_OK", student_id, pod_id, vmid=container)
+            else:
+                log_event(
+                    "DVWA_READY_FAIL",
+                    student_id,
+                    pod_id,
+                    vmid=container,
+                    detail="users table missing after seed",
+                )
+        except Exception as exc:
+            last_error = exc
+            logger.warning("DVWA compose ensure skipped/failed: %s", exc, exc_info=True)
+            log_event(
+                "DVWA_COMPOSE_FAIL",
+                student_id,
+                pod_id,
+                vmid=container,
+                detail=str(exc),
+            )
+
+        if compose_ok and ready_ok and last_error is None:
+            return
+
+        if fail_closed and attempt + 1 < max_attempts:
+            time.sleep(delay)
+            continue
+
+        if fail_closed:
+            raise RuntimeError(DVWA_ENSURE_GENERIC_ERROR) from None
+        return
+
 
 
 def finalize_destroyed_pod(pod_id: int, terminal_status: str) -> None:
@@ -340,31 +437,14 @@ write_files:
 
         log_event("NET_APPLY_OK", student_id, pod_id, detail="LXD native networking and keys configured")
 
-        try:
-            dvwa_inst = client.instances.get(dvwa_name)
-            if ensure_dvwa_compose(dvwa_inst):
-                log_event("DVWA_COMPOSE_OK", student_id, pod_id, vmid=dvwa_name)
-            else:
-                log_event(
-                    "DVWA_COMPOSE_FAIL",
-                    student_id,
-                    pod_id,
-                    vmid=dvwa_name,
-                    detail="DB_SERVER=db health check failed",
-                )
-            if ensure_dvwa_ready(dvwa_inst):
-                log_event("DVWA_READY_OK", student_id, pod_id, vmid=dvwa_name)
-            else:
-                log_event(
-                    "DVWA_READY_FAIL",
-                    student_id,
-                    pod_id,
-                    vmid=dvwa_name,
-                    detail="users table missing after seed",
-                )
-        except Exception as e:
-            logger.warning(f"DVWA compose ensure skipped/failed: {e}")
-            log_event("DVWA_COMPOSE_FAIL", student_id, pod_id, detail=str(e))
+        # Scenario 2 is fail-closed when nested DVWA is unhealthy (#317).
+        ensure_dvwa_during_provision(
+            client.instances.get(dvwa_name),
+            student_id,
+            pod_id,
+            scenario_id,
+            vmid=dvwa_name,
+        )
 
         # Student-browser access to DVWA (S2): LXD proxy device → host/lxdbr0 port.
         # See lab_proxy.py / Docs/2026-08-08_SCENARIO_UX_THM_IMPROVEMENT_PLAN.md G1.
