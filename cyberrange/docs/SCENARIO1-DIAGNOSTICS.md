@@ -28,6 +28,8 @@ M5 (flag) is scored by flag submission, not by this script, and has no reasons.
 | `SESSION_NOT_LIVE` | 4 | a session was opened, but msfconsole no longer holds a connection to it |
 | `CHECK_ERROR` | 1–4 | the check could not run (`ip`, tmux, ss or runuser missing, malformed pane data) or the verifier returned ERROR. A missing `ip` is checked first, so it is not reported as `NO_POD_ADDRESS`/`NO_SUBNET_ROUTE` |
 
+M1–M3 match whole tokens inside one real `nmap` command, so `echo nmap …`, `.200` for `.20`, `110.0.51.20` for `10.0.51.20`, and a `-p` inside a filename or another command don't earn credit. A wrapper other than `sudo` or a path (`time nmap …`, `sudo -n nmap …`) doesn't either.
+
 The reason is the **first** condition that failed, in the order above. So, for example, M1 with no nmap and no route reports `COMMAND_NOT_FOUND` (the command is checked first), while M2 with the same state reports `NO_SUBNET_ROUTE`.
 
 `COMMAND_NOT_MATCHED` only says that some `nmap` command exists. It does not say what was wrong with it, because the check doesn't record which line came closest. The DIAG line never carries commands, addresses or pane text, and the reason is never written to Kali's scoring log.

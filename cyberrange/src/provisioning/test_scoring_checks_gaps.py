@@ -109,6 +109,58 @@ def test_s1_m3_version_scan_of_a_missing_host_fails(tmp_path):
     assert run(tmp_path, 1, 3, history="nmap -sV 10.0.51.99\n", stubs={"ip": IP_STUB}) == "FAIL"
 
 
+# False passes and the valid forms that must keep passing. These don't change
+# which commands earn credit: plain `nmap <target>` still fails M2 on purpose.
+
+@pytest.mark.parametrize("milestone,line", [
+    (1, "echo nmap 10.0.51.0/24"),            # nothing scanned
+    (1, "man nmap 10.0.51.0/24"),
+    (1, "nmap -sn 110.0.51.0/24"),            # a different network
+    (1, "nmap -sn 10.0.51.0/240"),
+    (1, "nmap -sn 10.0.55.1 ; ls 10.0.51.0/24"),  # target is in another command
+    (2, "nmap -p 80 10.0.51.200"),            # .200 is not .20
+    (2, "nmap -p 80 10.0.51.301"),
+    (2, "nmap -p 80 110.0.51.20"),
+    (2, "nmap -oN scan-ports.txt 10.0.51.20"),  # -p only inside a filename
+    (2, "nmap 10.0.51.20; ls -p"),            # -p belongs to ls
+    (2, "echo nmap -p 80 10.0.51.20"),
+    (2, "nmap -Pn 10.0.51.20"),               # -Pn is not port selection
+    (3, "nmap -sV 10.0.51.200"),
+    (3, "nmap -sV 110.0.51.20"),
+    (3, "echo nmap -sV 10.0.51.20"),
+    (3, "nmap 10.0.51.20; echo -sV"),
+])
+def test_s1_false_passes_now_fail(tmp_path, milestone, line):
+    assert run(tmp_path, 1, milestone, history=line + "\n", stubs={"ip": IP_STUB}) == "FAIL"
+
+
+@pytest.mark.parametrize("milestone,line", [
+    (1, "nmap -sn -n 10.0.51.0/24"),          # the guide's command
+    (1, "nmap -n 10.0.51.0/24 -sn"),          # the panel's reordered command
+    (1, "nmap 10.0.51.0/24"),
+    (1, "sudo nmap -sn 10.0.51.0/24"),
+    (1, "/usr/bin/nmap -sn 10.0.51.0/24"),
+    (1, "ping -c1 10.0.51.1 && nmap -sn 10.0.51.0/24"),
+    (1, ": 1700000000:0;nmap -sn 10.0.51.0/24"),
+    (1, 'nmap -sn "10.0.51.0/24"'),
+    (1, "nmap -sn 10.0.51.0/24 | tee hosts.txt"),
+    (2, "nmap -n -p 21,22,80,8180 10.0.51.20"),  # the guide's command
+    (2, "nmap -n -F 10.0.51.20"),             # the guide's optional command
+    (2, "nmap 10.0.51.30 -p 80"),
+    (2, "nmap -p- 10.0.51.20"),
+    (2, "nmap -p80 10.0.51.20"),
+    (2, "nmap --top-ports 100 10.0.51.20"),
+    (2, "nmap -p 80 10.0.51.20-30"),
+    (2, "nmap -p 80 10.0.51.20/32"),
+    (3, "nmap -sV -n -p 21,22,80,8180 10.0.51.20"),  # the guide's command
+    (3, "nmap 10.0.51.30 -sV -p 80"),
+    (3, "nmap -sVC 10.0.51.20"),
+    (3, "nmap -sV 10.0.51.20 | tee services.txt"),
+])
+def test_s1_valid_forms_still_pass(tmp_path, milestone, line):
+    assert run(tmp_path, 1, milestone, history=line + "\n", stubs={"ip": IP_STUB}) == "PASS"
+
+
 # ── Scenario 2 (id 6): M4 reflected XSS, Kali/artifact path ─────────────────
 
 def _xss_artifact(content: str) -> str:
