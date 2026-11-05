@@ -90,7 +90,7 @@ test('login-flow attempted username wins, and no name means no account-name row'
 });
 
 test('template renders the account-name fallback hidden and only when set', () => {
-    const template = fs.readFileSync('./themes/cyberrange/login/template.ftl', 'utf8');
+    const template = fs.readFileSync(require.resolve('./themes/cyberrange/login/template.ftl'), 'utf8');
     assert.match(template, /<#if username\?has_content>\s*<span id="cr-account-name" hidden>\$\{username\}<\/span>\s*<\/#if>/);
 });
 
