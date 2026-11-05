@@ -55,6 +55,45 @@ test('checklist uses attempted account name including email-shaped login', () =>
     assert.equal(accountOk.textContent.includes('(not met)'), false);
     dom.window.close();
 });
+test('Update password page reads the account name from the template fallback', () => {
+    const dom = new JSDOM('<span id="cr-account-name" hidden> Student01 </span><form><input id="password-new"><input id="password-confirm"></form>');
+    const doc = dom.window.document;
+    mount(doc);
+    const input = doc.getElementById('password-new');
+    const row = () => [...doc.querySelectorAll('.cr-strength__must-item')].find((el) => /account name/i.test(el.textContent));
+    assert.ok(row(), 'row is shown before typing');
+    assert.equal(row().dataset.met, 'false');
+    input.value = 'sTuDeNt01';
+    input.dispatchEvent(new dom.window.Event('input'));
+    assert.equal(row().dataset.met, 'false');
+    assert.match(row().textContent, /\(not met\)/);
+    input.value = 'sunshine mountain river 982!';
+    input.dispatchEvent(new dom.window.Event('input'));
+    assert.equal(row().dataset.met, 'true');
+    assert.match(row().textContent, /\(met\)/);
+    dom.window.close();
+});
+
+test('login-flow attempted username wins, and no name means no account-name row', () => {
+    let dom = new JSDOM('<div id="kc-attempted-username">typed@example.test</div><span id="cr-account-name" hidden>student01</span><form><input id="password-new"></form>');
+    mount(dom.window.document);
+    const input = dom.window.document.getElementById('password-new');
+    input.value = 'student01';
+    input.dispatchEvent(new dom.window.Event('input'));
+    const row = [...dom.window.document.querySelectorAll('.cr-strength__must-item')].find((el) => /account name/i.test(el.textContent));
+    assert.equal(row.dataset.met, 'true');
+    dom.window.close();
+    dom = new JSDOM('<form><input id="password-new"></form>');
+    mount(dom.window.document);
+    assert.equal([...dom.window.document.querySelectorAll('.cr-strength__must-item')].some((el) => /account name/i.test(el.textContent)), false);
+    dom.window.close();
+});
+
+test('template renders the account-name fallback hidden and only when set', () => {
+    const template = fs.readFileSync('./themes/cyberrange/login/template.ftl', 'utf8');
+    assert.match(template, /<#if username\?has_content>\s*<span id="cr-account-name" hidden>\$\{username\}<\/span>\s*<\/#if>/);
+});
+
 test('mounts only on new-password form, preserves errors and controls, updates and resets', async () => {
     const dom = new JSDOM('<form><div class="pf-c-input-group"><input id="password-new" aria-describedby="existing-error"><button>Show</button></div><input id="password-confirm"></form>');
     const doc = dom.window.document;

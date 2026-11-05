@@ -152,6 +152,12 @@
             </#if>
         </header>
 
+        <#-- Required actions have no auth context, so kc-attempted-username is absent.
+             Update password still receives the username for the meter's account-name rule. -->
+        <#if username?has_content>
+            <span id="cr-account-name" hidden>${username}</span>
+        </#if>
+
         <div id="kc-content">
           <div id="kc-content-wrapper">
 

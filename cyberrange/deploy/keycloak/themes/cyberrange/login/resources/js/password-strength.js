@@ -23,8 +23,10 @@
         return score;
     }
 
-    function readAttemptedUsername(doc) {
-        var el = doc.getElementById("kc-attempted-username");
+    /* kc-attempted-username exists only in login flows. Required-action pages
+     * such as Update password get the name from template.ftl's cr-account-name. */
+    function readAccountName(doc) {
+        var el = doc.getElementById("kc-attempted-username") || doc.getElementById("cr-account-name");
         return el ? (el.textContent || "").trim() : "";
     }
 
@@ -188,7 +190,7 @@
             var score = estimate(input.value);
             container.dataset.score = String(score);
             label.textContent = score ? "Password strength: " + ["", "Weak", "Medium", "Good", "Strong"][score] : "Enter a new password to see its strength.";
-            renderRequirements(must, evaluateRequirements(input.value, { accountName: readAttemptedUsername(doc) }), input.value);
+            renderRequirements(must, evaluateRequirements(input.value, { accountName: readAccountName(doc) }), input.value);
         }
         input.addEventListener("input", update);
         input.addEventListener("change", update);
