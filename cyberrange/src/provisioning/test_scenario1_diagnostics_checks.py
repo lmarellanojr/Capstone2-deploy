@@ -142,6 +142,7 @@ CASES = [
     ("m3-pass-n", 3, dict(history="nmap -sV -n -p 21,22,80,8180 10.0.51.20\n"), None),
     ("m3-pass-order", 3, dict(history="nmap 10.0.51.30 -sV -p 80\n"), None),
     ("m3-no-sV", 3, dict(history="nmap -p 80 10.0.51.20\n"), "COMMAND_NOT_MATCHED"),
+    ("m3-timeout-no-sV", 3, dict(history="timeout 30 nmap -p 80 10.0.51.20\n"), "COMMAND_NOT_MATCHED"),
     ("m3-other-pod", 3, dict(history="nmap -sV 10.0.52.20\n"), "COMMAND_NOT_MATCHED"),
     ("m3-no-history", 3, dict(), "COMMAND_NOT_FOUND"),
     ("m3-abs-path-no-sV", 3, dict(history="/usr/bin/nmap -p 80 10.0.51.20\n"), "COMMAND_NOT_MATCHED"),

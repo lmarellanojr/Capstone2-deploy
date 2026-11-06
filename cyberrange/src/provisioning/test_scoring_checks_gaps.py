@@ -109,6 +109,112 @@ def test_s1_m3_version_scan_of_a_missing_host_fails(tmp_path):
     assert run(tmp_path, 1, 3, history="nmap -sV 10.0.51.99\n", stubs={"ip": IP_STUB}) == "FAIL"
 
 
+# False passes and the valid forms that must keep passing. These don't change
+# which commands earn credit: plain `nmap <target>` still fails M2 on purpose.
+
+@pytest.mark.parametrize("milestone,line", [
+    (1, "echo nmap 10.0.51.0/24"),            # nothing scanned
+    (1, "man nmap 10.0.51.0/24"),
+    (1, "nmap -sn 110.0.51.0/24"),            # a different network
+    (1, "nmap -sn 10.0.51.0/240"),
+    (1, "nmap -sn 10.0.55.1 ; ls 10.0.51.0/24"),  # target is in another command
+    (2, "nmap -p 80 10.0.51.200"),            # .200 is not .20
+    (2, "nmap -p 80 10.0.51.301"),
+    (2, "nmap -p 80 110.0.51.20"),
+    (2, "nmap -oN scan-ports.txt 10.0.51.20"),  # -p only inside a filename
+    (2, "nmap 10.0.51.20; ls -p"),            # -p belongs to ls
+    (2, "echo nmap -p 80 10.0.51.20"),
+    (2, "nmap -Pn 10.0.51.20"),               # -Pn is not port selection
+    (3, "nmap -sV 10.0.51.200"),
+    (3, "nmap -sV 110.0.51.20"),
+    (3, "echo nmap -sV 10.0.51.20"),
+    (3, "nmap 10.0.51.20; echo -sV"),
+    (1, "sudo -l nmap -sn 10.0.51.0/24"),     # lists the command, doesn't run it
+    (1, "time echo nmap -sn 10.0.51.0/24"),
+    (2, "timeout 30 man nmap -p 80 10.0.51.20"),
+    (2, "timeout nmap -p 80 10.0.51.20"),     # no duration: timeout rejects this
+])
+def test_s1_false_passes_now_fail(tmp_path, milestone, line):
+    assert run(tmp_path, 1, milestone, history=line + "\n", stubs={"ip": IP_STUB}) == "FAIL"
+
+
+@pytest.mark.parametrize("milestone,line", [
+    (1, "nmap -sn -n 10.0.51.0/24"),          # the guide's command
+    (1, "nmap -n 10.0.51.0/24 -sn"),          # the panel's reordered command
+    (1, "nmap 10.0.51.0/24"),
+    (1, "sudo nmap -sn 10.0.51.0/24"),
+    (1, "/usr/bin/nmap -sn 10.0.51.0/24"),
+    (1, "ping -c1 10.0.51.1 && nmap -sn 10.0.51.0/24"),
+    (1, ": 1700000000:0;nmap -sn 10.0.51.0/24"),
+    (1, 'nmap -sn "10.0.51.0/24"'),
+    (1, "nmap -sn 10.0.51.0/24 | tee hosts.txt"),
+    (2, "nmap -n -p 21,22,80,8180 10.0.51.20"),  # the guide's command
+    (2, "nmap -n -F 10.0.51.20"),             # the guide's optional command
+    (2, "nmap 10.0.51.30 -p 80"),
+    (2, "nmap -p- 10.0.51.20"),
+    (2, "nmap -p80 10.0.51.20"),
+    (2, "nmap --top-ports 100 10.0.51.20"),
+    (2, "nmap -p 80 10.0.51.20-30"),
+    (2, "nmap -p 80 10.0.51.20/32"),
+    (3, "nmap -sV -n -p 21,22,80,8180 10.0.51.20"),  # the guide's command
+    (3, "nmap 10.0.51.30 -sV -p 80"),
+    (3, "nmap -sVC 10.0.51.20"),
+    (3, "nmap -sV 10.0.51.20 | tee services.txt"),
+    (1, "time nmap -sn 10.0.51.0/24"),        # wrappers that still run nmap
+    (1, "time -p nmap -sn 10.0.51.0/24"),
+    (1, "sudo -E nmap -sn 10.0.51.0/24"),
+    (2, "timeout 30 nmap -p 80 10.0.51.20"),
+    (2, "timeout 1.5m nmap -p 80 10.0.51.20"),
+    (2, "sudo timeout 30 nmap -p 80 10.0.51.20"),
+    (3, "sudo -n nmap -sV 10.0.51.20"),
+    (3, "time sudo -nE nmap -sV 10.0.51.20"),
+])
+def test_s1_valid_forms_still_pass(tmp_path, milestone, line):
+    assert run(tmp_path, 1, milestone, history=line + "\n", stubs={"ip": IP_STUB}) == "PASS"
+
+
+# Snoopy evidence, with empty history. Upstream's default message format, and the
+# `cmdline:` form the scoring tests already use. Not yet checked against a pod.
+_SNOOPY_DEFAULT = (
+    "Nov  6 01:37:10 kali snoopy[123]: "
+    "[uid:0 sid:12 tty:/dev/pts/0 cwd:/root filename:/usr/bin/{prog}]: {line}\n"
+)
+_SNOOPY_CMDLINE = "snoopy[123]: cmdline: {line}\n"
+
+
+def _snoopy(tmp_path: Path, text: str) -> dict:
+    p = tmp_path / "auth.log"
+    _write(p, text)
+    return {"SNOOPY_LOG_FILE": p.as_posix()}
+
+
+@pytest.mark.parametrize("fmt", [_SNOOPY_DEFAULT, _SNOOPY_CMDLINE], ids=["default", "cmdline"])
+@pytest.mark.parametrize("milestone,line", [
+    (1, "nmap -sn -n 10.0.51.0/24"),          # the guide's commands
+    (2, "nmap -n -p 21,22,80,8180 10.0.51.20"),
+    (3, "nmap -sV -n -p 21,22,80,8180 10.0.51.20"),
+])
+def test_s1_snoopy_guide_command_passes(tmp_path, fmt, milestone, line):
+    env = _snoopy(tmp_path, fmt.format(prog="nmap", line=line))
+    assert run(tmp_path, 1, milestone, stubs={"ip": IP_STUB}, extra_env=env) == "PASS"
+
+
+@pytest.mark.parametrize("fmt", [_SNOOPY_DEFAULT, _SNOOPY_CMDLINE], ids=["default", "cmdline"])
+@pytest.mark.parametrize("milestone,prog,line", [
+    (1, "echo", "echo nmap 10.0.51.0/24"),
+    (2, "nmap", "nmap -p 80 10.0.51.200"),
+    (3, "man", "man nmap -sV 10.0.51.20"),
+])
+def test_s1_snoopy_false_pass_fails(tmp_path, fmt, milestone, prog, line):
+    env = _snoopy(tmp_path, fmt.format(prog=prog, line=line))
+    assert run(tmp_path, 1, milestone, stubs={"ip": IP_STUB}, extra_env=env) == "FAIL"
+
+
+def test_s1_log_line_not_from_snoopy_does_not_count(tmp_path):
+    env = _snoopy(tmp_path, "Nov  6 01:37:10 kali sudo[123]: nmap -sn 10.0.51.0/24\n")
+    assert run(tmp_path, 1, 1, stubs={"ip": IP_STUB}, extra_env=env) == "FAIL"
+
+
 # ── Scenario 2 (id 6): M4 reflected XSS, Kali/artifact path ─────────────────
 
 def _xss_artifact(content: str) -> str:

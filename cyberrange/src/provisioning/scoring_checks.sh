@@ -68,7 +68,9 @@ check_behavior() {
     # 2. Snoopy Log Check (Approach 2)
     if [[ "$log_type" == "snoopy" || "$log_type" == "all" ]]; then
         # Snoopy logs usually go to /var/log/auth.log or /var/log/syslog
-        if grep -qE "snoopy.*$pattern" /var/log/auth.log /var/log/syslog 2>/dev/null; then
+        local snoopy_targets=(/var/log/auth.log /var/log/syslog)
+        [[ -n "${SNOOPY_LOG_FILE:-}" && -f "${SNOOPY_LOG_FILE}" ]] && snoopy_targets=("${SNOOPY_LOG_FILE}")
+        if grep -qE "snoopy.*$pattern" "${snoopy_targets[@]}" 2>/dev/null; then
             log "PASS: Found pattern in snoopy logs"
             return 0
         fi
@@ -231,11 +233,36 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 
 # Which part of an nmap check failed: no nmap run at all, or none that matched.
 # Only nmap where a command starts, with an argument: the start of the line,
-# after ; & | (zsh's ": ts:0;" prefix), or after snoopy's "]: ", optionally
-# behind sudo and/or a path. So `man nmap | less`, `sudo apt install nmap -y`,
-# `history | grep nmap -i` or `zenmap` count as not found, not as a wrong scan.
-# []] is a literal ] (no stray-backslash warning from grep).
-_S1_NMAP_RUN='(^|[;&|]|[]]:)[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?nmap[[:space:]]+[^[:space:]]'
+# after ; & | (zsh's ": ts:0;" prefix), or after snoopy's "]: " or "cmdline: ",
+# optionally behind a wrapper and/or a path. So `man nmap | less`,
+# `sudo apt install nmap -y`, `history | grep nmap -i` or `zenmap` count as not
+# found, not as a wrong scan. []] is a literal ] (no stray-backslash warning
+# from grep). The wrappers still run nmap; sudo's flags are named because some,
+# like -l, only list a command without running it.
+_S1_NMAP_WRAPPER='(sudo([[:space:]]+-[nEH]+)*|time([[:space:]]+-p)?|timeout[[:space:]]+[0-9]+(\.[0-9]+)?[smhd]?)[[:space:]]+'
+_S1_NMAP_START="(^|[;&|]|[]]:|cmdline:)[[:space:]]*(${_S1_NMAP_WRAPPER})*([^[:space:]]*/)?nmap"
+_S1_NMAP_RUN="${_S1_NMAP_START}[[:space:]]+[^[:space:]]"
+# The patterns that earn M1-M3 credit. Each token is matched whole, inside one
+# real nmap command: not `echo nmap ...`, not `nmap x; ls -p`, not .200 for .20,
+# not 110.0.51.20 for 10.0.51.20, and not the -p inside `-oN scan-ports.txt`.
+# A target may carry a suffix (/32, -30, ,30) or quotes, as before. These fix
+# false passes only: which commands should earn credit is a separate decision.
+_S1_NMAP_ARGS="${_S1_NMAP_START}([[:space:]][^;&|]*)?[[:space:]]"
+_S1_ARGS_BETWEEN='([[:space:]][^;&|]*)?[[:space:]]'
+_S1_TOKEN_END='([[:space:];&|]|$)'
+_S1_PORT_FLAG='(-p[^[:space:];&|]*|-F|--top-ports(=[^[:space:];&|]*)?)'
+_S1_VERSION_FLAG='-sV[^[:space:];&|]*'
+# $1 = the address regex. Prints it as one whole target token.
+_s1_target() {
+    printf '["'"'"']?%s([^0-9.;&|[:space:]][^[:space:];&|]*)?' "$1"
+}
+# $1 = flag regex, $2 = target token: the two in either order, in one command.
+_s1_flag_and_target() {
+    printf '(%s%s%s%s%s|%s%s%s%s%s)' \
+        "$_S1_NMAP_ARGS" "$1" "$_S1_ARGS_BETWEEN" "$2" "$_S1_TOKEN_END" \
+        "$_S1_NMAP_ARGS" "$2" "$_S1_ARGS_BETWEEN" "$1" "$_S1_TOKEN_END"
+}
+
 _s1_command_reason() {
     if check_behavior "$_S1_NMAP_RUN"; then echo COMMAND_NOT_MATCHED; else echo COMMAND_NOT_FOUND; fi
 }
@@ -306,7 +333,7 @@ check_scenario_1() {
             # eth0 was down at the time (see provisioning's
             # ensure_guest_nic_up / R7e) -- checked at verify time, not
             # history time, so it reflects current reality.
-            reason=$(_s1_scan_reason "$prefix" "nmap.*${esc}\.0/24") || reason=CHECK_ERROR
+            reason=$(_s1_scan_reason "$prefix" "${_S1_NMAP_ARGS}$(_s1_target "${esc}\.0/24")${_S1_TOKEN_END}") || reason=CHECK_ERROR
             ;;
         2)
             # M2: Port Enumeration — prefer -p / -F / port list against this
@@ -315,7 +342,7 @@ check_scenario_1() {
             # -p/-F scan of anything passed) -- dropped rather than tightened,
             # since a port scan of the wrong host isn't port enumeration of
             # the target.
-            reason=$(_s1_route_first_reason "$prefix" "nmap.*(-p|-F).*${esc}\.(20|30)|nmap.*${esc}\.(20|30).*(-p|-F)") || reason=CHECK_ERROR
+            reason=$(_s1_route_first_reason "$prefix" "$(_s1_flag_and_target "$_S1_PORT_FLAG" "$(_s1_target "${esc}\.(20|30)")")") || reason=CHECK_ERROR
             ;;
         3)
             # M3: Service Version Detection (nmap -sV against this pod's real
@@ -325,7 +352,7 @@ check_scenario_1() {
             # pod's subnet still credited full points despite nmap itself
             # reporting 0 hosts up. Anchor to THIS pod's actual victim IPs,
             # in either flag/IP order a student might type.
-            reason=$(_s1_scan_reason "$prefix" "nmap.*-sV.*${esc}\.(20|30)|nmap.*${esc}\.(20|30).*-sV") || reason=CHECK_ERROR
+            reason=$(_s1_scan_reason "$prefix" "$(_s1_flag_and_target "$_S1_VERSION_FLAG" "$(_s1_target "${esc}\.(20|30)")")") || reason=CHECK_ERROR
             ;;
         4)
             # M4: Exploit Tomcat manager on the meta target (merged from scenario 3;
