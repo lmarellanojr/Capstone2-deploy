@@ -68,7 +68,9 @@ check_behavior() {
     # 2. Snoopy Log Check (Approach 2)
     if [[ "$log_type" == "snoopy" || "$log_type" == "all" ]]; then
         # Snoopy logs usually go to /var/log/auth.log or /var/log/syslog
-        if grep -qE "snoopy.*$pattern" /var/log/auth.log /var/log/syslog 2>/dev/null; then
+        local snoopy_targets=(/var/log/auth.log /var/log/syslog)
+        [[ -n "${SNOOPY_LOG_FILE:-}" && -f "${SNOOPY_LOG_FILE}" ]] && snoopy_targets=("${SNOOPY_LOG_FILE}")
+        if grep -qE "snoopy.*$pattern" "${snoopy_targets[@]}" 2>/dev/null; then
             log "PASS: Found pattern in snoopy logs"
             return 0
         fi
@@ -231,17 +233,21 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 
 # Which part of an nmap check failed: no nmap run at all, or none that matched.
 # Only nmap where a command starts, with an argument: the start of the line,
-# after ; & | (zsh's ": ts:0;" prefix), or after snoopy's "]: ", optionally
-# behind sudo and/or a path. So `man nmap | less`, `sudo apt install nmap -y`,
-# `history | grep nmap -i` or `zenmap` count as not found, not as a wrong scan.
-# []] is a literal ] (no stray-backslash warning from grep).
-_S1_NMAP_RUN='(^|[;&|]|[]]:)[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?nmap[[:space:]]+[^[:space:]]'
+# after ; & | (zsh's ": ts:0;" prefix), or after snoopy's "]: " or "cmdline: ",
+# optionally behind a wrapper and/or a path. So `man nmap | less`,
+# `sudo apt install nmap -y`, `history | grep nmap -i` or `zenmap` count as not
+# found, not as a wrong scan. []] is a literal ] (no stray-backslash warning
+# from grep). The wrappers still run nmap; sudo's flags are named because some,
+# like -l, only list a command without running it.
+_S1_NMAP_WRAPPER='(sudo([[:space:]]+-[nEH]+)*|time([[:space:]]+-p)?|timeout[[:space:]]+[0-9]+(\.[0-9]+)?[smhd]?)[[:space:]]+'
+_S1_NMAP_START="(^|[;&|]|[]]:|cmdline:)[[:space:]]*(${_S1_NMAP_WRAPPER})*([^[:space:]]*/)?nmap"
+_S1_NMAP_RUN="${_S1_NMAP_START}[[:space:]]+[^[:space:]]"
 # The patterns that earn M1-M3 credit. Each token is matched whole, inside one
 # real nmap command: not `echo nmap ...`, not `nmap x; ls -p`, not .200 for .20,
 # not 110.0.51.20 for 10.0.51.20, and not the -p inside `-oN scan-ports.txt`.
 # A target may carry a suffix (/32, -30, ,30) or quotes, as before. These fix
 # false passes only: which commands should earn credit is a separate decision.
-_S1_NMAP_ARGS='(^|[;&|]|[]]:|cmdline:)[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?nmap([[:space:]][^;&|]*)?[[:space:]]'
+_S1_NMAP_ARGS="${_S1_NMAP_START}([[:space:]][^;&|]*)?[[:space:]]"
 _S1_ARGS_BETWEEN='([[:space:]][^;&|]*)?[[:space:]]'
 _S1_TOKEN_END='([[:space:];&|]|$)'
 _S1_PORT_FLAG='(-p[^[:space:];&|]*|-F|--top-ports(=[^[:space:];&|]*)?)'
