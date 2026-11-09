@@ -59,6 +59,7 @@ check_behavior() {
         # Check root, all users in /home, and $HOME (for test overrides)
         local hist_targets=(/root/.bash_history /home/*/.bash_history /root/.zsh_history /home/*/.zsh_history)
         [[ -n "${HOME:-}" && -f "${HOME}/.bash_history" ]] && hist_targets+=("${HOME}/.bash_history")
+        [[ -n "${HOME:-}" && -f "${HOME}/.zsh_history" ]] && hist_targets+=("${HOME}/.zsh_history")
         if grep -qE "$pattern" "${hist_targets[@]}" 2>/dev/null; then
             log "PASS: Found pattern in history"
             return 0
@@ -1253,20 +1254,38 @@ _s11_status_reason() {
 }
 
 # M3 timing: epoch of the NEWEST old-credential manager curl in the student's
-# shell history, read from the `#<epoch>` comment lines bash writes before each
-# command when HISTTIMEFORMAT is set (enable_history_flush.sh). Empty when no
-# such curl is stamped, so M3 can tell a verification that post-dates the fix
-# from one that pre-dates it (or carries no time at all). Prints nothing but the
+# shell history. Reads the SAME history files as check_behavior's `history`
+# gate (bash AND zsh, root + every home + the $HOME test hook) so a curl that
+# passes the behavior gate can also be timed, and understands both timestamp
+# conventions:
+#   bash  -- a `#<epoch>` comment line before the command (HISTTIMEFORMAT,
+#            set by enable_history_flush.sh), and
+#   zsh   -- EXTENDED_HISTORY's inline `: <epoch>:<elapsed>;<command>`.
+# Empty when no matching curl carries a timestamp, so M3 can tell a verification
+# that post-dates the fix from one that pre-dates it (or carries no time at all).
+# Snoopy logs are deliberately NOT a timing source: their syslog lines have no
+# per-command epoch in this convention, so a verify visible only via snoopy
+# stays untimed (VERIFY_NOT_TIMESTAMPED -- fails closed). Prints nothing but the
 # epoch -- no reason codes -- so the allowlist scan never picks it up.
 _s11_latest_verify_epoch() {
     local verify_re='curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)'
     local f files=()
-    for f in /root/.bash_history /home/*/.bash_history "${HOME:+$HOME/.bash_history}"; do
+    for f in /root/.bash_history /home/*/.bash_history /root/.zsh_history /home/*/.zsh_history \
+             "${HOME:+$HOME/.bash_history}" "${HOME:+$HOME/.zsh_history}"; do
         [[ -f "$f" ]] && files+=("$f")
     done
     [[ ${#files[@]} -gt 0 ]] || return 0
     awk -v re="$verify_re" '
+        # bash: "#<epoch>" tags the command on the NEXT line.
         /^#[0-9]+$/ { ts = substr($0, 2); next }
+        # zsh EXTENDED_HISTORY: ": <epoch>:<elapsed>;<command>" on ONE line.
+        /^: [0-9]+:[0-9]+;/ {
+            zts = $0; sub(/^: /, "", zts); sub(/:.*/, "", zts)
+            cmd = $0; sub(/^: [0-9]+:[0-9]+;/, "", cmd)
+            if (cmd ~ re && zts + 0 > best + 0) best = zts
+            ts = ""; next
+        }
+        # bash command line: credited only if its "#<epoch>" preceded it.
         { if ($0 ~ re && ts != "" && ts + 0 > best + 0) best = ts; ts = "" }
         END { if (best != "") print best }
     ' "${files[@]}" 2>/dev/null

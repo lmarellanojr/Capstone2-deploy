@@ -62,10 +62,13 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
     p.chmod(0o755)
 
 
-def run(tmp_path: Path, scenario: int, milestone: int, *, history: str = "", stubs=None, extra_env=None) -> str:
+def run(tmp_path: Path, scenario: int, milestone: int, *, history: str = "", zsh_history=None,
+        stubs=None, extra_env=None) -> str:
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     _write(home / ".bash_history", history)
+    if zsh_history is not None:
+        _write(home / ".zsh_history", zsh_history)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     for name, body in (stubs or {}).items():
@@ -863,4 +866,26 @@ def test_s11_m3_untimestamped_verification_fails(tmp_path):
     env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
     curl = "#!/bin/bash\nprintf '401'\n"
     assert run(tmp_path, 11, 3, history=_M3_VERIFY_HIST,
+               stubs={"curl": curl}, extra_env=env) == "FAIL"
+
+
+# Kali's default shell is zsh, and check_behavior already reads .zsh_history, so
+# the timing gate must honor it too (else a genuine zsh verify fails closed).
+# zsh EXTENDED_HISTORY stamps each line ": <epoch>:<elapsed>;<command>".
+def _zsh(epoch: int) -> str:
+    return f": {epoch}:0;{_M3_VERIFY_HIST}"
+
+
+def test_s11_m3_verification_in_zsh_after_fix_passes(tmp_path):
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    # bash history empty; the verify lives only in zsh_history, timed after the fix.
+    assert run(tmp_path, 11, 3, history="", zsh_history=_zsh(_M3_REMEDIATED_AT + 30),
+               stubs={"curl": curl}, extra_env=env) == "PASS"
+
+
+def test_s11_m3_verification_in_zsh_before_fix_fails(tmp_path):
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history="", zsh_history=_zsh(_M3_REMEDIATED_AT - 30),
                stubs={"curl": curl}, extra_env=env) == "FAIL"
