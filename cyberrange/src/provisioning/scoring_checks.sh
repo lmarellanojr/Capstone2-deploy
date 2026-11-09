@@ -1232,7 +1232,8 @@ check_scenario_10() {
 # CODE is from the fixed set below -- never a command, a password, or file
 # contents. NONE = passed.
 #   COMMAND_NOT_FOUND COMMAND_NOT_MATCHED DEFAULT_PASSWORD_PRESENT CONFIG_MISSING
-#   OLD_CREDS_ACCEPTED MANAGER_UNREACHABLE MANAGER_UNEXPECTED_STATUS CHECK_ERROR
+#   OLD_CREDS_ACCEPTED MANAGER_UNREACHABLE MANAGER_UNEXPECTED_STATUS
+#   VERIFY_BEFORE_FIX VERIFY_NOT_TIMESTAMPED CHECK_ERROR
 # Each milestone runs the same predicates in the same order as before and
 # names the first one that fails. PASS is printed only for NONE.
 
@@ -1249,6 +1250,26 @@ _s11_status_reason() {
         if command -v curl >/dev/null 2>&1; then echo MANAGER_UNREACHABLE; else echo CHECK_ERROR; fi
     else echo MANAGER_UNEXPECTED_STATUS
     fi
+}
+
+# M3 timing: epoch of the NEWEST old-credential manager curl in the student's
+# shell history, read from the `#<epoch>` comment lines bash writes before each
+# command when HISTTIMEFORMAT is set (enable_history_flush.sh). Empty when no
+# such curl is stamped, so M3 can tell a verification that post-dates the fix
+# from one that pre-dates it (or carries no time at all). Prints nothing but the
+# epoch -- no reason codes -- so the allowlist scan never picks it up.
+_s11_latest_verify_epoch() {
+    local verify_re='curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)'
+    local f files=()
+    for f in /root/.bash_history /home/*/.bash_history "${HOME:+$HOME/.bash_history}"; do
+        [[ -f "$f" ]] && files+=("$f")
+    done
+    [[ ${#files[@]} -gt 0 ]] || return 0
+    awk -v re="$verify_re" '
+        /^#[0-9]+$/ { ts = substr($0, 2); next }
+        { if ($0 ~ re && ts != "" && ts + 0 > best + 0) best = ts; ts = "" }
+        END { if (best != "") print best }
+    ' "${files[@]}" 2>/dev/null
 }
 
 check_scenario_11() {
@@ -1289,22 +1310,36 @@ check_scenario_11() {
             ;;
         3)
             # M3: Confirm the exploit path is closed. This is the "confirm" step,
-            # so BOTH must hold:
+            # so ALL THREE must hold:
             #  (a) STATE  -- the manager now rejects the OLD tomcat:tomcat creds
-            #      with 401/403 (the fix is really in place), and
+            #      with 401/403 (the fix is really in place),
             #  (b) BEHAVIOR -- the student actually ran the verification: a curl
-            #      to the Tomcat manager with the old creds appears in history.
-            # State alone became true the moment M2 rotated the password, so the
-            # task scored without the student doing it (3/3 after only M1+M2);
-            # requiring the curl in history fixes that false auto-pass.
-            local code
+            #      to the Tomcat manager with the old creds appears in history, and
+            #  (c) TIMING -- that verification ran AFTER the remediation. State (a)
+            #      flips to 401 the instant M2 rotates the password, so a curl the
+            #      student ran BEFORE the fix -- while the old creds still returned
+            #      200 -- proves nothing and must not credit "confirm the path is
+            #      closed" (the Scenario 4 Task 3 false pass). Remediation time is
+            #      the mtime of tomcat-users.xml (when the password was rewritten --
+            #      the signal M2 itself trusts); verification time is the newest
+            #      `#<epoch>` HISTTIMEFORMAT stamp on that curl. A curl that
+            #      pre-dates the fix reports VERIFY_BEFORE_FIX; an unstamped one
+            #      (history without HISTTIMEFORMAT) VERIFY_NOT_TIMESTAMPED.
+            local code users_file remediated_at verified_at
+            users_file="${TOMCAT_USERS_FILE:-/etc/tomcat9/tomcat-users.xml}"
             code=$(curl -s -o /dev/null -w '%{http_code}' -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list 2>/dev/null || echo "000")
             if [[ "$code" != "401" && "$code" != "403" ]]; then
                 reason=$(_s11_status_reason "$code") || reason=CHECK_ERROR
-            elif check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
-                reason=NONE
-            else
+            elif ! check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
                 reason=$(_s11_command_reason "curl.*(8180|manager)") || reason=CHECK_ERROR
+            else
+                remediated_at=$(stat -c %Y "$users_file" 2>/dev/null || echo "")
+                verified_at=$(_s11_latest_verify_epoch)
+                if [[ -z "$verified_at" ]]; then reason=VERIFY_NOT_TIMESTAMPED
+                elif [[ -z "$remediated_at" ]]; then reason=CHECK_ERROR
+                elif [[ "$verified_at" -ge "$remediated_at" ]]; then reason=NONE
+                else reason=VERIFY_BEFORE_FIX
+                fi
             fi
             ;;
         *) return ;;
