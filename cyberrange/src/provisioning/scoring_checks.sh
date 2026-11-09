@@ -578,8 +578,24 @@ check_scenario_6() {
             else
                 set -- /tmp/sqli_probe.txt /tmp/sqli_injection.txt
             fi
+            # The saved page must show the injection worked, the same evidence the
+            # browser detector asks for: a SQL syntax error, or DVWA echoing a
+            # quoted payload on an ID: line while listing more than one user.
+            # A bare "First name:" used to pass, but a normal id=1 lookup prints
+            # that too, so a page with no injection at all earned Task 1. Any
+            # working quote payload counts here (' or 'a'='a, %' or '0'='0, ...),
+            # not only OR 1=1. DVWA prints the ID raw; &#039; covers a saved page
+            # whose quote was HTML-escaped.
+            local rows
             for probe in "$@"; do
-                if [[ -f "$probe" ]] && grep -qiE 'syntax.*error|error.*syntax|ID:[[:space:]]*1'"'"'|First name:' "$probe"; then
+                [[ -f "$probe" ]] || continue
+                if grep -qiE 'syntax.*error|error.*syntax' "$probe"; then
+                    echo "PASS"; return
+                fi
+                # || true: grep finds nothing on a page with no rows, and under
+                # pipefail that would abort the check instead of moving on.
+                rows=$( { grep -oi 'First name:' "$probe" || true; } | wc -l)
+                if [[ "${rows:-0}" -ge 2 ]] && grep -qiE 'ID:[^<]*('"'"'|&#0?39;)' "$probe"; then
                     echo "PASS"; return
                 fi
             done
