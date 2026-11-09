@@ -181,20 +181,46 @@ def test_m2_failure_reasons(tmp_path, content, reason):
     check(tmp_path, 2, content, token="FAIL", reason=reason)
 
 
-def test_m2_uppercase_rule_line_is_not_read_by_the_scorer(tmp_path):
-    # The scorer only reads "rule"/"Rule" lines, so a correct time on a "RULE 5710"
-    # line is never checked; the reason must not blame the timestamp.
-    check(tmp_path, 2, TIMELINE_OK.replace("rule:", "RULE:"), token="FAIL", reason="RULE_MISSING")
+def test_m2_uppercase_rule_line_is_read(tmp_path):
+    # "RULE 5710" names the same rule; it used to be skipped (a valid timeline failed).
+    check(tmp_path, 2, TIMELINE_OK.replace("rule:", "RULE:"), token="PASS", reason=None)
 
 
-# The scorer's `while read` loops (M1 agent, M2 timeline) skip a last line with no
-# trailing newline; the reason must match what the scorer saw, not the file.
-@pytest.mark.parametrize("milestone,content,reason", [
-    (1, TRIAGE_OK, "AGENT_MISSING"),
-    (2, TIMELINE_OK, "RULE_MISSING"),
+# A last line with no trailing newline used to be skipped by the scorer's `while
+# read` loops (M1 agent, M2 timeline), failing a correct file saved by an editor
+# that doesn't add one. It is read now.
+@pytest.mark.parametrize("milestone,content", [(1, TRIAGE_OK), (2, TIMELINE_OK)])
+def test_last_line_without_newline_is_read(tmp_path, milestone, content):
+    check(tmp_path, milestone, content.rstrip("\n"), token="PASS", reason=None)
+
+
+# Times with a stated zone other than Z name a real instant and match like Z.
+# The event is 14:32:05 UTC; the timeline claim must be within 5 minutes.
+@pytest.mark.parametrize("stamp,token,reason", [
+    ("2026-10-01T22:32:05+08:00", "PASS", None),                  # Philippine time with offset
+    ("2026-10-01T22:32:05+0800", "PASS", None),                   # offset without a colon
+    ("2026-10-01T14:32:05+00:00", "PASS", None),
+    ("2026-10-01T09:32:05-05:00", "PASS", None),
+    ("2026-10-01 14:32:05 UTC", "PASS", None),                    # space and UTC word
+    ("2026-10-01T14:32:05UTC", "PASS", None),
+    ("2026-10-01 14:32:05Z", "PASS", None),                       # space instead of T
+    ("2026-10-01T22:45:00+08:00", "FAIL", "TIMESTAMP_NOT_MATCHED"),  # 13 min off once converted
+    ("2026-10-01T14:32:05+15:00", "FAIL", "TIMESTAMP_MISSING"),   # not a real offset
+    ("2026-10-01T14:32:05", "FAIL", "TIMESTAMP_MISSING"),         # no zone: still not placed
+    ("2026-02-30T14:32:05+08:00", "FAIL", "TIMESTAMP_NOT_MATCHED"),  # no such date
 ])
-def test_last_line_without_newline_reports_what_the_scorer_saw(tmp_path, milestone, content, reason):
-    check(tmp_path, milestone, content.rstrip("\n"), token="FAIL", reason=reason)
+def test_m2_timestamp_with_zone(tmp_path, stamp, token, reason):
+    check(tmp_path, 2, f"rule: 5710, timestamp: {stamp}\n", token=token, reason=reason)
+
+
+@pytest.mark.parametrize("stamp,token", [
+    ("2026-10-01T22:32:05+08:00", "PASS"),
+    ("2026-10-01 14:32:05 UTC", "PASS"),
+    ("2026-10-01T22:50:00+08:00", "FAIL"),
+])
+def test_m1_timestamp_with_zone(tmp_path, stamp, token):
+    content = TRIAGE_OK.replace("2026-10-01T14:32:05Z", stamp)
+    check(tmp_path, 1, content, token=token, reason=None if token == "PASS" else "TIMESTAMP_NOT_MATCHED")
 
 
 # Far bigger than a pipe buffer: a grep -q that stops at the first match must not
