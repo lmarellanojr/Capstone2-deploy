@@ -8,9 +8,9 @@ Instructors get a reason when a Vulnerability Hardening check fails. The portal 
 
 | Milestone | Pass condition, in the order checked |
 |---|---|
-| M1 identify the weakness | a `sudo … tomcat-users` line (no pipe before `tomcat-users`) in shell history or the snoopy log |
-| M2 apply the remediation | if `/etc/tomcat9/tomcat-users.xml` exists: it no longer has `password="tomcat"` or `password='tomcat'`. If it doesn't: a `sed -i … tomcat-users` line in history |
-| M3 confirm the path is closed | `curl -u tomcat:tomcat` to `127.0.0.1:8180/manager/text/list` gets 401 or 403 → a curl to the manager with `tomcat:tomcat` in history |
+| M1 identify the weakness | a `sudo … tomcat-users` line (no pipe before `tomcat-users`) in shell history or the snoopy log, or a read of `tomcat-users` (`cat`, `less`, `grep`, `head`, an editor, …) in root's own history, typed after `sudo -i`, `sudo su -` or `sudo bash` |
+| M2 apply the remediation | if `/etc/tomcat9/tomcat-users.xml` exists: outside `<!-- -->` comments it no longer has `password="tomcat"` or `password='tomcat'` (commenting the default user out counts; unbalanced comment markers mean the file is checked as written). If it doesn't: a `sed -i … tomcat-users` line in history |
+| M3 confirm the path is closed | `curl -u tomcat:tomcat` to `127.0.0.1:8180/manager/text/list` gets 401 or 403 → a request to the manager with the old credential in history (curl with `tomcat:tomcat`, or wget with `--user`/`--password` or `--http-user`/`--http-password` set to `tomcat`, or `tomcat:tomcat@` in the URL) → that request ran after the users file last changed. A `curl -u tomcat` that prompts for the password doesn't count, since the typed password is unknown |
 
 ## Reason codes
 

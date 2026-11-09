@@ -1267,8 +1267,58 @@ _s11_status_reason() {
 # per-command epoch in this convention, so a verify visible only via snoopy
 # stays untimed (VERIFY_NOT_TIMESTAMPED -- fails closed). Prints nothing but the
 # epoch -- no reason codes -- so the allowlist scan never picks it up.
+# M3: a request to the Tomcat manager with the OLD tomcat:tomcat credential.
+# curl -u/--user (or tomcat:tomcat@ in the URL), and wget with
+# --user/--password (or --http-user/--http-password) set to tomcat in any order.
+# A curl -u tomcat that prompts for the password is NOT counted: the typed
+# password is unknown, so it may have tested the new password instead.
+_S11_VERIFY_RE='curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)|wget.*tomcat:tomcat@|wget.*--(http-)?user[= ]tomcat([[:space:]]|$).*--(http-)?password[= ]tomcat([[:space:]]|$)|wget.*--(http-)?password[= ]tomcat([[:space:]]|$).*--(http-)?user[= ]tomcat([[:space:]]|$)'
+
+# M1: root's own shell history. After `sudo -i` / `sudo su -` / `sudo bash`,
+# commands run as root and land here without a `sudo` prefix, yet they can read
+# the root-owned users file. S11_ROOT_HOME is a test seam only.
+_s11_root_history_has() {
+    local pattern="$1" root_home="${S11_ROOT_HOME:-/root}" f
+    for f in "$root_home/.bash_history" "$root_home/.zsh_history"; do
+        [[ -f "$f" ]] || continue
+        grep -qE "$pattern" "$f" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+# M2: the users file with XML comments removed. Tomcat ignores a commented-out
+# <user .../>, so a default password left only inside <!-- ... --> is not live.
+# Plain awk (no perl/python on meta); handles comments spanning lines. If the
+# <!-- and --> markers don't balance (an unclosed comment, which Tomcat can't
+# load anyway), the file is returned unchanged so nothing is hidden.
+_s11_active_xml() {
+    local opens closes
+    opens=$( { grep -o '<!--' "$1" 2>/dev/null || true; } | wc -l)
+    closes=$( { grep -o -- '-->' "$1" 2>/dev/null || true; } | wc -l)
+    if [[ "$opens" -ne "$closes" ]]; then
+        cat "$1" 2>/dev/null
+        return 0
+    fi
+    awk '
+        {
+            line = $0; out = ""
+            while (length(line) > 0) {
+                if (inc) {
+                    p = index(line, "-->")
+                    if (p == 0) { line = "" } else { line = substr(line, p + 3); inc = 0 }
+                } else {
+                    p = index(line, "<!--")
+                    if (p == 0) { out = out line; line = "" }
+                    else { out = out substr(line, 1, p - 1); line = substr(line, p + 4); inc = 1 }
+                }
+            }
+            print out
+        }
+    ' "$1" 2>/dev/null
+}
+
 _s11_latest_verify_epoch() {
-    local verify_re='curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)'
+    local verify_re="$_S11_VERIFY_RE"
     local f files=()
     for f in /root/.bash_history /home/*/.bash_history /root/.zsh_history /home/*/.zsh_history \
              "${HOME:+$HOME/.bash_history}" "${HOME:+$HOME/.zsh_history}"; do
@@ -1302,7 +1352,10 @@ check_scenario_11() {
             # `cat` returns "Permission denied" and never shows the credential.
             # Require sudo so the credited command actually reveals the weakness
             # (previously a denied `cat` still passed -- false positive).
+            # A root shell (sudo -i, sudo su -, sudo bash) reads it without the
+            # sudo prefix; those commands are in root's history only.
             if check_behavior "sudo[^|]*tomcat-users"; then reason=NONE
+            elif _s11_root_history_has '(^|[;&|[:space:]])(cat|less|more|head|tail|grep|egrep|view|vi|vim|nano|bat|sed -n)[[:space:]][^|]*tomcat-users'; then reason=NONE
             else reason=$(_s11_command_reason "tomcat-users") || reason=CHECK_ERROR
             fi
             ;;
@@ -1317,7 +1370,9 @@ check_scenario_11() {
             if [[ -f "$users_file" ]]; then
                 # The file's state decides. Previously a `sed -i` on the file
                 # passed even when the default password was still there.
-                if ! grep -qE "password=[\"']tomcat[\"']" "$users_file" 2>/dev/null; then
+                # Only live XML counts: a <user> left inside <!-- --> is ignored by
+                # Tomcat, so commenting the default account out also removes it.
+                if ! _s11_active_xml "$users_file" | grep -qE "password=[\"']tomcat[\"']"; then
                     reason=NONE
                 else
                     reason=DEFAULT_PASSWORD_PRESENT
@@ -1349,8 +1404,8 @@ check_scenario_11() {
             code=$(curl -s -o /dev/null -w '%{http_code}' -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list 2>/dev/null || echo "000")
             if [[ "$code" != "401" && "$code" != "403" ]]; then
                 reason=$(_s11_status_reason "$code") || reason=CHECK_ERROR
-            elif ! check_behavior "curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)"; then
-                reason=$(_s11_command_reason "curl.*(8180|manager)") || reason=CHECK_ERROR
+            elif ! check_behavior "$_S11_VERIFY_RE"; then
+                reason=$(_s11_command_reason "(curl|wget).*(8180|manager)") || reason=CHECK_ERROR
             else
                 remediated_at=$(stat -c %Y "$users_file" 2>/dev/null || echo "")
                 verified_at=$(_s11_latest_verify_epoch)
