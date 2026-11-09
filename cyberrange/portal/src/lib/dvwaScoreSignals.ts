@@ -1,5 +1,18 @@
 const HEX32 = /^[0-9a-fA-F]{32}$/
 const PLACEHOLDER = /<session_id>|<admin_hash_here>/i
+// UNION [ALL] SELECT, with spaces or /**/ comments between the words.
+const UNION_SELECT = /union(?:\s|\/\*.*?\*\/)+(?:all(?:\s|\/\*.*?\*\/)+)?select/i
+// FROM users, also written as dvwa.users or with backticks.
+const FROM_USERS = /from\s+(?:`?dvwa`?\.)?`?users\b/i
+// A name that can run script once reflected: a <script> tag, an on…= event
+// handler on any tag (<img src=x onerror=…>, <svg onload=…>), or a javascript: URL.
+const SCRIPT_PAYLOAD = /<script|<[a-z][^>]*\son[a-z]+\s*=|javascript:/i
+
+/** DVWA reflected the name unescaped: the raw payload (or "Hello <script") is in
+ *  the page. An escaped reflection (&lt;script…) does not contain the raw text. */
+function reflectsRaw(name: string, responseText: string): boolean {
+  return /Hello <script/i.test(responseText) || responseText.includes(name)
+}
 
 export type BrowserMilestone = 1 | 2 | 3 | 4
 
@@ -48,8 +61,8 @@ export function detectBrowserMilestone(input: {
   if (path.includes('/vulnerabilities/xss_r')) {
     const name = nameValue(input.search, input.requestBody)
     if (!name || PLACEHOLDER.test(name)) return null
-    if (!/<script/i.test(name)) return null
-    if (!/Hello <script/i.test(input.responseText)) return null
+    if (!SCRIPT_PAYLOAD.test(name)) return null
+    if (!reflectsRaw(name, input.responseText)) return null
     return 4
   }
 
@@ -59,18 +72,22 @@ export function detectBrowserMilestone(input: {
   const body = input.responseText
   const values = cells(body)
 
-  const unionUsers = /union\s+select/i.test(id) && /from\s+users/i.test(id)
+  const union = UNION_SELECT.test(id)
+  const unionUsers = union && FROM_USERS.test(id)
   if (unionUsers && values.some((v) => HEX32.test(v))) return 3
 
-  const unionMeta = /union\s+select/i.test(id) && /(information_schema|database\s*\()/i.test(id)
+  const unionMeta = union && /(information_schema|database\s*\()/i.test(id)
   const metaHit = values.some((v) => /information_schema|^dvwa$/i.test(v))
   if (unionMeta && metaHit) return 2
 
+  // Task 1: the quote broke out of DVWA's query. Either MySQL reported a syntax
+  // error, or the page lists more than one user -- a normal lookup by id returns
+  // one, so any quote payload that lists several (' OR '1'='1, ' or 'a'='a,
+  // %' or '0'='0, ' OR true#, ' || 1#) changed the query.
   const quote = id.includes("'")
-  const orPayload = /or\s+['"]?1['"]?\s*=\s*['"]?1/i.test(id)
   const sqlError = /you have an error in your sql syntax|syntax error/i.test(body)
   const firstNameCount = (body.match(/First name:/gi) || []).length
-  if (orPayload && firstNameCount >= 2) return 1
+  if (quote && firstNameCount >= 2) return 1
   if (quote && sqlError) return 1
 
   return null
@@ -116,9 +133,9 @@ export function browserNearMiss(input: {
 
   if (path.includes('/vulnerabilities/xss_r')) {
     const name = nameValue(input.search, input.requestBody)
-    if (!name || PLACEHOLDER.test(name) || !/<script/i.test(name)) return null
+    if (!name || PLACEHOLDER.test(name) || !SCRIPT_PAYLOAD.test(name)) return null
     if (notLow) return { milestone: 4, reason: 'SECURITY_NOT_LOW' }
-    if (!/Hello <script/i.test(input.responseText)) return { milestone: 4, reason: 'XSS_NOT_REFLECTED' }
+    if (!reflectsRaw(name, input.responseText)) return { milestone: 4, reason: 'XSS_NOT_REFLECTED' }
     return null
   }
 
@@ -127,11 +144,11 @@ export function browserNearMiss(input: {
   if (!id || PLACEHOLDER.test(id)) return null
 
   // Same payload tests as detectBrowserMilestone, most specific first.
-  const union = /union\s+select/i.test(id)
+  const union = UNION_SELECT.test(id)
   let attempt: NearMiss | null = null
   if (union) {
     // A UNION the detector has no rule for (e.g. another table) stays generic.
-    if (/from\s+users/i.test(id)) attempt = { milestone: 3, reason: 'UNION_NO_HASH' }
+    if (FROM_USERS.test(id)) attempt = { milestone: 3, reason: 'UNION_NO_HASH' }
     else if (/(information_schema|database\s*\()/i.test(id)) attempt = { milestone: 2, reason: 'UNION_NO_METADATA' }
   } else if (/or\s+['"]?1['"]?\s*=\s*['"]?1/i.test(id)) attempt = { milestone: 1, reason: 'PAYLOAD_NO_ROWS' }
   else if (id.includes("'")) {

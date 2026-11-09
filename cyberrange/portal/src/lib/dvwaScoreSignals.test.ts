@@ -88,6 +88,41 @@ describe('dvwaScoreSignals', () => {
       ).toBe(3)
     })
 
+    // Valid alternatives: any quote payload that lists more than one user changed
+    // DVWA's query (a normal lookup by id returns one user).
+    it.each([
+      ["' or 'a'='a", "?id=1'+or+'a'%3D'a"],
+      ["%' or '0'='0", "?id=%25'+or+'0'%3D'0"],
+      ["' OR true#", "?id=1'+OR+true%23"],
+      ["' || 1#", "?id=1'+||+1%23"],
+    ])('%s listing several users scores milestone 1', (_label, search) => {
+      expect(hit({ search, responseText: page(twoUsers) })).toBe(1)
+    })
+
+    it.each([
+      ['a quote listing one user', "?id=1'%23", oneUser],
+      ['two users but no quote in the id', '?id=1&Submit=Submit', twoUsers],
+    ])('%s does not score', (_label, search, rows) => {
+      expect(hit({ search, responseText: page(rows) })).toBeNull()
+    })
+
+    it.each([
+      ['UNION ALL SELECT', "1' UNION ALL SELECT user, password FROM users -- -"],
+      ['comments between the words', "1' UNION/**/SELECT user, password FROM users -- -"],
+      ['dvwa.users', "1' UNION SELECT user, password FROM dvwa.users -- -"],
+    ])('%s with a 32-hex surname scores milestone 3', (_label, payload) => {
+      expect(hit({ search: '?id=' + encodeURIComponent(payload), responseText: page(hashRow) })).toBe(3)
+    })
+
+    it('UNION ALL SELECT database() scores milestone 2', () => {
+      expect(
+        hit({
+          search: '?id=' + encodeURIComponent("1' UNION ALL SELECT null, database() -- -"),
+          responseText: page(dbRow),
+        }),
+      ).toBe(2)
+    })
+
     it('placeholder token in the id does not score', () => {
       expect(
         hit({
@@ -107,6 +142,24 @@ describe('dvwaScoreSignals', () => {
           responseText: page('Hello &lt;script&gt;alert(1)&lt;/script&gt;'),
         }),
       ).toBeNull()
+    })
+
+    it.each([
+      ['an img onerror handler', '<img src=x onerror=alert(1)>'],
+      ['an svg onload handler', '<svg onload=alert(1)>'],
+      ['a mixed-case script tag', '<ScRiPt>alert(1)</ScRiPt>'],
+    ])('%s reflected unescaped scores milestone 4', (_label, payload) => {
+      expect(
+        hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: page(`Hello ${payload}`) }),
+      ).toBe(4)
+    })
+
+    it.each([
+      ['an escaped img onerror', '<img src=x onerror=alert(1)>', 'Hello &lt;img src=x onerror=alert(1)&gt;'],
+      ['a harmless tag', '<b>alice</b>', 'Hello <b>alice</b>'],
+      ['a plain name', 'alice', 'Hello alice'],
+    ])('%s does not score milestone 4', (_label, payload, response) => {
+      expect(hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: page(response) })).toBeNull()
     })
 
     it('raw Hello <script with name payload scores milestone 4', () => {
@@ -204,12 +257,10 @@ describe('browserNearMiss', () => {
     ['another DVWA page', { path: '/vulnerabilities/exec/', search: "?id=1'" }],
     ['a plain XSS name', { path: xssr, search: '?name=alice' }],
     ['a placeholder XSS name', { path: xssr, search: '?name=%3Cscript%3E%3Csession_id%3E' }],
-    // Tautologies the detector has no rule for may have worked: not QUOTE_NO_ERROR.
-    ["a working ' or 'a'='a", { search: "?id=1'+or+'a'%3D'a'%23", responseText: page(twoUsers) }],
-    ["%' or '0'='0 listing every user", { search: "?id=%25'+or+'0'%3D'0", responseText: page(twoUsers) }],
+    // A tautology whose page shows one user may still be mid-attempt: not QUOTE_NO_ERROR.
+    // (Listing several users now scores milestone 1, so it never reaches here.)
     ["an ' OR true payload", { search: "?id=1'+OR+true%23" }],
     ["an ' || payload", { search: "?id=1'+||+1%23" }],
-    ['a quote whose page listed several users', { search: "?id=1'%23", responseText: page(twoUsers) }],
   ])('stays generic for %s', (_label, over) => {
     expect(miss(over as Partial<Input>)).toBeNull()
   })

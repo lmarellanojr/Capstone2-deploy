@@ -10,10 +10,12 @@ Unlike the other scenarios, the reasons come from the portal's DVWA proxy, not f
 
 | Milestone | Pass condition |
 |---|---|
-| M1 injection point | `/vulnerabilities/sqli`, a non-placeholder `id`, and either an `OR 1=1` payload with 2 or more `First name:` rows, or a quote with a SQL syntax error |
-| M2 database extraction | `UNION SELECT` with `information_schema`/`database()`, and a result cell `information_schema` or `dvwa` |
-| M3 admin hash | `UNION SELECT … FROM users`, and a 32-hex result cell |
-| M4 reflected XSS | `/vulnerabilities/xss_r`, a non-placeholder `name` containing `<script`, and a response with `Hello <script` |
+| M1 injection point | `/vulnerabilities/sqli`, a non-placeholder `id` containing a quote, and either 2 or more `First name:` rows (any working payload: `' OR '1'='1`, `' or 'a'='a`, `%' or '0'='0`, `' OR true#`, `' \|\| 1#`) or a SQL syntax error |
+| M2 database extraction | `UNION [ALL] SELECT` (spaces or `/**/` between the words) with `information_schema`/`database()`, and a result cell `information_schema` or `dvwa` |
+| M3 admin hash | `UNION [ALL] SELECT … FROM users` (or `dvwa.users`), and a 32-hex result cell |
+| M4 reflected XSS | `/vulnerabilities/xss_r`, a non-placeholder `name` that can run script (`<script`, an `on…=` handler such as `<img src=x onerror=…>`, or `javascript:`), and a response that reflects it unescaped |
+
+Before the valid-payload change, M1 accepted only the `OR 1=1` form, M2/M3 only `UNION SELECT … FROM users`, and M4 only `<script`, so other working answers earned nothing.
 
 A request that doesn't pass is ignored, and almost every page view doesn't pass. The Kali `check_scenario_6` path is a fallback the poller also runs.
 
