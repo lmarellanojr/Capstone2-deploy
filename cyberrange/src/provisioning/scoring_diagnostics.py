@@ -61,6 +61,8 @@ REASON_CODES_BY_SCENARIO: dict[int, frozenset[str]] = {
         "OLD_CREDS_ACCEPTED",
         "MANAGER_UNREACHABLE",
         "MANAGER_UNEXPECTED_STATUS",
+        "VERIFY_BEFORE_FIX",
+        "VERIFY_NOT_TIMESTAMPED",
         "CHECK_ERROR",
     }),
     # Catalog Scenario 2, SQL Injection. Not from scoring_checks.sh: the portal

@@ -33,6 +33,15 @@ _WITH_STUBS = (
 DEFAULT_XML = '<user username="tomcat" password="tomcat" roles="manager-script"/>'
 FIXED_XML = '<user username="tomcat" password="N3w-Str0ng!" roles="manager-script"/>'
 VERIFY_CURL = "curl -s -o /dev/null -w '%{http_code}\\n' -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list\n"
+# M3 timing anchor: the mtime stamped on tomcat-users.xml stands for the
+# remediation time; a `#<epoch>` line before the curl stands for the
+# verification time (what HISTTIMEFORMAT writes).
+REMEDIATED_AT = 1_700_000_000
+
+
+def _stamped(epoch: int) -> str:
+    """The verification curl preceded by its HISTTIMEFORMAT `#<epoch>` line."""
+    return f"#{epoch}\n{VERIFY_CURL}"
 
 
 def _write(path: Path, text: str) -> None:
@@ -40,8 +49,10 @@ def _write(path: Path, text: str) -> None:
 
 
 def run(tmp_path: Path, milestone: int, *, history: str = "", xml=None, curl_code=None,
-        script: str = SCRIPT) -> tuple[str, dict | None, list[str]]:
-    """xml=None: no users file. curl_code: what the curl stub prints (None = no stub)."""
+        remediated_at=None, script: str = SCRIPT) -> tuple[str, dict | None, list[str]]:
+    """xml=None: no users file. curl_code: what the curl stub prints (None = no
+    stub). remediated_at: if set (with xml), the users-file mtime M3 reads as the
+    remediation time."""
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     _write(home / ".bash_history", history)
@@ -56,6 +67,8 @@ def run(tmp_path: Path, milestone: int, *, history: str = "", xml=None, curl_cod
     users = tmp_path / "tomcat-users.xml"
     if xml is not None:
         _write(users, xml)
+        if remediated_at is not None:
+            os.utime(users, (remediated_at, remediated_at))
     env = {
         **os.environ,
         "HOME": home.as_posix(),
@@ -89,15 +102,26 @@ CASES = [
      "DEFAULT_PASSWORD_PRESENT"),
     ("m2-no-file-sed", 2, dict(history="sudo sed -i 's/tomcat/x/' /etc/tomcat9/tomcat-users.xml\n"), None),
     ("m2-no-file-no-sed", 2, dict(), "CONFIG_MISSING"),
-    # M3: manager rejects old creds (401/403), then the verification curl in history
-    ("m3-pass-401", 3, dict(history=VERIFY_CURL, curl_code="401"), None),
-    ("m3-pass-403", 3, dict(history=VERIFY_CURL, curl_code="403"), None),
-    ("m3-still-open", 3, dict(history=VERIFY_CURL, curl_code="200"), "OLD_CREDS_ACCEPTED"),
-    ("m3-down", 3, dict(history=VERIFY_CURL, curl_code="000"), "MANAGER_UNREACHABLE"),
-    ("m3-404", 3, dict(history=VERIFY_CURL, curl_code="404"), "MANAGER_UNEXPECTED_STATUS"),
-    ("m3-500", 3, dict(history=VERIFY_CURL, curl_code="500"), "MANAGER_UNEXPECTED_STATUS"),
-    # State is checked first: still open and never verified reports the state.
+    # M3: manager rejects old creds (401/403), the verification curl is in
+    # history, AND that curl's HISTTIMEFORMAT stamp is at/after the file mtime.
+    ("m3-pass-401", 3, dict(xml=FIXED_XML, remediated_at=REMEDIATED_AT,
+                            history=_stamped(REMEDIATED_AT + 30), curl_code="401"), None),
+    ("m3-pass-403", 3, dict(xml=FIXED_XML, remediated_at=REMEDIATED_AT,
+                            history=_stamped(REMEDIATED_AT + 30), curl_code="403"), None),
+    # Verified, but the curl pre-dates the fix (the Scenario 4 Task 3 false pass).
+    ("m3-verify-before-fix", 3, dict(xml=FIXED_XML, remediated_at=REMEDIATED_AT,
+                                     history=_stamped(REMEDIATED_AT - 30), curl_code="401"),
+     "VERIFY_BEFORE_FIX"),
+    # Verified, but history carries no timestamp (HISTTIMEFORMAT was unset).
+    ("m3-verify-untimed", 3, dict(xml=FIXED_XML, remediated_at=REMEDIATED_AT,
+                                  history=VERIFY_CURL, curl_code="401"), "VERIFY_NOT_TIMESTAMPED"),
+    # State is checked before timing: a bad state reports the state regardless.
+    ("m3-still-open", 3, dict(history=_stamped(REMEDIATED_AT + 30), curl_code="200"), "OLD_CREDS_ACCEPTED"),
+    ("m3-down", 3, dict(history=_stamped(REMEDIATED_AT + 30), curl_code="000"), "MANAGER_UNREACHABLE"),
+    ("m3-404", 3, dict(history=_stamped(REMEDIATED_AT + 30), curl_code="404"), "MANAGER_UNEXPECTED_STATUS"),
+    ("m3-500", 3, dict(history=_stamped(REMEDIATED_AT + 30), curl_code="500"), "MANAGER_UNEXPECTED_STATUS"),
     ("m3-open-not-verified", 3, dict(curl_code="200"), "OLD_CREDS_ACCEPTED"),
+    # Closed state, but no verification curl at all: behavior reason wins before timing.
     ("m3-closed-not-verified", 3, dict(history="sudo systemctl restart tomcat9\n", curl_code="401"),
      "COMMAND_NOT_FOUND"),
     ("m3-closed-other-creds", 3, dict(history="curl -u admin:x http://127.0.0.1:8180/manager/text/list\n",

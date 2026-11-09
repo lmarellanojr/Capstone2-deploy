@@ -62,10 +62,13 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
     p.chmod(0o755)
 
 
-def run(tmp_path: Path, scenario: int, milestone: int, *, history: str = "", stubs=None, extra_env=None) -> str:
+def run(tmp_path: Path, scenario: int, milestone: int, *, history: str = "", zsh_history=None,
+        stubs=None, extra_env=None) -> str:
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     _write(home / ".bash_history", history)
+    if zsh_history is not None:
+        _write(home / ".zsh_history", zsh_history)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     for name, body in (stubs or {}).items():
@@ -792,23 +795,97 @@ _M3_VERIFY_HIST = (
     "curl -s -o /dev/null -w '%{http_code}\\n' -u tomcat:tomcat "
     "http://127.0.0.1:8180/manager/text/list\n"
 )
+_FIXED_XML = '<user username="tomcat" password="N3w-Str0ng!" roles="manager-script"/>'
+# M3 reads tomcat-users.xml's mtime as the remediation time and the curl's
+# `#<epoch>` HISTTIMEFORMAT stamp as the verification time; the verification
+# must not pre-date the fix.
+_M3_REMEDIATED_AT = 1_700_000_000
+
+
+def _users_at(tmp_path: Path, xml: str, mtime: int) -> dict:
+    """A tomcat-users.xml whose mtime stands for the remediation time."""
+    f = tmp_path / f"tomcat-users-{uuid.uuid4().hex}.xml"
+    _write(f, xml)
+    os.utime(f, (mtime, mtime))
+    return {"TOMCAT_USERS_FILE": f.as_posix()}
+
+
+def _stamped(epoch: int) -> str:
+    """The verification curl preceded by its HISTTIMEFORMAT `#<epoch>` line."""
+    return f"#{epoch}\n{_M3_VERIFY_HIST}"
 
 
 @pytest.mark.parametrize("code,expected", [("401", "PASS"), ("403", "PASS"), ("200", "FAIL"), ("000", "FAIL")])
 def test_s11_m3_passes_only_when_closed_and_verified(tmp_path, code, expected):
-    # The student ran the verification curl AND the manager rejects old creds.
+    # The student ran the verification curl AFTER the fix AND the manager rejects
+    # the old creds. State is checked first, so 200/000 fail on state alone.
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
     curl = f"#!/bin/bash\nprintf '{code}'\n"
-    assert run(tmp_path, 11, 3, history=_M3_VERIFY_HIST, stubs={"curl": curl}) == expected
+    hist = _stamped(_M3_REMEDIATED_AT + 30)
+    assert run(tmp_path, 11, 3, history=hist, stubs={"curl": curl}, extra_env=env) == expected
 
 
 def test_s11_m3_closed_but_not_verified_fails(tmp_path):
     # Regression: after M2 the old creds already fail (401), but if the student
     # never ran the verification curl, the "confirm" task must NOT auto-pass.
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
     curl = "#!/bin/bash\nprintf '401'\n"
-    assert run(tmp_path, 11, 3, history="sudo systemctl restart tomcat9\n", stubs={"curl": curl}) == "FAIL"
+    assert run(tmp_path, 11, 3, history="sudo systemctl restart tomcat9\n",
+               stubs={"curl": curl}, extra_env=env) == "FAIL"
 
 
 def test_s11_m3_verified_but_still_open_fails(tmp_path):
     # Student ran the curl, but the fix isn't really in place (still 200).
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
     curl = "#!/bin/bash\nprintf '200'\n"
-    assert run(tmp_path, 11, 3, history=_M3_VERIFY_HIST, stubs={"curl": curl}) == "FAIL"
+    assert run(tmp_path, 11, 3, history=_stamped(_M3_REMEDIATED_AT + 30),
+               stubs={"curl": curl}, extra_env=env) == "FAIL"
+
+
+def test_s11_m3_verification_before_the_fix_fails(tmp_path):
+    # The core Scenario 4 Task 3 false pass: the manager rejects the old creds
+    # now (401), but the student's curl ran BEFORE the remediation -- while those
+    # creds still worked -- so it proves nothing and must not confirm the fix.
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history=_stamped(_M3_REMEDIATED_AT - 30),
+               stubs={"curl": curl}, extra_env=env) == "FAIL"
+
+
+def test_s11_m3_verification_after_the_fix_passes(tmp_path):
+    # The honest path: remediate, THEN verify. The curl post-dates the file mtime.
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history=_stamped(_M3_REMEDIATED_AT + 30),
+               stubs={"curl": curl}, extra_env=env) == "PASS"
+
+
+def test_s11_m3_untimestamped_verification_fails(tmp_path):
+    # History without HISTTIMEFORMAT carries no `#<epoch>` line, so the ordering
+    # can't be proven; a bare verification curl must not confirm the fix.
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history=_M3_VERIFY_HIST,
+               stubs={"curl": curl}, extra_env=env) == "FAIL"
+
+
+# Kali's default shell is zsh, and check_behavior already reads .zsh_history, so
+# the timing gate must honor it too (else a genuine zsh verify fails closed).
+# zsh EXTENDED_HISTORY stamps each line ": <epoch>:<elapsed>;<command>".
+def _zsh(epoch: int) -> str:
+    return f": {epoch}:0;{_M3_VERIFY_HIST}"
+
+
+def test_s11_m3_verification_in_zsh_after_fix_passes(tmp_path):
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    # bash history empty; the verify lives only in zsh_history, timed after the fix.
+    assert run(tmp_path, 11, 3, history="", zsh_history=_zsh(_M3_REMEDIATED_AT + 30),
+               stubs={"curl": curl}, extra_env=env) == "PASS"
+
+
+def test_s11_m3_verification_in_zsh_before_fix_fails(tmp_path):
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history="", zsh_history=_zsh(_M3_REMEDIATED_AT - 30),
+               stubs={"curl": curl}, extra_env=env) == "FAIL"

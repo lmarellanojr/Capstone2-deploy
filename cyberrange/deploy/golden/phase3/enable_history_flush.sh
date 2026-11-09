@@ -35,6 +35,12 @@ HISTORY_BLOCK=$(cat <<'EOF'
 export HISTFILE="${HISTFILE:-$HOME/.bash_history}"
 export HISTSIZE="${HISTSIZE:-10000}"
 export HISTFILESIZE="${HISTFILESIZE:-20000}"
+# Timestamp every command: with HISTTIMEFORMAT set, bash writes a `#<epoch>`
+# comment line before each entry in .bash_history. Scenario 4 Task 3 scoring
+# (scoring_checks.sh check_scenario_11 M3) reads those stamps to require the
+# "confirm the path is closed" curl to have run AFTER the remediation, not
+# before it. Keep any value the student already set.
+export HISTTIMEFORMAT="${HISTTIMEFORMAT:-%F %T }"
 shopt -s histappend 2>/dev/null || true
 # Avoid losing history -a if something else reassigns PROMPT_COMMAND later.
 case "${PROMPT_COMMAND:-}" in
