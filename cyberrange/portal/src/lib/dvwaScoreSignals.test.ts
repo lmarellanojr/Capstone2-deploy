@@ -88,6 +88,41 @@ describe('dvwaScoreSignals', () => {
       ).toBe(3)
     })
 
+    // Valid alternatives: any quote payload that lists more than one user changed
+    // DVWA's query (a normal lookup by id returns one user).
+    it.each([
+      ["' or 'a'='a", "?id=1'+or+'a'%3D'a"],
+      ["%' or '0'='0", "?id=%25'+or+'0'%3D'0"],
+      ["' OR true#", "?id=1'+OR+true%23"],
+      ["' || 1#", "?id=1'+||+1%23"],
+    ])('%s listing several users scores milestone 1', (_label, search) => {
+      expect(hit({ search, responseText: page(twoUsers) })).toBe(1)
+    })
+
+    it.each([
+      ['a quote listing one user', "?id=1'%23", oneUser],
+      ['two users but no quote in the id', '?id=1&Submit=Submit', twoUsers],
+    ])('%s does not score', (_label, search, rows) => {
+      expect(hit({ search, responseText: page(rows) })).toBeNull()
+    })
+
+    it.each([
+      ['UNION ALL SELECT', "1' UNION ALL SELECT user, password FROM users -- -"],
+      ['comments between the words', "1' UNION/**/SELECT user, password FROM users -- -"],
+      ['dvwa.users', "1' UNION SELECT user, password FROM dvwa.users -- -"],
+    ])('%s with a 32-hex surname scores milestone 3', (_label, payload) => {
+      expect(hit({ search: '?id=' + encodeURIComponent(payload), responseText: page(hashRow) })).toBe(3)
+    })
+
+    it('UNION ALL SELECT database() scores milestone 2', () => {
+      expect(
+        hit({
+          search: '?id=' + encodeURIComponent("1' UNION ALL SELECT null, database() -- -"),
+          responseText: page(dbRow),
+        }),
+      ).toBe(2)
+    })
+
     it('placeholder token in the id does not score', () => {
       expect(
         hit({
@@ -106,6 +141,48 @@ describe('dvwaScoreSignals', () => {
           search: '?name=' + encodeURIComponent('<script>alert(1)</script>'),
           responseText: page('Hello &lt;script&gt;alert(1)&lt;/script&gt;'),
         }),
+      ).toBeNull()
+    })
+
+    it.each([
+      ['an img onerror handler', '<img src=x onerror=alert(1)>'],
+      ['an svg onload handler', '<svg onload=alert(1)>'],
+      ['a mixed-case script tag', '<ScRiPt>alert(1)</ScRiPt>'],
+    ])('%s reflected unescaped scores milestone 4', (_label, payload) => {
+      expect(
+        hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: page(`Hello ${payload}`) }),
+      ).toBe(4)
+    })
+
+    it.each([
+      ['an escaped img onerror', '<img src=x onerror=alert(1)>', 'Hello &lt;img src=x onerror=alert(1)&gt;'],
+      ['a harmless tag', '<b>alice</b>', 'Hello <b>alice</b>'],
+      ['a plain name', 'alice', 'Hello alice'],
+    ])('%s does not score milestone 4', (_label, payload, response) => {
+      expect(hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: page(response) })).toBeNull()
+    })
+
+    // The detector gets the raw upstream page, which carries DVWA's own scripts.
+    const dvwaPage = (greeting: string) =>
+      '<html><head><title>DVWA</title><script type="text/javascript" src="/dvwa/js/dvwaPage.js"></script></head>' +
+      `<body><pre>${greeting}</pre></body></html>`
+
+    it.each([
+      ['a bare <script', '<script', 'Hello &lt;script'],
+      ['a script tag', '<script>alert(1)</script>', 'Hello &lt;script&gt;alert(1)&lt;/script&gt;'],
+      ['an img onerror', '<img src=x onerror=alert(1)>', 'Hello &lt;img src=x onerror=alert(1)&gt;'],
+    ])('%s escaped on a page with DVWA script tags does not score milestone 4', (_label, payload, greeting) => {
+      expect(hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: dvwaPage(greeting) })).toBeNull()
+    })
+
+    it('a raw img onerror on a page with DVWA script tags scores milestone 4', () => {
+      const payload = '<img src=x onerror=alert(1)>'
+      expect(hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: dvwaPage(`Hello ${payload}`) })).toBe(4)
+    })
+
+    it('a javascript: name reflected in the greeting does not score milestone 4', () => {
+      expect(
+        hit({ path: xssr, search: '?name=' + encodeURIComponent('javascript:alert(1)'), responseText: page('Hello javascript:alert(1)') }),
       ).toBeNull()
     })
 
@@ -204,12 +281,10 @@ describe('browserNearMiss', () => {
     ['another DVWA page', { path: '/vulnerabilities/exec/', search: "?id=1'" }],
     ['a plain XSS name', { path: xssr, search: '?name=alice' }],
     ['a placeholder XSS name', { path: xssr, search: '?name=%3Cscript%3E%3Csession_id%3E' }],
-    // Tautologies the detector has no rule for may have worked: not QUOTE_NO_ERROR.
-    ["a working ' or 'a'='a", { search: "?id=1'+or+'a'%3D'a'%23", responseText: page(twoUsers) }],
-    ["%' or '0'='0 listing every user", { search: "?id=%25'+or+'0'%3D'0", responseText: page(twoUsers) }],
+    // A tautology whose page shows one user may still be mid-attempt: not QUOTE_NO_ERROR.
+    // (Listing several users now scores milestone 1, so it never reaches here.)
     ["an ' OR true payload", { search: "?id=1'+OR+true%23" }],
     ["an ' || payload", { search: "?id=1'+||+1%23" }],
-    ['a quote whose page listed several users', { search: "?id=1'%23", responseText: page(twoUsers) }],
   ])('stays generic for %s', (_label, over) => {
     expect(miss(over as Partial<Input>)).toBeNull()
   })
@@ -241,6 +316,15 @@ describe('browserNearMiss', () => {
 
   it('does not guess the security level when the cookie is absent', () => {
     expect(miss({ search: '?id=1%27', securityLevel: '' })).toEqual({ milestone: 1, reason: 'QUOTE_NO_ERROR' })
+  })
+
+  it('reports an escaped img onerror as unreflected even with DVWA script tags on the page', () => {
+    const dvwaPage =
+      '<html><head><script type="text/javascript" src="/dvwa/js/dvwaPage.js"></script></head>' +
+      '<body><pre>Hello &lt;img src=x onerror=alert(1)&gt;</pre></body></html>'
+    expect(
+      miss({ path: xssr, search: '?name=' + encodeURIComponent('<img src=x onerror=alert(1)>'), responseText: dvwaPage }),
+    ).toEqual({ milestone: 4, reason: 'XSS_NOT_REFLECTED' })
   })
 
   it('reports an unreflected script for milestone 4', () => {
