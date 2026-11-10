@@ -17,6 +17,8 @@ Unlike the other scenarios, the reasons come from the portal's DVWA proxy, not f
 
 A request that doesn't pass is ignored, and almost every page view doesn't pass. The Kali `check_scenario_6` path is a fallback the poller also runs.
 
+On that Kali path, M1 also accepts a saved DVWA page (`/tmp/sqli_probe.txt` or `/tmp/sqli_injection.txt`) only when it shows the injection worked: MySQL's error text `You have an error in your SQL syntax`, or a quoted payload (raw or as `&#039;`, `&#x27;` or `&apos;`) on an `ID:` line with 2 or more `First name:` rows. The error branch is deliberately looser than the browser rule, which also needs the quote: DVWA's error page doesn't echo the id, so a saved one can't show it. A single row with a quote doesn't count, because Task 1 asks for every user. A bare `First name:` used to be enough, which a normal `id=1` lookup also prints.
+
 ## Reason codes
 
 `browserNearMiss` runs only when the detector returned nothing for the same request. It uses the detector's own payload tests to decide which milestone the request was aimed at, and it returns nothing unless that is clear.

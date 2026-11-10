@@ -240,6 +240,52 @@ def test_s6_m4_escaped_reflection_artifact_fails(tmp_path):
         _bash_rm(f)
 
 
+# Scenario 2 Task 1 Kali artifact (/tmp/sqli_probe.txt): the saved DVWA page must
+# show the injection worked -- a SQL syntax error, or a quoted payload echoed on
+# an ID: line with more than one user listed. A bare "First name:" used to pass,
+# and a normal id=1 lookup prints that too (the false pass).
+
+def _row(id_text: str, first: str, last: str) -> str:
+    return f"<pre>ID: {id_text}<br />First name: {first}<br />Surname: {last}</pre>"
+
+
+def _s6_m1_probe(tmp_path: Path, content: str) -> str:
+    probe = tmp_path / "sqli_probe.txt"
+    _write(probe, content)
+    return run(tmp_path, 6, 1, extra_env={"SQLI_PROBE_FILE": probe.as_posix()})
+
+
+@pytest.mark.parametrize("content", [
+    _row("1", "admin", "admin"),                                    # normal lookup: the false pass
+    _row("1", "admin", "admin") + _row("2", "Gordon", "Brown"),     # two normal lookups appended
+    _row("1'#", "admin", "admin"),                                  # quote, but only one user listed
+    "First name:\n",
+    "",
+    "Help: a SQL syntax error means the query is malformed.\n",   # error wording that isn't MySQL's
+    _row("1' -- -", "admin", "admin"),                             # working quote, one user: Task 1 asks for all
+], ids=["normal-lookup", "two-normal-lookups", "quote-one-row", "bare-label", "empty",
+        "generic-syntax-error-text", "single-row-injection"])
+def test_s6_m1_probe_without_injection_evidence_fails(tmp_path, content):
+    assert _s6_m1_probe(tmp_path, content) == "FAIL"
+
+
+@pytest.mark.parametrize("content", [
+    "You have an error in your SQL syntax; check the manual near ''1''' at line 1\n",
+    _row("1' OR '1'='1", "admin", "admin") + _row("1' OR '1'='1", "Gordon", "Brown"),  # the guide's payload
+    _row("1' or 'a'='a", "admin", "admin") + _row("1' or 'a'='a", "Gordon", "Brown"),
+    _row("%' or '0'='0", "admin", "admin") + _row("%' or '0'='0", "Pablo", "Picasso"),
+    _row("1&#039; OR &#039;1&#039;=&#039;1", "admin", "admin")
+    + _row("1&#039; OR &#039;1&#039;=&#039;1", "Gordon", "Brown"),                    # HTML-escaped quote
+    _row("1&#x27; OR &#x27;1&#x27;=&#x27;1", "admin", "admin")
+    + _row("1&#x27; OR &#x27;1&#x27;=&#x27;1", "Gordon", "Brown"),                    # hex entity
+    _row("1&apos; OR &apos;1&apos;=&apos;1", "admin", "admin")
+    + _row("1&apos; OR &apos;1&apos;=&apos;1", "Gordon", "Brown"),                    # named entity
+], ids=["sql-error", "guide-or-1-1", "or-a-a", "percent-or-0-0", "escaped-quote",
+        "hex-escaped-quote", "apos-escaped-quote"])
+def test_s6_m1_probe_with_injection_evidence_passes(tmp_path, content):
+    assert _s6_m1_probe(tmp_path, content) == "PASS"
+
+
 # ── Scenario 3 (id 9): M3 incident report ───────────────────────────────────
 
 def _report(content: str) -> str:
