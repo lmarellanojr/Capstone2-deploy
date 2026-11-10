@@ -1270,9 +1270,25 @@ _s11_status_reason() {
 # M3: a request to the Tomcat manager with the OLD tomcat:tomcat credential.
 # curl -u/--user (or tomcat:tomcat@ in the URL), and wget with
 # --user/--password (or --http-user/--http-password) set to tomcat in any order.
-# A curl -u tomcat that prompts for the password is NOT counted: the typed
-# password is unknown, so it may have tested the new password instead.
-_S11_VERIFY_RE='curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)|wget.*tomcat:tomcat@|wget.*--(http-)?user[= ]tomcat([[:space:]]|$).*--(http-)?password[= ]tomcat([[:space:]]|$)|wget.*--(http-)?password[= ]tomcat([[:space:]]|$).*--(http-)?user[= ]tomcat([[:space:]]|$)'
+# Every form must also name the manager (port 8180 or /manager) on the same
+# line, so the old credential sent to some other host doesn't count. ERE has
+# no "and", so the wget flag forms list each order of user, password and
+# manager. A curl -u tomcat that prompts for the password is NOT counted: the
+# typed password is unknown, so it may have tested the new password instead.
+_s11_verify_re() {
+    local u='--(http-)?user[= ]tomcat([[:space:]]|$)'
+    local p='--(http-)?password[= ]tomcat([[:space:]]|$)'
+    local m='(8180|manager)'
+    local re='curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)'
+    re+='|wget.*tomcat:tomcat@[^[:space:]]*(8180|manager)'
+    local a b c
+    for a in u p m; do for b in u p m; do for c in u p m; do
+        [[ $a != "$b" && $a != "$c" && $b != "$c" ]] || continue
+        re+="|wget.*${!a}.*${!b}.*${!c}"
+    done; done; done
+    printf '%s' "$re"
+}
+_S11_VERIFY_RE=$(_s11_verify_re)
 
 # M1: root's own shell history. After `sudo -i` / `sudo su -` / `sudo bash`,
 # commands run as root and land here without a `sudo` prefix, yet they can read
@@ -1353,9 +1369,11 @@ check_scenario_11() {
             # Require sudo so the credited command actually reveals the weakness
             # (previously a denied `cat` still passed -- false positive).
             # A root shell (sudo -i, sudo su -, sudo bash) reads it without the
-            # sudo prefix; those commands are in root's history only.
+            # sudo prefix; those commands are in root's history only. The reader
+            # must start a command (line start, ; or &), so `echo cat ...`,
+            # `man cat ...` or `ls ... | grep tomcat-users` don't count.
             if check_behavior "sudo[^|]*tomcat-users"; then reason=NONE
-            elif _s11_root_history_has '(^|[;&|[:space:]])(cat|less|more|head|tail|grep|egrep|view|vi|vim|nano|bat|sed -n)[[:space:]][^|]*tomcat-users'; then reason=NONE
+            elif _s11_root_history_has '(^|[;&])[[:space:]]*(cat|less|more|head|tail|grep|egrep|view|vi|vim|nano|bat|sed -n)[[:space:]][^|]*tomcat-users'; then reason=NONE
             else reason=$(_s11_command_reason "tomcat-users") || reason=CHECK_ERROR
             fi
             ;;

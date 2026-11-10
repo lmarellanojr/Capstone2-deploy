@@ -923,6 +923,21 @@ def test_s11_m1_root_shell_without_reading_the_file_fails(tmp_path):
     assert run(tmp_path, 11, 1, history="sudo -i\n", extra_env=env) == "FAIL"
 
 
+@pytest.mark.parametrize("root_cmd", [
+    "echo cat /etc/tomcat9/tomcat-users.xml",
+    "man cat tomcat-users",
+    "ls /etc/tomcat9 | grep tomcat-users",
+], ids=["echo-mentions-cat", "man-mentions-cat", "grep-on-a-listing"])
+def test_s11_m1_reader_word_not_starting_a_command_fails(tmp_path, root_cmd):
+    env = _root_home(tmp_path, root_cmd + "\n")
+    assert run(tmp_path, 11, 1, history="sudo -i\n", extra_env=env) == "FAIL"
+
+
+def test_s11_m1_reader_after_a_separator_passes(tmp_path):
+    env = _root_home(tmp_path, "cd /etc/tomcat9 && cat tomcat-users.xml\n")
+    assert run(tmp_path, 11, 1, history="sudo -i\n", extra_env=env) == "PASS"
+
+
 # M2: Tomcat ignores a <user> inside <!-- -->, so commenting the default
 # account out removes it. A live default anywhere else still fails.
 
@@ -969,7 +984,11 @@ def test_s11_m3_wget_with_old_creds_after_fix_passes(tmp_path, cmd):
     (-30, "wget --user=tomcat --password=tomcat http://127.0.0.1:8180/manager/text/list"),  # before the fix
     (30, "wget --user=tomcat --password=tomcat2 http://127.0.0.1:8180/manager/text/list"),  # not the old password
     (30, "curl -u tomcat http://127.0.0.1:8180/manager/text/list"),  # prompted: password unknown
-], ids=["wget-before-fix", "wget-other-password", "curl-prompted-password"])
+    (30, "wget --user=tomcat --password=tomcat http://example.com/other"),  # not the manager
+    (30, "wget --http-user tomcat --http-password tomcat http://other.test/x"),
+    (30, "wget -O- http://tomcat:tomcat@example.com/other"),
+], ids=["wget-before-fix", "wget-other-password", "curl-prompted-password",
+        "wget-flags-other-host", "wget-http-flags-other-host", "wget-url-other-host"])
 def test_s11_m3_other_requests_still_fail(tmp_path, epoch_offset, cmd):
     env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
     curl = "#!/bin/bash\nprintf '401'\n"
