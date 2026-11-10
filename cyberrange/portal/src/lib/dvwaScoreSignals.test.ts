@@ -162,6 +162,30 @@ describe('dvwaScoreSignals', () => {
       expect(hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: page(response) })).toBeNull()
     })
 
+    // The detector gets the raw upstream page, which carries DVWA's own scripts.
+    const dvwaPage = (greeting: string) =>
+      '<html><head><title>DVWA</title><script type="text/javascript" src="/dvwa/js/dvwaPage.js"></script></head>' +
+      `<body><pre>${greeting}</pre></body></html>`
+
+    it.each([
+      ['a bare <script', '<script', 'Hello &lt;script'],
+      ['a script tag', '<script>alert(1)</script>', 'Hello &lt;script&gt;alert(1)&lt;/script&gt;'],
+      ['an img onerror', '<img src=x onerror=alert(1)>', 'Hello &lt;img src=x onerror=alert(1)&gt;'],
+    ])('%s escaped on a page with DVWA script tags does not score milestone 4', (_label, payload, greeting) => {
+      expect(hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: dvwaPage(greeting) })).toBeNull()
+    })
+
+    it('a raw img onerror on a page with DVWA script tags scores milestone 4', () => {
+      const payload = '<img src=x onerror=alert(1)>'
+      expect(hit({ path: xssr, search: '?name=' + encodeURIComponent(payload), responseText: dvwaPage(`Hello ${payload}`) })).toBe(4)
+    })
+
+    it('a javascript: name reflected in the greeting does not score milestone 4', () => {
+      expect(
+        hit({ path: xssr, search: '?name=' + encodeURIComponent('javascript:alert(1)'), responseText: page('Hello javascript:alert(1)') }),
+      ).toBeNull()
+    })
+
     it('raw Hello <script with name payload scores milestone 4', () => {
       expect(
         hit({
@@ -292,6 +316,15 @@ describe('browserNearMiss', () => {
 
   it('does not guess the security level when the cookie is absent', () => {
     expect(miss({ search: '?id=1%27', securityLevel: '' })).toEqual({ milestone: 1, reason: 'QUOTE_NO_ERROR' })
+  })
+
+  it('reports an escaped img onerror as unreflected even with DVWA script tags on the page', () => {
+    const dvwaPage =
+      '<html><head><script type="text/javascript" src="/dvwa/js/dvwaPage.js"></script></head>' +
+      '<body><pre>Hello &lt;img src=x onerror=alert(1)&gt;</pre></body></html>'
+    expect(
+      miss({ path: xssr, search: '?name=' + encodeURIComponent('<img src=x onerror=alert(1)>'), responseText: dvwaPage }),
+    ).toEqual({ milestone: 4, reason: 'XSS_NOT_REFLECTED' })
   })
 
   it('reports an unreflected script for milestone 4', () => {

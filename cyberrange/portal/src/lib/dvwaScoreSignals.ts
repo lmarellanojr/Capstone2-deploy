@@ -4,14 +4,18 @@ const PLACEHOLDER = /<session_id>|<admin_hash_here>/i
 const UNION_SELECT = /union(?:\s|\/\*.*?\*\/)+(?:all(?:\s|\/\*.*?\*\/)+)?select/i
 // FROM users, also written as dvwa.users or with backticks.
 const FROM_USERS = /from\s+(?:`?dvwa`?\.)?`?users\b/i
-// A name that can run script once reflected: a <script> tag, an on…= event
-// handler on any tag (<img src=x onerror=…>, <svg onload=…>), or a javascript: URL.
-const SCRIPT_PAYLOAD = /<script|<[a-z][^>]*\son[a-z]+\s*=|javascript:/i
+// A name that can run script once reflected as body text: a <script> tag or an
+// on…= event handler on any tag (<img src=x onerror=…>, <svg onload=…>).
+// javascript: is left out: it only runs in an attribute, and xss_r reflects the
+// name as text in "Hello {name}".
+const SCRIPT_PAYLOAD = /<script|<[a-z][^>]*\son[a-z]+\s*=/i
 
-/** DVWA reflected the name unescaped: the raw payload (or "Hello <script") is in
- *  the page. An escaped reflection (&lt;script…) does not contain the raw text. */
+/** DVWA reflected the name unescaped in its greeting: the page has "Hello <script"
+ *  or "Hello " + the raw name. Both are anchored to the greeting, because the raw
+ *  upstream page also carries DVWA's own <script src=…> tags. An escaped reflection
+ *  (Hello &lt;script…) matches neither. */
 function reflectsRaw(name: string, responseText: string): boolean {
-  return /Hello <script/i.test(responseText) || responseText.includes(name)
+  return /Hello <script/i.test(responseText) || responseText.includes('Hello ' + name)
 }
 
 export type BrowserMilestone = 1 | 2 | 3 | 4

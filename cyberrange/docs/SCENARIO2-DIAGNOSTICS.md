@@ -13,7 +13,7 @@ Unlike the other scenarios, the reasons come from the portal's DVWA proxy, not f
 | M1 injection point | `/vulnerabilities/sqli`, a non-placeholder `id` containing a quote, and either 2 or more `First name:` rows (any working payload: `' OR '1'='1`, `' or 'a'='a`, `%' or '0'='0`, `' OR true#`, `' \|\| 1#`) or a SQL syntax error |
 | M2 database extraction | `UNION [ALL] SELECT` (spaces or `/**/` between the words) with `information_schema`/`database()`, and a result cell `information_schema` or `dvwa` |
 | M3 admin hash | `UNION [ALL] SELECT … FROM users` (or `dvwa.users`), and a 32-hex result cell |
-| M4 reflected XSS | `/vulnerabilities/xss_r`, a non-placeholder `name` that can run script (`<script`, an `on…=` handler such as `<img src=x onerror=…>`, or `javascript:`), and a response that reflects it unescaped |
+| M4 reflected XSS | `/vulnerabilities/xss_r`, a non-placeholder `name` that can run script (`<script` or an `on…=` handler such as `<img src=x onerror=…>`; not `javascript:`, which only runs in an attribute), and a response whose `Hello ` greeting shows it unescaped |
 
 Before the valid-payload change, M1 accepted only the `OR 1=1` form, M2/M3 only `UNION SELECT … FROM users`, and M4 only `<script`, so other working answers earned nothing.
 
