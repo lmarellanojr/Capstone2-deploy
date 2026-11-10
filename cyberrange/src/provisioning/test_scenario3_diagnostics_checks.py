@@ -202,6 +202,7 @@ def test_last_line_without_newline_is_read(tmp_path, milestone, content):
     ("2026-10-01T14:32:05+00:00", "PASS", None),
     ("2026-10-01T09:32:05-05:00", "PASS", None),
     ("2026-10-01 14:32:05 UTC", "PASS", None),                    # space and UTC word
+    ("2026-10-01 22:32:05 +08:00", "PASS", None),                 # space before the offset
     ("2026-10-01T14:32:05UTC", "PASS", None),
     ("2026-10-01 14:32:05Z", "PASS", None),                       # space instead of T
     ("2026-10-01T22:45:00+08:00", "FAIL", "TIMESTAMP_NOT_MATCHED"),  # 13 min off once converted
@@ -216,6 +217,7 @@ def test_m2_timestamp_with_zone(tmp_path, stamp, token, reason):
 @pytest.mark.parametrize("stamp,token", [
     ("2026-10-01T22:32:05+08:00", "PASS"),
     ("2026-10-01 14:32:05 UTC", "PASS"),
+    ("2026-10-01 22:32:05 +08:00", "PASS"),
     ("2026-10-01T22:50:00+08:00", "FAIL"),
 ])
 def test_m1_timestamp_with_zone(tmp_path, stamp, token):

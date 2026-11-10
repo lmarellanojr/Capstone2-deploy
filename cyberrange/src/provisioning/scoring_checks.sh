@@ -994,7 +994,7 @@ _s9_timeline_time_is_real() {
 # separate date and time. A time with no zone stays out: it can't be placed on
 # the clock. Students often record Philippine time with its offset, which names
 # the same instant as the SIEM's UTC time, so it must match like the Z form.
-_S9_TIMESTAMP_RE='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[T ]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?(Z|[+-](0[0-9]|1[0-4]):?[0-5][0-9]| ?UTC)'
+_S9_TIMESTAMP_RE='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[T ]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?(Z| ?[+-](0[0-9]|1[0-4]):?[0-5][0-9]| ?UTC)'
 
 # Epoch (UTC seconds) of one _S9_TIMESTAMP_RE stamp, or return 1 when the
 # calendar date or the offset isn't real. An offset is subtracted, so
