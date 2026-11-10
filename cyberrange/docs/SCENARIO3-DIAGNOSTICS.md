@@ -28,20 +28,17 @@ Instructors get a reason when a Scenario 3 (SIEM Alert Triage, scorer id 9) arti
 | `PLACEHOLDER_OR_EXAMPLE` | `PASTE…`/`HH:MM`/`<…>` or guide fiction | same | guide fiction or the §5 example report |
 | `AGENT_MISSING` | no `agent … pod-…-meta` | — | no pod-…-meta named |
 | `AGENT_MISMATCH` | a pod-…-meta, not this lab's | — | a pod-…-meta, not this lab's |
-| `RULE_MISSING` | no 5710 and no rule number | no `rule`/`Rule … 5710` line, no rule number | no 5710, no rule number |
+| `RULE_MISSING` | no 5710 and no rule number | no `rule … 5710` line (any case), no rule number | no 5710, no rule number |
 | `RULE_MISMATCH` | a rule number, not 5710 | same | same |
-| `TIMESTAMP_MISSING` | no ISO `…Z` time | no `…Z` on a rule 5710 line | — |
-| `TIMESTAMP_NOT_MATCHED` | `…Z` not within ±5 min of a real invalid-user SSH event | same | — |
+| `TIMESTAMP_MISSING` | no full date and time with a zone | no such time on a rule 5710 line | — |
+| `TIMESTAMP_NOT_MATCHED` | a time not within ±5 min of a real invalid-user SSH event | same | — |
 | `REPORT_TOO_SHORT` | — | — | ≤ 200 bytes |
 | `REPORT_BODY_TOO_SHORT` | — | — | < 120 chars after headings |
 | `CHECK_ERROR` | no auth log, unknown agent, or verifier ERROR | no auth log or verifier ERROR | unknown agent or verifier ERROR |
 
-**Reasons follow what the scorer read.** The M1 agent check and the M2 timeline check read the file line by line. They skip a last line with no trailing newline, and the timeline check only reads lines starting `rule`/`Rule` (not `RULE`). The reasons are computed the same way, so they name what the scorer actually saw:
+**Times.** A time counts when it has a full date, a clock time and a stated zone: `Z`, `UTC` (`2026-10-01 14:32:05 UTC`), or a numeric offset up to 14 hours (`2026-10-01T22:32:05+08:00`, `+0800`, or with a space before it: `2026-10-01 22:32:05 +08:00`). `T` or a space may separate date and time. An offset is converted, so Philippine time with `+08:00` matches the same event as the SIEM's UTC time. A time with no zone (`2026-10-01T14:32:05`) is still `TIMESTAMP_MISSING`, because it can't be placed on the clock.
 
-- `AGENT_MISSING` on a one-line triage file can mean the correct agent is on a final line with no newline.
-- `RULE_MISSING` on a timeline can mean the rule 5710 line has no final newline or is written `RULE 5710`.
-
-Have the student check the file in either case. Fixing the scorer itself changes scores, so it is tracked separately in #243.
+**Lines.** The M1 agent check and the M2 timeline check read every line, including a last line with no trailing newline, and the timeline check reads `rule … 5710` in any case (`RULE 5710` too). Before #243 was fixed, both were skipped and a correct file could fail.
 
 A row is stored for a PASS too (`reason_code` NULL). It replaces the earlier failure for that lab and milestone. JSON syntax was never a scoring predicate, so a malformed but otherwise complete triage file still passes, and it gets no reason.
 

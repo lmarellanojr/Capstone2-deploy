@@ -752,7 +752,7 @@ _s9_has_lab_meta_agent() {
     [[ -f "$f" ]] || return 1
     expected=$(_s9_expected_agent) || return 1
     expected_lower=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
-    while IFS= read -r line; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
         # LXD names: letters, digits, hyphens only — no '.' / '_' (blocks pod-...-meta).
         [[ "$line" =~ [Aa]gent[^[:alnum:]]+\"?(pod-[A-Za-z0-9][A-Za-z0-9-]*-meta)\"? ]] || continue
         agent="${BASH_REMATCH[1]}"
@@ -820,7 +820,7 @@ _s9_has_real_event_timestamp() {
     local allow_shift first_stamp=1
     local now_epoch now_year candidate_year month day clock event_epoch
     local nearest_epoch nearest_distance distance claim_stamp claim_base claim_epoch round_trip
-    local timestamp_re='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?Z'
+    local timestamp_re="$_S9_TIMESTAMP_RE"
     local month_number
 
     [[ -f "$f" ]] || return 1
@@ -843,11 +843,7 @@ _s9_has_real_event_timestamp() {
     now_year=$(TZ=UTC0 LC_ALL=C date -u -d "@$now_epoch" '+%Y' 2>/dev/null) || return 1
 
     while IFS= read -r claim_stamp; do
-        [[ "$claim_stamp" =~ ^$timestamp_re$ ]] || continue
-        claim_base=$(printf '%s' "$claim_stamp" | sed -E 's/\.[0-9]{1,3}Z$/Z/')
-        round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
-        [[ "$round_trip" == "$claim_base" ]] || continue
-        claim_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%s' 2>/dev/null) || continue
+        claim_epoch=$(_s9_stamp_epoch "$claim_stamp") || continue
         # Only a valid date takes the one shift slot (an invalid one can't match anyway).
         allow_shift=$first_stamp
         first_stamp=0
@@ -937,7 +933,7 @@ _s9_timeline_time_is_real() {
 
     local now_epoch now_year candidate_year month day clock event_epoch
     local nearest_epoch nearest_distance distance claim_stamp claim_base claim_epoch round_trip
-    local timestamp_re='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?Z'
+    local timestamp_re="$_S9_TIMESTAMP_RE"
     local month_number allow_shift first_stamp=1
 
     # S9_NOW is a deterministic test seam only; production uses the container clock.
@@ -951,14 +947,10 @@ _s9_timeline_time_is_real() {
     fi
     now_year=$(TZ=UTC0 LC_ALL=C date -u -d "@$now_epoch" '+%Y' 2>/dev/null) || return 1
 
-    while IFS= read -r line; do
-        [[ "$line" =~ [Rr]ule[^0-9]{0,15}5710([^0-9]|$) ]] || continue
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "${line,,}" =~ rule[^0-9]{0,15}5710([^0-9]|$) ]] || continue
         while IFS= read -r claim_stamp; do
-            [[ "$claim_stamp" =~ ^$timestamp_re$ ]] || continue
-            claim_base=$(printf '%s' "$claim_stamp" | sed -E 's/\.[0-9]{1,3}Z$/Z/')
-            round_trip=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || continue
-            [[ "$round_trip" == "$claim_base" ]] || continue
-            claim_epoch=$(TZ=UTC0 LC_ALL=C date -u -d "$claim_stamp" '+%s' 2>/dev/null) || continue
+            claim_epoch=$(_s9_stamp_epoch "$claim_stamp") || continue
             # Only a valid date takes the one shift slot (an invalid one can't match anyway).
             allow_shift=$first_stamp
             first_stamp=0
@@ -1018,7 +1010,39 @@ _s9_timeline_time_is_real() {
 # Each _s9_mN_reason runs the same predicates in the same order as the old
 # single && chain and names the first one that fails, so PASS/FAIL is unchanged.
 
-_S9_TIMESTAMP_RE='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?Z'
+# A full date and time with a stated zone: Z, "UTC" (with or without a space),
+# or a numeric offset (+08:00, +0800, -05:00) up to 14 hours. "T" or a space may
+# separate date and time. A time with no zone stays out: it can't be placed on
+# the clock. Students often record Philippine time with its offset, which names
+# the same instant as the SIEM's UTC time, so it must match like the Z form.
+_S9_TIMESTAMP_RE='20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[T ]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,3})?(Z| ?[+-](0[0-9]|1[0-4]):?[0-5][0-9]| ?UTC)'
+
+# Epoch (UTC seconds) of one _S9_TIMESTAMP_RE stamp, or return 1 when the
+# calendar date or the offset isn't real. An offset is subtracted, so
+# 22:32:05+08:00 and 14:32:05Z give the same epoch.
+_s9_stamp_epoch() {
+    local stamp="$1" day clock zone base off sign
+    local parts_re='^(20[0-9]{2}-[0-9]{2}-[0-9]{2})[T ]([0-9]{2}:[0-9]{2}:[0-9]{2})(\.[0-9]{1,3})?(.*)$'
+    local offset_re='^([+-])([0-9]{2}):?([0-9]{2})$'
+    [[ "$stamp" =~ $parts_re ]] || return 1
+    day="${BASH_REMATCH[1]}"
+    clock="${BASH_REMATCH[2]}"
+    zone="${BASH_REMATCH[4]# }"
+    # Round trip rejects dates like 2026-02-30 that date(1) would roll over.
+    [[ "$(TZ=UTC0 LC_ALL=C date -u -d "${day}T${clock}Z" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null)" == "${day}T${clock}" ]] || return 1
+    base=$(TZ=UTC0 LC_ALL=C date -u -d "${day}T${clock}Z" '+%s' 2>/dev/null) || return 1
+    case "$zone" in
+        Z|UTC) off=0 ;;
+        *)
+            [[ "$zone" =~ $offset_re ]] || return 1
+            sign="${BASH_REMATCH[1]}"
+            off=$(( 10#${BASH_REMATCH[2]} * 3600 + 10#${BASH_REMATCH[3]} * 60 ))
+            (( off <= 14 * 3600 )) || return 1
+            [[ "$sign" == "-" ]] && off=$(( -off ))
+            ;;
+    esac
+    printf '%s\n' "$(( base - off ))"
+}
 
 # Pick one artifact. The guide's /home/msfadmin wins, so a stale /tmp copy can't
 # override the file the student just edited; /home/student and /tmp still count
@@ -1060,7 +1084,7 @@ _s9_authlog_path() {
 # and report what the scorer saw, not what the file holds.
 _s9_scorer_lines() {
     local line
-    while IFS= read -r line; do printf '%s\n' "$line"; done < "$1"
+    while IFS= read -r line || [[ -n "$line" ]]; do printf '%s\n' "$line"; done < "$1"
 }
 
 # Does any line the scorer sees match ERE $2? No pipe into grep -q: under
@@ -1093,14 +1117,14 @@ _s9_has_any_timestamp() {
 
 # Diagnostic only (M2): the timeline lines _s9_timeline_time_is_real reads, with
 # its exact filter -- "rule"/"Rule" only, so "RULE 5710" is not a rule line.
-_S9_TIMELINE_RULE_RE='[Rr]ule[^0-9]{0,15}5710([^0-9]|$)'
+_S9_TIMELINE_RULE_RE='[Rr][Uu][Ll][Ee][^0-9]{0,15}5710([^0-9]|$)'
 
 _s9_timeline_has_rule_line() {
     _s9_scorer_lines_match "$1" "$_S9_TIMELINE_RULE_RE"
 }
 
 _s9_timeline_names_other_rule() {
-    _s9_scorer_lines_match "$1" '[Rr]ule[^0-9]{0,15}[0-9]{3,6}'
+    _s9_scorer_lines_match "$1" '[Rr][Uu][Ll][Ee][^0-9]{0,15}[0-9]{3,6}'
 }
 
 # Diagnostic only: some rule-5710 line in the timeline carries an ISO …Z stamp.
