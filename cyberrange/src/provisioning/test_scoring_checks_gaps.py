@@ -935,3 +935,117 @@ def test_s11_m3_verification_in_zsh_before_fix_fails(tmp_path):
     curl = "#!/bin/bash\nprintf '401'\n"
     assert run(tmp_path, 11, 3, history="", zsh_history=_zsh(_M3_REMEDIATED_AT - 30),
                stubs={"curl": curl}, extra_env=env) == "FAIL"
+
+
+# ── Scenario 4 valid alternatives ────────────────────────────────────────────
+# M1: a root shell (sudo -i / sudo su - / sudo bash) reads the root-owned users
+# file without a sudo prefix; those commands are in root's own history.
+
+def _root_home(tmp_path: Path, history: str) -> dict:
+    root = tmp_path / "roothome"
+    root.mkdir(exist_ok=True)
+    _write(root / ".bash_history", history)
+    return {"S11_ROOT_HOME": root.as_posix()}
+
+
+@pytest.mark.parametrize("root_cmd", [
+    "cat /etc/tomcat9/tomcat-users.xml",
+    "grep password /etc/tomcat9/tomcat-users.xml",
+    "less /etc/tomcat9/tomcat-users.xml",
+])
+def test_s11_m1_read_from_a_root_shell_passes(tmp_path, root_cmd):
+    env = _root_home(tmp_path, root_cmd + "\n")
+    assert run(tmp_path, 11, 1, history="sudo -i\n", extra_env=env) == "PASS"
+
+
+def test_s11_m1_cat_without_sudo_still_fails(tmp_path):
+    # As msfadmin, a plain cat is denied; it lands in the user's history, not root's.
+    env = _root_home(tmp_path, "")
+    assert run(tmp_path, 11, 1, history="cat /etc/tomcat9/tomcat-users.xml\n", extra_env=env) == "FAIL"
+
+
+def test_s11_m1_root_shell_without_reading_the_file_fails(tmp_path):
+    env = _root_home(tmp_path, "ls /etc/tomcat9\nsystemctl status tomcat9\n")
+    assert run(tmp_path, 11, 1, history="sudo -i\n", extra_env=env) == "FAIL"
+
+
+@pytest.mark.parametrize("root_cmd", [
+    "echo cat /etc/tomcat9/tomcat-users.xml",
+    "man cat tomcat-users",
+    "ls /etc/tomcat9 | grep tomcat-users",
+], ids=["echo-mentions-cat", "man-mentions-cat", "grep-on-a-listing"])
+def test_s11_m1_reader_word_not_starting_a_command_fails(tmp_path, root_cmd):
+    env = _root_home(tmp_path, root_cmd + "\n")
+    assert run(tmp_path, 11, 1, history="sudo -i\n", extra_env=env) == "FAIL"
+
+
+def test_s11_m1_reader_after_a_separator_passes(tmp_path):
+    env = _root_home(tmp_path, "cd /etc/tomcat9 && cat tomcat-users.xml\n")
+    assert run(tmp_path, 11, 1, history="sudo -i\n", extra_env=env) == "PASS"
+
+
+# M2: Tomcat ignores a <user> inside <!-- -->, so commenting the default
+# account out removes it. A live default anywhere else still fails.
+
+@pytest.mark.parametrize("xml", [
+    '<!-- <user username="tomcat" password="tomcat" roles="manager-gui"/> -->',
+    '<!--\n  <user username="tomcat" password="tomcat" roles="manager-gui"/>\n-->',
+    '<role rolename="manager-gui"/><!-- old: password="tomcat" --><user username="admin" password="N3w-Str0ng!" roles="manager-gui"/>',
+    '<!-- don\'t use: <user username="tomcat" password="tomcat"/> -->',
+    '<user username="admin" description="a>b" password="N3w-Str0ng!"/><!-- <user username="tomcat" password="tomcat"/> -->',
+], ids=["one-line-comment", "multi-line-comment", "comment-beside-live-xml",
+        "apostrophe-in-comment", "gt-in-live-attribute"])
+def test_s11_m2_default_only_inside_a_comment_passes(tmp_path, xml):
+    assert run(tmp_path, 11, 2, extra_env=_users(tmp_path, xml)) == "PASS"
+
+
+@pytest.mark.parametrize("xml", [
+    '<!-- note --><user username="tomcat" password="tomcat" roles="manager-gui"/>',
+    '<!-- <user username="tomcat" password="tomcat"/> -->\n<user username="tomcat" password="tomcat" roles="manager-gui"/>',
+    '<!-- unterminated comment\n<user username="tomcat" password="tomcat" roles="manager-gui"/>',
+    '<user description="<!--" password="tomcat" extra="-->"/>',
+    "<user description='<!--' password='tomcat' extra='-->'/>",
+    '<user username="tomcat" description="-->" password="tomcat"/>',
+    '<user username="tomcat" description="unclosed password="tomcat"/>',
+], ids=["live-default-after-comment", "commented-and-live-default", "unclosed-comment",
+        "markers-in-double-quotes", "markers-in-single-quotes", "close-marker-in-quotes",
+        "unclosed-quote"])
+def test_s11_m2_live_default_still_fails(tmp_path, xml):
+    # An unclosed comment must not hide the live default, and comment markers
+    # inside an attribute value are not comments: the file is checked as written.
+    assert run(tmp_path, 11, 2, extra_env=_users(tmp_path, xml)) == "FAIL"
+
+
+# M3: wget with the old credential is the same verification as curl.
+
+def _stamped_cmd(epoch: int, cmd: str) -> str:
+    return f"#{epoch}\n{cmd}\n"
+
+
+@pytest.mark.parametrize("cmd", [
+    "wget --user=tomcat --password=tomcat -O- http://127.0.0.1:8180/manager/text/list",
+    "wget --password tomcat --user tomcat http://127.0.0.1:8180/manager/text/list",
+    "wget --http-user=tomcat --http-password=tomcat http://localhost:8180/manager/html",
+    "wget -O- http://tomcat:tomcat@127.0.0.1:8180/manager/text/list",
+])
+def test_s11_m3_wget_with_old_creds_after_fix_passes(tmp_path, cmd):
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history=_stamped_cmd(_M3_REMEDIATED_AT + 30, cmd),
+               stubs={"curl": curl}, extra_env=env) == "PASS"
+
+
+@pytest.mark.parametrize("epoch_offset,cmd", [
+    (-30, "wget --user=tomcat --password=tomcat http://127.0.0.1:8180/manager/text/list"),  # before the fix
+    (30, "wget --user=tomcat --password=tomcat2 http://127.0.0.1:8180/manager/text/list"),  # not the old password
+    (30, "curl -u tomcat http://127.0.0.1:8180/manager/text/list"),  # prompted: password unknown
+    (30, "wget --user=tomcat --password=tomcat http://example.com/other"),  # not the manager
+    (30, "wget --http-user tomcat --http-password tomcat http://other.test/x"),
+    (30, "wget -O- http://tomcat:tomcat@example.com/other"),
+], ids=["wget-before-fix", "wget-other-password", "curl-prompted-password",
+        "wget-flags-other-host", "wget-http-flags-other-host", "wget-url-other-host"])
+def test_s11_m3_other_requests_still_fail(tmp_path, epoch_offset, cmd):
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history=_stamped_cmd(_M3_REMEDIATED_AT + epoch_offset, cmd),
+               stubs={"curl": curl}, extra_env=env) == "FAIL"
