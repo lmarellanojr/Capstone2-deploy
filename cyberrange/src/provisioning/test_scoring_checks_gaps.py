@@ -945,7 +945,10 @@ def test_s11_m1_reader_after_a_separator_passes(tmp_path):
     '<!-- <user username="tomcat" password="tomcat" roles="manager-gui"/> -->',
     '<!--\n  <user username="tomcat" password="tomcat" roles="manager-gui"/>\n-->',
     '<role rolename="manager-gui"/><!-- old: password="tomcat" --><user username="admin" password="N3w-Str0ng!" roles="manager-gui"/>',
-], ids=["one-line-comment", "multi-line-comment", "comment-beside-live-xml"])
+    '<!-- don\'t use: <user username="tomcat" password="tomcat"/> -->',
+    '<user username="admin" description="a>b" password="N3w-Str0ng!"/><!-- <user username="tomcat" password="tomcat"/> -->',
+], ids=["one-line-comment", "multi-line-comment", "comment-beside-live-xml",
+        "apostrophe-in-comment", "gt-in-live-attribute"])
 def test_s11_m2_default_only_inside_a_comment_passes(tmp_path, xml):
     assert run(tmp_path, 11, 2, extra_env=_users(tmp_path, xml)) == "PASS"
 
@@ -954,10 +957,16 @@ def test_s11_m2_default_only_inside_a_comment_passes(tmp_path, xml):
     '<!-- note --><user username="tomcat" password="tomcat" roles="manager-gui"/>',
     '<!-- <user username="tomcat" password="tomcat"/> -->\n<user username="tomcat" password="tomcat" roles="manager-gui"/>',
     '<!-- unterminated comment\n<user username="tomcat" password="tomcat" roles="manager-gui"/>',
-], ids=["live-default-after-comment", "commented-and-live-default", "unclosed-comment"])
+    '<user description="<!--" password="tomcat" extra="-->"/>',
+    "<user description='<!--' password='tomcat' extra='-->'/>",
+    '<user username="tomcat" description="-->" password="tomcat"/>',
+    '<user username="tomcat" description="unclosed password="tomcat"/>',
+], ids=["live-default-after-comment", "commented-and-live-default", "unclosed-comment",
+        "markers-in-double-quotes", "markers-in-single-quotes", "close-marker-in-quotes",
+        "unclosed-quote"])
 def test_s11_m2_live_default_still_fails(tmp_path, xml):
-    # An unclosed comment must not hide the live default: unbalanced markers mean
-    # the file is checked as written.
+    # An unclosed comment must not hide the live default, and comment markers
+    # inside an attribute value are not comments: the file is checked as written.
     assert run(tmp_path, 11, 2, extra_env=_users(tmp_path, xml)) == "FAIL"
 
 

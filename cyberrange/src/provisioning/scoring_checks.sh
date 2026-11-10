@@ -1304,31 +1304,42 @@ _s11_root_history_has() {
 
 # M2: the users file with XML comments removed. Tomcat ignores a commented-out
 # <user .../>, so a default password left only inside <!-- ... --> is not live.
-# Plain awk (no perl/python on meta); handles comments spanning lines. If the
-# <!-- and --> markers don't balance (an unclosed comment, which Tomcat can't
-# load anyway), the file is returned unchanged so nothing is hidden.
+# Plain awk (no perl/python on meta); handles comments spanning lines. Inside a
+# tag, a quoted attribute value is copied as is, so a "<!--" or "-->" in a value
+# is not a comment marker. If a comment or a quoted value is still open at the
+# end of the file (Tomcat can't load it anyway), the file is returned unchanged
+# so nothing is hidden.
 _s11_active_xml() {
-    local opens closes
-    opens=$( { grep -o '<!--' "$1" 2>/dev/null || true; } | wc -l)
-    closes=$( { grep -o -- '-->' "$1" 2>/dev/null || true; } | wc -l)
-    if [[ "$opens" -ne "$closes" ]]; then
-        cat "$1" 2>/dev/null
-        return 0
-    fi
     awk '
-        {
-            line = $0; out = ""
-            while (length(line) > 0) {
-                if (inc) {
-                    p = index(line, "-->")
-                    if (p == 0) { line = "" } else { line = substr(line, p + 3); inc = 0 }
-                } else {
-                    p = index(line, "<!--")
-                    if (p == 0) { out = out line; line = "" }
-                    else { out = out substr(line, 1, p - 1); line = substr(line, p + 4); inc = 1 }
+        { src[NR] = $0 }
+        END {
+            inc = 0; intag = 0; q = ""
+            for (n = 1; n <= NR; n++) {
+                line = src[n]; len = length(line); out = ""; i = 1
+                while (i <= len) {
+                    if (inc) {
+                        p = index(substr(line, i), "-->")
+                        if (p == 0) { i = len + 1 } else { i += p + 2; inc = 0 }
+                        continue
+                    }
+                    c = substr(line, i, 1)
+                    if (q != "") {
+                        if (c == q) q = ""
+                    } else if (intag) {
+                        if (c == "\"" || c == "\047") q = c
+                        else if (c == ">") intag = 0
+                    } else if (substr(line, i, 4) == "<!--") {
+                        inc = 1; i += 4
+                        continue
+                    } else if (c == "<") {
+                        intag = 1
+                    }
+                    out = out c; i++
                 }
+                res[n] = out
             }
-            print out
+            if (inc || q != "") { for (n = 1; n <= NR; n++) print src[n] }
+            else { for (n = 1; n <= NR; n++) print res[n] }
         }
     ' "$1" 2>/dev/null
 }
