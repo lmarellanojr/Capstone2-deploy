@@ -261,7 +261,10 @@ def _s6_m1_probe(tmp_path: Path, content: str) -> str:
     _row("1'#", "admin", "admin"),                                  # quote, but only one user listed
     "First name:\n",
     "",
-], ids=["normal-lookup", "two-normal-lookups", "quote-one-row", "bare-label", "empty"])
+    "Help: a SQL syntax error means the query is malformed.\n",   # error wording that isn't MySQL's
+    _row("1' -- -", "admin", "admin"),                             # working quote, one user: Task 1 asks for all
+], ids=["normal-lookup", "two-normal-lookups", "quote-one-row", "bare-label", "empty",
+        "generic-syntax-error-text", "single-row-injection"])
 def test_s6_m1_probe_without_injection_evidence_fails(tmp_path, content):
     assert _s6_m1_probe(tmp_path, content) == "FAIL"
 
@@ -273,7 +276,12 @@ def test_s6_m1_probe_without_injection_evidence_fails(tmp_path, content):
     _row("%' or '0'='0", "admin", "admin") + _row("%' or '0'='0", "Pablo", "Picasso"),
     _row("1&#039; OR &#039;1&#039;=&#039;1", "admin", "admin")
     + _row("1&#039; OR &#039;1&#039;=&#039;1", "Gordon", "Brown"),                    # HTML-escaped quote
-], ids=["sql-error", "guide-or-1-1", "or-a-a", "percent-or-0-0", "escaped-quote"])
+    _row("1&#x27; OR &#x27;1&#x27;=&#x27;1", "admin", "admin")
+    + _row("1&#x27; OR &#x27;1&#x27;=&#x27;1", "Gordon", "Brown"),                    # hex entity
+    _row("1&apos; OR &apos;1&apos;=&apos;1", "admin", "admin")
+    + _row("1&apos; OR &apos;1&apos;=&apos;1", "Gordon", "Brown"),                    # named entity
+], ids=["sql-error", "guide-or-1-1", "or-a-a", "percent-or-0-0", "escaped-quote",
+        "hex-escaped-quote", "apos-escaped-quote"])
 def test_s6_m1_probe_with_injection_evidence_passes(tmp_path, content):
     assert _s6_m1_probe(tmp_path, content) == "PASS"
 

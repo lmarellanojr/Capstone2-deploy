@@ -578,24 +578,29 @@ check_scenario_6() {
             else
                 set -- /tmp/sqli_probe.txt /tmp/sqli_injection.txt
             fi
-            # The saved page must show the injection worked, the same evidence the
-            # browser detector asks for: a SQL syntax error, or DVWA echoing a
-            # quoted payload on an ID: line while listing more than one user.
-            # A bare "First name:" used to pass, but a normal id=1 lookup prints
-            # that too, so a page with no injection at all earned Task 1. Any
-            # working quote payload counts here (' or 'a'='a, %' or '0'='0, ...),
-            # not only OR 1=1. DVWA prints the ID raw; &#039; covers a saved page
-            # whose quote was HTML-escaped.
+            # The saved page must show the injection worked: MySQL's own syntax
+            # error, or DVWA echoing a quoted payload on an ID: line while listing
+            # more than one user. A bare "First name:" used to pass, but a normal
+            # id=1 lookup prints that too, so a page with no injection at all
+            # earned Task 1. Any working quote payload counts here (' or 'a'='a,
+            # %' or '0'='0, ...), not only OR 1=1. DVWA prints the ID raw; the
+            # entity forms (&#039;, &#x27;, &apos;) cover a saved page whose quote
+            # was HTML-escaped.
+            # Deliberately looser than the browser detector on the error branch:
+            # the browser sees the request and asks for quote && error, but DVWA's
+            # error page doesn't echo the id, so a saved one can't show the quote.
+            # Only MySQL's exact wording counts, not any "syntax error" text.
+            # One row with a quote is not enough: Task 1 asks for every user.
             local rows
             for probe in "$@"; do
                 [[ -f "$probe" ]] || continue
-                if grep -qiE 'syntax.*error|error.*syntax' "$probe"; then
+                if grep -qi 'you have an error in your sql syntax' "$probe"; then
                     echo "PASS"; return
                 fi
                 # || true: grep finds nothing on a page with no rows, and under
                 # pipefail that would abort the check instead of moving on.
                 rows=$( { grep -oi 'First name:' "$probe" || true; } | wc -l)
-                if [[ "${rows:-0}" -ge 2 ]] && grep -qiE 'ID:[^<]*('"'"'|&#0?39;)' "$probe"; then
+                if [[ "${rows:-0}" -ge 2 ]] && grep -qiE 'ID:[^<]*('"'"'|&#0*39;|&#x0*27;|&apos;)' "$probe"; then
                     echo "PASS"; return
                 fi
             done
