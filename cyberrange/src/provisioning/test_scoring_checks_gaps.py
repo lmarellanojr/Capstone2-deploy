@@ -1016,6 +1016,44 @@ def test_s11_m2_live_default_still_fails(tmp_path, xml):
     assert run(tmp_path, 11, 2, extra_env=_users(tmp_path, xml)) == "FAIL"
 
 
+# M2: the same default written another way is still the default. XML allows
+# whitespace (including a line break) around "=", and an XML parser decodes
+# character references, so Tomcat still accepts tomcat:tomcat for all of these.
+
+@pytest.mark.parametrize("xml", [
+    '<user username="tomcat" password = "tomcat" roles="manager-gui"/>',
+    '<user username="tomcat" password ="tomcat" roles="manager-gui"/>',
+    '<user username="tomcat" password= "tomcat" roles="manager-gui"/>',
+    '<user username="tomcat" password=\n  "tomcat" roles="manager-gui"/>',
+    '<user username="tomcat"\n      password="tomcat" roles="manager-gui"/>',
+    '<user username="tomcat"\tpassword\t=\t\'tomcat\' roles="manager-gui"/>',
+    '<user username="tomcat" password="&#116;omcat" roles="manager-gui"/>',
+    '<user username="tomcat" password="&#x74;&#X6F;mcat" roles="manager-gui"/>',
+    '<user username="tomcat" password="tomcat" roles="manager-gui"/>\r\n',
+    '<user username="admin" password="N3w-Str0ng!"/>\n<user username="tomcat" password = "tomcat"/>',
+], ids=["spaces-around-eq", "space-before-eq", "space-after-eq", "newline-after-eq",
+        "attribute-on-next-line", "tabs-single-quotes", "decimal-char-ref",
+        "hex-char-refs", "crlf-line-ending", "second-user-spaced"])
+def test_s11_m2_default_written_another_way_still_fails(tmp_path, xml):
+    assert run(tmp_path, 11, 2, extra_env=_users(tmp_path, xml)) == "FAIL"
+
+
+@pytest.mark.parametrize("xml", [
+    '<user username="tomcat" password = "N3w-Str0ng!" roles="manager-gui"/>',
+    '<user username="tomcat" password="tomcat1" roles="manager-gui"/>',
+    '<user username="tomcat" password="Tomcat" roles="manager-gui"/>',
+    '<user username="tomcat" password="&#116;omcat&amp;" roles="manager-gui"/>',
+    '<user username="tomcat" password="&#1090;omcat" roles="manager-gui"/>',
+    '<user username="tomcat" oldpassword="tomcat" password="N3w-Str0ng!"/>',
+    '<user username="tomcat" PASSWORD="tomcat" password="N3w-Str0ng!"/>',
+], ids=["new-password-spaced", "suffix-added", "case-changed", "decoded-not-default",
+        "non-ascii-char-ref", "other-attribute-name", "attribute-name-case"])
+def test_s11_m2_a_different_password_passes(tmp_path, xml):
+    # Only an attribute named exactly "password" whose decoded value is exactly
+    # "tomcat" is the default (XML names and values are case-sensitive).
+    assert run(tmp_path, 11, 2, extra_env=_users(tmp_path, xml)) == "PASS"
+
+
 # M3: wget with the old credential is the same verification as curl.
 
 def _stamped_cmd(epoch: int, cmd: str) -> str:

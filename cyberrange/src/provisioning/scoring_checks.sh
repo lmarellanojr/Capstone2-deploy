@@ -1389,6 +1389,62 @@ _s11_active_xml() {
     ' "$1" 2>/dev/null
 }
 
+# M2: does the (comment-free) users XML on stdin still give some account the
+# default password? Reads each password attribute the way an XML parser does,
+# so the default can't hide behind a different spelling of the same value:
+# spaces or a line break around "=" (password = "tomcat"), either quote style,
+# and character references (&#116;omcat, &#x74;omcat, &amp; and the other
+# predefined entities). Exit 0 = default present, 1 = not present.
+# Portable awk only (meta may have mawk): no gensub/strtonum, no [[:space:]].
+_s11_has_default_password() {
+    awk '
+        function hexval(h,   i, d, v) {
+            v = 0; h = tolower(h)
+            for (i = 1; i <= length(h); i++) {
+                d = index("0123456789abcdef", substr(h, i, 1))
+                if (d == 0) return -1
+                v = v * 16 + d - 1
+            }
+            return v
+        }
+        # Decode character/entity references. Anything that is not plain
+        # ASCII becomes \001, which can never spell the default password.
+        function decode(s,   out, p, e, ent, n) {
+            out = ""
+            while ((p = index(s, "&")) > 0) {
+                out = out substr(s, 1, p - 1); s = substr(s, p)
+                e = index(s, ";")
+                if (e == 0) { out = out s; s = ""; break }
+                ent = substr(s, 2, e - 2); s = substr(s, e + 1)
+                if (ent ~ /^#[0-9]+$/) n = substr(ent, 2) + 0
+                else if (ent ~ /^#[xX][0-9a-fA-F]+$/) n = hexval(substr(ent, 3))
+                else if (ent == "amp") n = 38
+                else if (ent == "lt") n = 60
+                else if (ent == "gt") n = 62
+                else if (ent == "quot") n = 34
+                else if (ent == "apos") n = 39
+                else n = -1
+                if (n > 0 && n < 128) out = out sprintf("%c", n)
+                else out = out "\001"
+            }
+            return out s
+        }
+        { gsub(/\r/, ""); doc = doc " " $0 }
+        END {
+            q = "\047"
+            re = "[ \t]password[ \t]*=[ \t]*(\"[^\"]*\"|" q "[^" q "]*" q ")"
+            s = doc; found = 0
+            while (match(s, re)) {
+                v = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+                sub(/^[^=]*=[ \t]*/, "", v)
+                v = substr(v, 2, length(v) - 2)
+                if (decode(v) == "tomcat") { found = 1; break }
+            }
+            exit(found ? 0 : 1)
+        }
+    '
+}
+
 _s11_latest_verify_epoch() {
     local verify_re="$_S11_VERIFY_RE"
     local f files=()
@@ -1446,7 +1502,7 @@ check_scenario_11() {
                 # passed even when the default password was still there.
                 # Only live XML counts: a <user> left inside <!-- --> is ignored by
                 # Tomcat, so commenting the default account out also removes it.
-                if ! _s11_active_xml "$users_file" | grep -qE "password=[\"']tomcat[\"']"; then
+                if ! _s11_active_xml "$users_file" | _s11_has_default_password; then
                     reason=NONE
                 else
                     reason=DEFAULT_PASSWORD_PRESENT
