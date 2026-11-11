@@ -100,8 +100,8 @@ const HINTS: Record<string, Hint[]> = {
     {
       kind: "command",
       text:
-        "sudo sed -i 's/password=\"tomcat\"/password=\"Lab-Only-Secret-2026-Change-Me\"/' /etc/tomcat9/tomcat-users.xml\nsudo systemctl restart tomcat9\nsudo systemctl is-active tomcat9\nsudo grep -E \"password=[\\\"']tomcat[\\\"']\" /etc/tomcat9/tomcat-users.xml",
-      note: "No output from the grep means the default password is gone.",
+        "sudo sed -i 's/password=\"tomcat\"/password=\"Lab-Only-Secret-2026-Change-Me\"/' /etc/tomcat9/tomcat-users.xml\nsudo systemctl restart tomcat9\nsudo systemctl is-active tomcat9\nsudo grep -nE \"password[[:space:]]*=[[:space:]]*[\\\"']tomcat[\\\"']\" /etc/tomcat9/tomcat-users.xml",
+      note: "No output from the grep means the default password is gone. A line inside <!-- --> is fine: Tomcat ignores comments.",
     },
   ],
   "11:3": [

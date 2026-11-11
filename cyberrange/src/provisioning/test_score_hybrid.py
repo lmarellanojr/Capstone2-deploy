@@ -40,6 +40,7 @@ from rubrics import (
     DEFAULT_RUBRICS,
     get_rubric,
     list_rubrics,
+    seed_default_rubrics,
     validate_flag,
 )
 import scoring_state
@@ -1438,6 +1439,99 @@ def test_migration_v12_runs_after_v11_and_updates_s1_m5(tmp_path: Path):
     assert s1m5["criteria"] == row[1]
     conn.close()
     assert migrate.apply(db_file) == versions[-1]
+
+
+def _apply_up_to(conn: sqlite3.Connection, last: int) -> None:
+    """Apply migrations up to and including `last`, the way migrate.apply does."""
+    start = migrate.current_version(conn)
+    for version, sql_path in migrate._migration_files():
+        if version > last or version <= start:
+            continue
+        with conn:
+            if version == 3 and not migrate._has_column(
+                conn, "milestone_verification", "student_id"
+            ):
+                conn.execute("ALTER TABLE milestone_verification ADD COLUMN student_id TEXT")
+            if version == 4:
+                migrate._upgrade_review_cases_schema(conn)
+            migrate._run_sql_file(conn, sql_path)
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+
+
+def _rubric_rows(conn: sqlite3.Connection) -> dict:
+    return {
+        (r[0], r[1]): r[2:]
+        for r in conn.execute(
+            "SELECT scenario_id, milestone_id, name, criteria, expected_flag, points, "
+            "mitre_technique, nist_phase FROM milestone_rubrics"
+        )
+    }
+
+
+def test_migration_v17_retags_scenario_4_only(tmp_path: Path):
+    """v17: S4 (id 11) rubric T1548 -> T1078.001; nothing else changes."""
+    db_file = str(tmp_path / "v17.db")
+    conn = sqlite3.connect(db_file)
+    _apply_up_to(conn, 16)
+    before = _rubric_rows(conn)
+    assert {before[(11, m)][4] for m in (1, 2, 3)} == {"T1548"}
+    conn.close()
+
+    assert 17 in [v for v, _ in migrate._migration_files()]
+    assert migrate.apply(db_file) == migrate.latest_version()
+    conn = sqlite3.connect(db_file)
+    after = _rubric_rows(conn)
+    conn.close()
+
+    assert after.keys() == before.keys()
+    for key, row in before.items():
+        if key[0] == 11:
+            assert after[key][4] == "T1078.001"
+            # name, criteria, flag, points and NIST phase are untouched
+            assert after[key][:4] + after[key][5:] == row[:4] + row[5:]
+        else:
+            assert after[key] == row
+    for r in DEFAULT_RUBRICS:
+        if r["scenario_id"] == 11:
+            assert r["mitre_technique"] == after[(11, r["milestone_id"])][4]
+    # Re-running is a no-op.
+    assert migrate.apply(db_file) == migrate.latest_version()
+    conn = sqlite3.connect(db_file)
+    assert _rubric_rows(conn) == after
+    conn.close()
+
+
+def test_migration_v17_leaves_a_hand_edited_tag_alone(tmp_path: Path):
+    """Only rows still holding the old T1548 value are rewritten."""
+    db_file = str(tmp_path / "v17-edited.db")
+    conn = sqlite3.connect(db_file)
+    _apply_up_to(conn, 16)
+    with conn:
+        conn.execute(
+            "UPDATE milestone_rubrics SET mitre_technique='T1078' "
+            "WHERE scenario_id=11 AND milestone_id=2"
+        )
+    conn.close()
+    migrate.apply(db_file)
+    conn = sqlite3.connect(db_file)
+    tags = dict(conn.execute(
+        "SELECT milestone_id, mitre_technique FROM milestone_rubrics WHERE scenario_id=11"
+    ).fetchall())
+    conn.close()
+    assert tags == {1: "T1078.001", 2: "T1078", 3: "T1078.001"}
+
+
+def test_fresh_database_seeds_scenario_4_with_t1078_001(tmp_path: Path):
+    """A brand-new database (all migrations, then the code seed) ends on T1078.001."""
+    db_file = str(tmp_path / "fresh.db")
+    migrate.apply(db_file)
+    conn = sqlite3.connect(db_file)
+    seed_default_rubrics(conn)
+    tags = {r[0] for r in conn.execute(
+        "SELECT mitre_technique FROM milestone_rubrics WHERE scenario_id=11"
+    )}
+    conn.close()
+    assert tags == {"T1078.001"}
 
 
 def test_booking_claim_schema_v13_remains_compatible_but_inert(tmp_path: Path):

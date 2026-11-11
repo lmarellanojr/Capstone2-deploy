@@ -143,7 +143,7 @@ DEFAULT_RUBRICS: List[Dict[str, Any]] = [
         "criteria": "Inspect Tomcat manager credentials in tomcat-users.xml and verify tomcat/tomcat vulnerability.",
         "expected_flag": "FLAG{S11_M1_2C4E6A8B0D2F}",
         "points": 50,
-        "mitre_technique": "T1548",
+        "mitre_technique": "T1078.001",
         "nist_phase": "Vulnerability Assessment",
     },
     {
@@ -153,7 +153,7 @@ DEFAULT_RUBRICS: List[Dict[str, Any]] = [
         "criteria": "Rotate or remove default tomcat:tomcat credential in configuration.",
         "expected_flag": "FLAG{S11_M2_5F7A9C1E3B5D}",
         "points": 75,
-        "mitre_technique": "T1548",
+        "mitre_technique": "T1078.001",
         "nist_phase": "Remediation",
     },
     {
@@ -163,7 +163,7 @@ DEFAULT_RUBRICS: List[Dict[str, Any]] = [
         "criteria": "Verify Tomcat manager authentication rejects previous default credentials.",
         "expected_flag": "FLAG{S11_M3_8A0C2E4F6A8B}",
         "points": 75,
-        "mitre_technique": "T1548",
+        "mitre_technique": "T1078.001",
         "nist_phase": "Verification",
     },
 ]
