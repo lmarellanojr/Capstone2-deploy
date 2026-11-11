@@ -206,7 +206,7 @@ export const SCENARIOS: Scenario[] = [
     name: 'Vulnerability Hardening',
     type: 'defensive',
     description: 'Remediate the Tomcat manager weakness exploited in Scenario 1 and confirm the exploit path is closed.',
-    mitre: 'T1548',
+    mitre: 'T1078.001',
     difficulty: 3,
     guideFile: 'scenario_04_vulnerability_hardening.md',
     milestones: [
