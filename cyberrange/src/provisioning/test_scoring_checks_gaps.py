@@ -1049,3 +1049,51 @@ def test_s11_m3_other_requests_still_fail(tmp_path, epoch_offset, cmd):
     curl = "#!/bin/bash\nprintf '401'\n"
     assert run(tmp_path, 11, 3, history=_stamped_cmd(_M3_REMEDIATED_AT + epoch_offset, cmd),
                stubs={"curl": curl}, extra_env=env) == "FAIL"
+
+
+# M3: the verification must be a real curl/wget command that sends the old
+# credential. Forms of the guide's command keep passing ...
+
+@pytest.mark.parametrize("cmd", [
+    "curl --user tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "curl --user=tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "curl -I -u tomcat:tomcat http://localhost:8180/manager/html",
+    "curl -su tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "/usr/bin/curl -utomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "curl http://127.0.0.1:8180/manager/text/list -u \"tomcat:tomcat\"",
+    "curl http://tomcat:tomcat@127.0.0.1:8180/manager/text/list",
+    "sudo curl -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "time curl -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "timeout 10 curl -u 'tomcat:tomcat' http://127.0.0.1:8180/manager/text/list",
+    "cd /tmp; curl -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "sudo wget --user=tomcat --password=tomcat http://127.0.0.1:8180/manager/text/list",
+], ids=["long-user", "long-user-eq", "head-request", "combined-flags", "attached-and-path",
+        "cred-after-url", "cred-in-url", "sudo", "time", "timeout-quoted", "after-separator",
+        "sudo-wget"])
+def test_s11_m3_real_verification_forms_pass(tmp_path, cmd):
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history=_stamped_cmd(_M3_REMEDIATED_AT + 30, cmd),
+               stubs={"curl": curl}, extra_env=env) == "PASS"
+
+
+# ... while lines that never sent the old credential to the manager fail, even
+# when they contain curl, tomcat:tomcat and 8180.
+
+@pytest.mark.parametrize("cmd", [
+    "curls-o/dev/null -w '%{http_code}\n' u tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "curl -s -o /dev/null -w '%{http_code}\n' u tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "echo curl -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "history | grep 'curl -u tomcat:tomcat http://127.0.0.1:8180'",
+    "curlx -u tomcat:tomcat http://127.0.0.1:8180/manager/text/list",
+    "curl -u tomcat:tomcat2 http://127.0.0.1:8180/manager/text/list",
+    "curl -u tomcat:tomcat http://example.com; ls /manager",
+    "curl http://127.0.0.1:8180/manager/text/list; echo -u tomcat:tomcat",
+    "echo wget --user=tomcat --password=tomcat http://127.0.0.1:8180/manager/text/list",
+], ids=["mistyped-command", "u-without-hyphen", "echo-only", "history-grep", "other-command",
+        "other-password", "manager-in-next-command", "cred-in-next-command", "echo-wget"])
+def test_s11_m3_lines_that_never_sent_the_old_creds_fail(tmp_path, cmd):
+    env = _users_at(tmp_path, _FIXED_XML, _M3_REMEDIATED_AT)
+    curl = "#!/bin/bash\nprintf '401'\n"
+    assert run(tmp_path, 11, 3, history=_stamped_cmd(_M3_REMEDIATED_AT + 30, cmd),
+               stubs={"curl": curl}, extra_env=env) == "FAIL"

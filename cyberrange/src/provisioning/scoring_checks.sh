@@ -240,7 +240,7 @@ log "Scoring check: scenario=$SCENARIO_ID, milestone=$MILESTONE_ID"
 # found, not as a wrong scan. []] is a literal ] (no stray-backslash warning
 # from grep). The wrappers still run nmap; sudo's flags are named because some,
 # like -l, only list a command without running it.
-_S1_NMAP_WRAPPER='(sudo([[:space:]]+-[nEH]+)*|time([[:space:]]+-p)?|timeout[[:space:]]+[0-9]+(\.[0-9]+)?[smhd]?)[[:space:]]+'
+_S1_NMAP_WRAPPER='(sudo([[:space:]]+-[nEH]+)*|time([[:space:]]+-p)?|timeout[[:space:]]+[0-9]+([.][0-9]+)?[smhd]?)[[:space:]]+'
 _S1_NMAP_START="(^|[;&|]|[]]:|cmdline:)[[:space:]]*(${_S1_NMAP_WRAPPER})*([^[:space:]]*/)?nmap"
 _S1_NMAP_RUN="${_S1_NMAP_START}[[:space:]]+[^[:space:]]"
 # The patterns that earn M1-M3 credit. Each token is matched whole, inside one
@@ -1320,16 +1320,36 @@ _s11_status_reason() {
 # no "and", so the wget flag forms list each order of user, password and
 # manager. A curl -u tomcat that prompts for the password is NOT counted: the
 # typed password is unknown, so it may have tested the new password instead.
+#
+# The tool must start a command, the same way as the Scenario 1 nmap checks: at
+# the start of the line, after ; & | (zsh's ": ts:0;" prefix), or after
+# snoopy's "]: " or "cmdline: ", optionally behind sudo/time/timeout and/or a
+# path. Everything else must sit in that same command (no ; & | in between).
+# curl must send the credential itself: -u/--user tomcat:tomcat (also -utomcat:
+# tomcat, -su tomcat:tomcat, --user=..., quoted) or tomcat:tomcat@ in the URL.
+# So `echo curl ...`, a mistyped `curls-o/dev/null ... u tomcat:tomcat ...`
+# (command not found) or `curl ... u tomcat:tomcat` (no -u: the credential is
+# never sent) no longer count.
 _s11_verify_re() {
-    local u='--(http-)?user[= ]tomcat([[:space:]]|$)'
-    local p='--(http-)?password[= ]tomcat([[:space:]]|$)'
+    local wrap='(sudo([[:space:]]+-[nEH]+)*|time([[:space:]]+-p)?|timeout[[:space:]]+[0-9]+([.][0-9]+)?[smhd]?)[[:space:]]+'
+    local start="(^|[;&|]|[]]:|cmdline:)[[:space:]]*(${wrap})*([^[:space:];&|]*/)?"
+    local any='[^;&|]*'
+    local q="[\"']?"
+    local end="[\"']?([[:space:];&|]|$)"
     local m='(8180|manager)'
-    local re='curl.*(8180|manager).*tomcat:tomcat|curl.*tomcat:tomcat.*(8180|manager)'
-    re+='|wget.*tomcat:tomcat@[^[:space:]]*(8180|manager)'
+    local cred="[[:space:]](-[[:alpha:]]*u[[:space:]]*|--user[=[:space:]][[:space:]]*)${q}tomcat:tomcat${end}"
+    # cred starts with its own blank, so curl may be followed directly by it.
+    local curl="${start}curl"
+    local re="${curl}([[:space:]]${any})?${cred}${any}${m}|${curl}[[:space:]]${any}${m}${any}${cred}"
+    re+="|${curl}[[:space:]]${any}tomcat:tomcat@[^[:space:];&|]*${m}"
+    local wget="${start}wget[[:space:]]"
+    local u='--(http-)?user[= ]tomcat([[:space:];&|]|$)'
+    local p='--(http-)?password[= ]tomcat([[:space:];&|]|$)'
+    re+="|${wget}${any}tomcat:tomcat@[^[:space:];&|]*${m}"
     local a b c
     for a in u p m; do for b in u p m; do for c in u p m; do
         [[ $a != "$b" && $a != "$c" && $b != "$c" ]] || continue
-        re+="|wget.*${!a}.*${!b}.*${!c}"
+        re+="|${wget}${any}${!a}${any}${!b}${any}${!c}"
     done; done; done
     printf '%s' "$re"
 }
